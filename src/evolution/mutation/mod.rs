@@ -29,3 +29,44 @@ impl Default for Mutation {
         Mutation::Swap(Swap::new())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn swap_variant_produces_valid_mutation() {
+        let genes = vec![1, 2, 3, 4, 5];
+        let mut rng = fastrand::Rng::with_seed(42);
+
+        let result = Mutation::Swap(Swap::new()).mutate(&genes, &mut rng);
+
+        let mut sorted = result.clone();
+        sorted.sort();
+        assert_eq!(sorted, vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn insert_variant_produces_valid_mutation() {
+        let genes = vec![1, 2, 3, 4, 5];
+        let mut rng = fastrand::Rng::with_seed(42);
+
+        let result = Mutation::Insert(Insert::new()).mutate(&genes, &mut rng);
+
+        let mut sorted = result.clone();
+        sorted.sort();
+        assert_eq!(sorted, vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn inversion_variant_produces_valid_mutation() {
+        let genes = vec![1, 2, 3, 4, 5];
+        let mut rng = fastrand::Rng::with_seed(42);
+
+        let result = Mutation::Inversion(Inversion::new()).mutate(&genes, &mut rng);
+
+        let mut sorted = result.clone();
+        sorted.sort();
+        assert_eq!(sorted, vec![1, 2, 3, 4, 5]);
+    }
+}

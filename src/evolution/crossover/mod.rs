@@ -30,3 +30,34 @@ impl Default for Crossover {
         Crossover::Order(Order::new())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn order_variant_produces_valid_child() {
+        let parent1 = vec![1, 2, 3, 4, 5];
+        let parent2 = vec![5, 4, 3, 2, 1];
+        let mut rng = fastrand::Rng::with_seed(42);
+
+        let child = Crossover::Order(Order::new()).crossover(&parent1, &parent2, &mut rng);
+
+        let mut sorted = child.clone();
+        sorted.sort();
+        assert_eq!(sorted, vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn pmx_variant_produces_valid_child() {
+        let parent1 = vec![1, 2, 3, 4, 5];
+        let parent2 = vec![5, 4, 3, 2, 1];
+        let mut rng = fastrand::Rng::with_seed(42);
+
+        let child = Crossover::Pmx(Pmx::new()).crossover(&parent1, &parent2, &mut rng);
+
+        let mut sorted = child.clone();
+        sorted.sort();
+        assert_eq!(sorted, vec![1, 2, 3, 4, 5]);
+    }
+}

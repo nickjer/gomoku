@@ -25,3 +25,21 @@ impl<R: RunMatch> RunTournament for Tournament<R> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::{ScriptedMatchRunner, StubStrategy, Winner};
+
+    #[test]
+    fn swiss_variant_runs_tournament() {
+        let match_runner = ScriptedMatchRunner::new().add("a", "b", Winner::Label("a"));
+        let tournament = Tournament::Swiss(Swiss::new(match_runner));
+        let strategies = vec![StubStrategy::new("a"), StubStrategy::new("b")];
+        let mut rng = fastrand::Rng::with_seed(42);
+
+        let standings = tournament.run(&strategies, &mut rng);
+
+        assert_eq!(standings.len(), 2);
+    }
+}
