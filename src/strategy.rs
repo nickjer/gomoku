@@ -1,3 +1,5 @@
+use std::hash::Hash;
+
 use crate::board::Board;
 use crate::cache_id::CacheId;
 use crate::cache_repository::CacheRepository;
@@ -20,4 +22,23 @@ pub trait Strategy {
 
     /// Returns a label identifying this strategy.
     fn label(&self) -> &str;
+}
+
+/// A strategy that can be evolved through genetic algorithms.
+pub trait EvolvableStrategy: Strategy + Sized {
+    type Gene: Clone + Eq + Hash;
+
+    /// Generates random genes for a new strategy.
+    fn random_genes(rng: &mut fastrand::Rng) -> Vec<Self::Gene>;
+
+    /// Creates a strategy from the given genes.
+    fn from_genes(label: impl Into<String>, genes: Vec<Self::Gene>) -> Self;
+
+    /// Returns the genes of this strategy.
+    fn genes(&self) -> &[Self::Gene];
+
+    /// Creates a strategy with random genes.
+    fn random(label: impl Into<String>, rng: &mut fastrand::Rng) -> Self {
+        Self::from_genes(label, Self::random_genes(rng))
+    }
 }

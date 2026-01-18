@@ -5,7 +5,7 @@ use crate::pair::BestPositionSelector;
 use crate::pair::fingerprint::FingerprintNN1;
 use crate::position_id::PositionId;
 use crate::stone::Stone;
-use crate::strategy::Strategy;
+use crate::strategy::{EvolvableStrategy, Strategy};
 
 /// A strategy based on NN1 fingerprints with evolvable gene priority.
 pub struct NN1 {
@@ -24,16 +24,22 @@ impl NN1 {
             selector,
         }
     }
+}
 
-    #[must_use]
-    pub fn random(label: impl Into<String>, rng: &mut fastrand::Rng) -> Self {
-        let mut genes: Vec<_> = FingerprintNN1::all().to_vec();
+impl EvolvableStrategy for NN1 {
+    type Gene = FingerprintNN1;
+
+    fn random_genes(rng: &mut fastrand::Rng) -> Vec<Self::Gene> {
+        let mut genes = FingerprintNN1::all().to_vec();
         rng.shuffle(&mut genes);
+        genes
+    }
+
+    fn from_genes(label: impl Into<String>, genes: Vec<Self::Gene>) -> Self {
         Self::new(label, genes)
     }
 
-    #[must_use]
-    pub fn genes(&self) -> &[FingerprintNN1] {
+    fn genes(&self) -> &[Self::Gene] {
         &self.genes
     }
 }
