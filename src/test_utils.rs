@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use crate::board::Board;
 use crate::cache_id::CacheId;
 use crate::cache_repository::CacheRepository;
+use crate::evolution::selection::HasFitness;
 use crate::match_result::MatchResult;
 use crate::match_runner::RunMatch;
 use crate::outcome::Outcome;
@@ -13,6 +14,17 @@ use crate::position::Position;
 use crate::position_id::PositionId;
 use crate::stone::Stone;
 use crate::strategy::Strategy;
+
+/// A test individual with a fitness value for selection tests.
+pub struct TestIndividual {
+    pub fitness: u32,
+}
+
+impl HasFitness for TestIndividual {
+    fn fitness(&self) -> u32 {
+        self.fitness
+    }
+}
 
 /// A test strategy that plays predetermined moves.
 pub struct ScriptedStrategy {
