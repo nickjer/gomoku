@@ -70,11 +70,15 @@ impl PositionId {
             .count()
     }
 
+    pub fn iter() -> impl Iterator<Item = Self> {
+        (0..BOARD_SIZE).map(Self::new)
+    }
+
     pub fn map<T, F>(f: F) -> Vec<T>
     where
         F: FnMut(Self) -> T,
     {
-        (0..BOARD_SIZE).map(Self::new).map(f).collect()
+        Self::iter().map(f).collect()
     }
 
     /// Returns an iterator over all rows of the board.
