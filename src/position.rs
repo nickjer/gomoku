@@ -3,8 +3,8 @@ use std::fmt;
 /// A human-readable board position with row and column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Position {
-    pub row: u8,
-    pub col: u8,
+    row: u8,
+    col: u8,
 }
 
 impl Position {
@@ -12,12 +12,23 @@ impl Position {
     pub const fn new(row: u8, col: u8) -> Self {
         Self { row, col }
     }
+
+    #[must_use]
+    pub const fn row(&self) -> u8 {
+        self.row
+    }
+
+    #[must_use]
+    pub const fn col(&self) -> u8 {
+        self.col
+    }
 }
 
 impl fmt::Display for Position {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let col_char = char::from(b'A' + self.col);
-        write!(f, "{}{}", col_char, self.row + 1)
+        let col_char = char::from(b'A'.checked_add(self.col).unwrap());
+        let row_display = self.row.checked_add(1).unwrap();
+        write!(f, "{col_char}{row_display}")
     }
 }
 

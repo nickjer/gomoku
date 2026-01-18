@@ -48,8 +48,8 @@ impl PositionId {
     /// Panics if the resulting index overflows.
     #[must_use]
     pub fn from_offset(self, offset: Offset) -> Option<Self> {
-        let new_row = self.row().checked_add_signed(offset.row_delta)?;
-        let new_col = self.col().checked_add_signed(offset.col_delta)?;
+        let new_row = self.row().checked_add_signed(offset.row_delta())?;
+        let new_col = self.col().checked_add_signed(offset.col_delta())?;
 
         if new_row >= BOARD_WIDTH || new_col >= BOARD_WIDTH {
             return None;
