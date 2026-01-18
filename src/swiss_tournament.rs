@@ -42,21 +42,14 @@ impl<R: RunMatch> SwissTournament<R> {
         state.build_results()
     }
 
-    fn play_round(
-        &self,
-        state: &mut State,
-        strategies: &[&dyn Strategy],
-        rng: &mut fastrand::Rng,
-    ) {
+    fn play_round(&self, state: &mut State, strategies: &[&dyn Strategy], rng: &mut fastrand::Rng) {
         let pairings = Self::generate_pairings(state);
 
         for (black_idx, white_idx) in pairings {
             if let Some(white_idx) = white_idx {
-                let result = self.match_runner.run_match(
-                    strategies[black_idx],
-                    strategies[white_idx],
-                    rng,
-                );
+                let result =
+                    self.match_runner
+                        .run_match(strategies[black_idx], strategies[white_idx], rng);
                 Self::update_state(state, black_idx, white_idx, result.outcome());
             } else {
                 state.award_bye(black_idx);

@@ -3,6 +3,7 @@
 pub mod board;
 pub mod cache_id;
 pub mod cache_repository;
+pub mod evolution;
 pub mod match_result;
 pub mod match_runner;
 pub mod neighbor_cache;

@@ -141,8 +141,10 @@ mod tests {
 
     #[test]
     fn captures_strategy_labels() {
-        let black =
-            ScriptedStrategy::with_positions("black_label", &[(0, 0), (0, 1), (0, 2), (0, 3), (0, 4)]);
+        let black = ScriptedStrategy::with_positions(
+            "black_label",
+            &[(0, 0), (0, 1), (0, 2), (0, 3), (0, 4)],
+        );
         let white =
             ScriptedStrategy::with_positions("white_label", &[(1, 0), (1, 1), (1, 2), (1, 3)]);
         let runner = MatchRunner::new();
