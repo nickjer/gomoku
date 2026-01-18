@@ -256,4 +256,94 @@ mod tests {
         assert!((evolver.crossover_rate - 0.9).abs() < f64::EPSILON);
         assert!((evolver.mutation_rate - 0.2).abs() < f64::EPSILON);
     }
+
+    #[test]
+    fn no_crossover_no_mutation_preserves_parent_genes() {
+        // Get gen0 population
+        let gen0 = Evolver::new(InputOrderTournament)
+            .population_size(4)
+            .generations(0)
+            .evolve::<FakeEvolvableStrategy>(&mut fastrand::Rng::with_seed(42));
+
+        let parent_genes: Vec<Vec<u8>> = gen0
+            .individuals()
+            .iter()
+            .map(|i| i.strategy().genes().to_vec())
+            .collect();
+
+        // Run one generation with no crossover, no mutation
+        let gen1 = Evolver::new(InputOrderTournament)
+            .population_size(4)
+            .elitism(0)
+            .generations(1)
+            .crossover_rate(0.0)
+            .mutation_rate(0.0)
+            .evolve::<FakeEvolvableStrategy>(&mut fastrand::Rng::with_seed(42));
+
+        // Every offspring should have genes identical to some parent
+        for individual in gen1.individuals() {
+            let genes = individual.strategy().genes();
+            assert!(
+                parent_genes.iter().any(|p| p.as_slice() == genes),
+                "offspring genes {:?} should match a parent",
+                genes
+            );
+        }
+    }
+
+    #[test]
+    fn mutation_rate_one_changes_genes() {
+        // Get gen0 population
+        let gen0 = Evolver::new(InputOrderTournament)
+            .population_size(4)
+            .generations(0)
+            .evolve::<FakeEvolvableStrategy>(&mut fastrand::Rng::with_seed(42));
+
+        let parent_genes: Vec<Vec<u8>> = gen0
+            .individuals()
+            .iter()
+            .map(|i| i.strategy().genes().to_vec())
+            .collect();
+
+        // Run one generation with no crossover but 100% mutation
+        let gen1 = Evolver::new(InputOrderTournament)
+            .population_size(4)
+            .elitism(0)
+            .generations(1)
+            .crossover_rate(0.0)
+            .mutation_rate(1.0)
+            .evolve::<FakeEvolvableStrategy>(&mut fastrand::Rng::with_seed(42));
+
+        // At least one offspring should have different genes than all parents
+        let any_mutated = gen1.individuals().iter().any(|individual| {
+            let genes = individual.strategy().genes();
+            !parent_genes.iter().any(|p| p.as_slice() == genes)
+        });
+
+        assert!(any_mutated, "some offspring should have mutated genes");
+    }
+
+    #[test]
+    fn crossover_rate_one_produces_valid_permutations() {
+        // Run one generation with 100% crossover but no mutation
+        let gen1 = Evolver::new(InputOrderTournament)
+            .population_size(4)
+            .elitism(0)
+            .generations(1)
+            .crossover_rate(1.0)
+            .mutation_rate(0.0)
+            .evolve::<FakeEvolvableStrategy>(&mut fastrand::Rng::with_seed(42));
+
+        // With crossover, offspring genes should still be valid permutations
+        for individual in gen1.individuals() {
+            let genes = individual.strategy().genes();
+            let mut sorted: Vec<u8> = genes.to_vec();
+            sorted.sort();
+            assert_eq!(
+                sorted,
+                vec![1, 2, 3, 4, 5],
+                "genes should be valid permutation"
+            );
+        }
+    }
 }
