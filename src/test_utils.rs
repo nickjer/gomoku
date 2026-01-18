@@ -13,7 +13,7 @@ use crate::outcome::Outcome;
 use crate::position::Position;
 use crate::position_id::PositionId;
 use crate::stone::Stone;
-use crate::strategy::Strategy;
+use crate::strategy::{EvolvableStrategy, Strategy};
 use crate::tournament::{RunTournament, Standing};
 
 /// A test individual with a fitness value for selection tests.
@@ -281,5 +281,69 @@ impl RunTournament for ScriptedTournament {
                 Standing::new(index, 0, 0, 0, 0)
             })
             .collect()
+    }
+}
+
+/// A test tournament that returns standings in input order (first strategy ranks first).
+pub struct InputOrderTournament;
+
+impl RunTournament for InputOrderTournament {
+    fn run<S: Strategy>(&self, strategies: &[S], _rng: &mut fastrand::Rng) -> Vec<Standing> {
+        (0..strategies.len())
+            .map(|i| Standing::new(i, 0, 0, 0, 0))
+            .collect()
+    }
+}
+
+/// A fake evolvable strategy for evolution tests.
+pub struct FakeEvolvableStrategy {
+    label: String,
+    genes: Vec<u8>,
+}
+
+impl FakeEvolvableStrategy {
+    pub fn new(label: impl Into<String>, genes: Vec<u8>) -> Self {
+        Self {
+            label: label.into(),
+            genes,
+        }
+    }
+}
+
+impl Strategy for FakeEvolvableStrategy {
+    fn cache_dependencies(&self) -> &[CacheId] {
+        &[]
+    }
+
+    fn choose_move(
+        &self,
+        _current_stone: Stone,
+        _board: &Board,
+        _cache_repo: &CacheRepository,
+        _rng: &mut fastrand::Rng,
+    ) -> PositionId {
+        panic!("FakeEvolvableStrategy::choose_move should not be called")
+    }
+
+    fn label(&self) -> &str {
+        &self.label
+    }
+}
+
+impl EvolvableStrategy for FakeEvolvableStrategy {
+    type Gene = u8;
+
+    fn random_genes(rng: &mut fastrand::Rng) -> Vec<Self::Gene> {
+        let mut genes = vec![1, 2, 3, 4, 5];
+        rng.shuffle(&mut genes);
+        genes
+    }
+
+    fn from_genes(label: impl Into<String>, genes: Vec<Self::Gene>) -> Self {
+        Self::new(label, genes)
+    }
+
+    fn genes(&self) -> &[Self::Gene] {
+        &self.genes
     }
 }

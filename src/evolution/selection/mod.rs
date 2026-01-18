@@ -20,3 +20,9 @@ impl Selection {
         }
     }
 }
+
+impl Default for Selection {
+    fn default() -> Self {
+        Selection::Tournament(Tournament::new(3, TournamentMode::WithReplacement))
+    }
+}
