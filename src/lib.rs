@@ -11,4 +11,6 @@ pub mod pair;
 pub mod position;
 pub mod position_id;
 pub mod position_map;
+pub mod simple;
 pub mod stone;
+pub mod strategy;

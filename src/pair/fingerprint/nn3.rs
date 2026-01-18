@@ -2,9 +2,9 @@ use std::collections::BTreeSet;
 use std::sync::LazyLock;
 
 use crate::cache_repository::CacheRepository;
+use crate::pair::NeighborCounts;
 use crate::pair::fingerprint::combinations_for_total;
 use crate::pair::offsets;
-use crate::pair::NeighborCounts;
 use crate::position_id::PositionId;
 use crate::stone::Stone;
 

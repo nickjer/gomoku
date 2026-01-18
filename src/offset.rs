@@ -10,7 +10,10 @@ pub struct Offset {
 impl Offset {
     #[must_use]
     pub const fn new(row_delta: i8, col_delta: i8) -> Self {
-        Self { row_delta, col_delta }
+        Self {
+            row_delta,
+            col_delta,
+        }
     }
 
     #[must_use]

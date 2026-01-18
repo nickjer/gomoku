@@ -31,12 +31,12 @@ impl<T> std::ops::Index<PositionId> for PositionMap<T> {
     type Output = T;
 
     fn index(&self, position_id: PositionId) -> &Self::Output {
-        &self.data[usize::from(position_id.index())]
+        &self.data[usize::from(position_id)]
     }
 }
 
 impl<T> std::ops::IndexMut<PositionId> for PositionMap<T> {
     fn index_mut(&mut self, position_id: PositionId) -> &mut Self::Output {
-        &mut self.data[usize::from(position_id.index())]
+        &mut self.data[usize::from(position_id)]
     }
 }

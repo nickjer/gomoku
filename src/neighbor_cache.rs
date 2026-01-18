@@ -55,11 +55,16 @@ impl NeighborCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::position::Position;
+
+    fn pos(row: u8, col: u8) -> PositionId {
+        PositionId::from_position(Position::new(row, col))
+    }
 
     #[test]
     fn nn1_corner_has_two_neighbors() {
         let cache = NeighborCache::nn1();
-        let corner = PositionId::new(0);
+        let corner = pos(0, 0);
 
         assert_eq!(cache.neighbors_for(corner).len(), 2);
     }
@@ -75,7 +80,7 @@ mod tests {
     #[test]
     fn nn2_corner_has_one_neighbor() {
         let cache = NeighborCache::nn2();
-        let corner = PositionId::new(0);
+        let corner = pos(0, 0);
 
         assert_eq!(cache.neighbors_for(corner).len(), 1);
     }
@@ -91,7 +96,7 @@ mod tests {
     #[test]
     fn nn3_corner_has_two_neighbors() {
         let cache = NeighborCache::nn3();
-        let corner = PositionId::new(0);
+        let corner = pos(0, 0);
 
         assert_eq!(cache.neighbors_for(corner).len(), 2);
     }
@@ -99,7 +104,7 @@ mod tests {
     #[test]
     fn nn4_corner_has_two_neighbors() {
         let cache = NeighborCache::nn4();
-        let corner = PositionId::new(0);
+        let corner = pos(0, 0);
 
         assert_eq!(cache.neighbors_for(corner).len(), 2);
     }

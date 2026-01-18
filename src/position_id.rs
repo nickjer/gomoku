@@ -11,14 +11,13 @@ pub struct PositionId {
 }
 
 impl PositionId {
-    #[must_use]
-    pub const fn new(index: u8) -> Self {
+    const fn new(index: u8) -> Self {
         Self { index }
     }
 
     #[must_use]
-    pub const fn index(self) -> u8 {
-        self.index
+    pub const fn from_position(position: Position) -> Self {
+        Self::new(position.row() * BOARD_WIDTH + position.col())
     }
 
     #[must_use]
@@ -101,20 +100,23 @@ impl PositionId {
     }
 }
 
+impl From<PositionId> for usize {
+    fn from(position_id: PositionId) -> Self {
+        usize::from(position_id.index)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn index_returns_the_index() {
-        let id = PositionId::new(42);
-
-        assert_eq!(id.index(), 42);
+    fn pos(row: u8, col: u8) -> PositionId {
+        PositionId::from_position(Position::new(row, col))
     }
 
     #[test]
-    fn row_and_col_from_index() {
-        let id = PositionId::new(37); // row 2, col 7
+    fn row_and_col_from_position() {
+        let id = pos(2, 7);
 
         assert_eq!(id.row(), 2);
         assert_eq!(id.col(), 7);
@@ -124,34 +126,33 @@ mod tests {
     fn center_returns_middle_position() {
         let center = PositionId::center();
 
-        assert_eq!(center.index(), 112); // 225 / 2 = 112
         assert_eq!(center.row(), 7);
         assert_eq!(center.col(), 7);
     }
 
     #[test]
     fn from_offset_returns_valid_position() {
-        let id = PositionId::new(112); // center
+        let center = PositionId::center();
         let offset = Offset::new(1, 1);
 
-        let result = id.from_offset(offset);
+        let result = center.from_offset(offset);
 
-        assert_eq!(result, Some(PositionId::new(128)));
+        assert_eq!(result, Some(pos(8, 8)));
     }
 
     #[test]
     fn from_offset_returns_none_when_out_of_bounds() {
-        let id = PositionId::new(0); // top-left corner
+        let corner = pos(0, 0);
         let offset = Offset::new(-1, 0);
 
-        let result = id.from_offset(offset);
+        let result = corner.from_offset(offset);
 
         assert_eq!(result, None);
     }
 
     #[test]
     fn neighbor_count_counts_valid_neighbors() {
-        let corner = PositionId::new(0);
+        let corner = pos(0, 0);
         let offsets = [
             Offset::new(0, 1),
             Offset::new(1, 0),
@@ -173,5 +174,14 @@ mod tests {
         ];
 
         assert_eq!(center.neighbor_count(&offsets), 4);
+    }
+
+    #[test]
+    fn converts_to_usize() {
+        let corner = pos(0, 0);
+        let center = PositionId::center();
+
+        assert_eq!(usize::from(corner), 0);
+        assert_eq!(usize::from(center), 112);
     }
 }

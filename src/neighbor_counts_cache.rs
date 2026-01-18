@@ -53,31 +53,23 @@ impl NeighborCountsCache {
         for &affected_pos in self.neighbor_cache.neighbors_for(position_id) {
             let black = self.black_counts[affected_pos];
             self.black_counts[affected_pos] = match stone {
-                Stone::Black => NeighborCounts::new(
-                    black.player() + 1,
-                    black.opponent(),
-                    black.empty() - 1,
-                ),
-                Stone::White => NeighborCounts::new(
-                    black.player(),
-                    black.opponent() + 1,
-                    black.empty() - 1,
-                ),
+                Stone::Black => {
+                    NeighborCounts::new(black.player() + 1, black.opponent(), black.empty() - 1)
+                }
+                Stone::White => {
+                    NeighborCounts::new(black.player(), black.opponent() + 1, black.empty() - 1)
+                }
                 Stone::Empty => unreachable!(),
             };
 
             let white = self.white_counts[affected_pos];
             self.white_counts[affected_pos] = match stone {
-                Stone::Black => NeighborCounts::new(
-                    white.player(),
-                    white.opponent() + 1,
-                    white.empty() - 1,
-                ),
-                Stone::White => NeighborCounts::new(
-                    white.player() + 1,
-                    white.opponent(),
-                    white.empty() - 1,
-                ),
+                Stone::Black => {
+                    NeighborCounts::new(white.player(), white.opponent() + 1, white.empty() - 1)
+                }
+                Stone::White => {
+                    NeighborCounts::new(white.player() + 1, white.opponent(), white.empty() - 1)
+                }
                 Stone::Empty => unreachable!(),
             };
         }

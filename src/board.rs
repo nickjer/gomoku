@@ -1,6 +1,6 @@
 use std::fmt;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 use crate::offset::Offset;
 use crate::outcome::Outcome;
@@ -154,13 +154,24 @@ impl fmt::Display for Board {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::position::Position;
 
-    fn place_line(board: &mut Board, start: PositionId, offset: Offset, stone: Stone, count: usize) {
-        let mut pos = start;
+    fn pos(row: u8, col: u8) -> PositionId {
+        PositionId::from_position(Position::new(row, col))
+    }
+
+    fn place_line(
+        board: &mut Board,
+        start: PositionId,
+        offset: Offset,
+        stone: Stone,
+        count: usize,
+    ) {
+        let mut current = start;
         for _ in 0..count {
-            board.place(pos, stone).unwrap();
-            if let Some(next) = pos.from_offset(offset) {
-                pos = next;
+            board.place(current, stone).unwrap();
+            if let Some(next) = current.from_offset(offset) {
+                current = next;
             }
         }
     }
@@ -169,25 +180,25 @@ mod tests {
     fn stone_returns_empty_initially() {
         let board = Board::new();
 
-        assert_eq!(board.stone(PositionId::new(0)), Stone::Empty);
+        assert_eq!(board.stone(pos(0, 0)), Stone::Empty);
     }
 
     #[test]
     fn place_sets_stone_at_position() {
         let mut board = Board::new();
-        let position_id = PositionId::new(0);
-        board.place(position_id, Stone::Black).unwrap();
+        let corner = pos(0, 0);
+        board.place(corner, Stone::Black).unwrap();
 
-        assert_eq!(board.stone(position_id), Stone::Black);
+        assert_eq!(board.stone(corner), Stone::Black);
     }
 
     #[test]
     fn place_returns_error_when_position_not_empty() {
         let mut board = Board::new();
-        let position_id = PositionId::new(0);
-        board.place(position_id, Stone::Black).unwrap();
+        let corner = pos(0, 0);
+        board.place(corner, Stone::Black).unwrap();
 
-        let err = board.place(position_id, Stone::White).unwrap_err();
+        let err = board.place(corner, Stone::White).unwrap_err();
         assert_eq!(err.to_string(), "Position is not empty");
     }
 
@@ -203,8 +214,12 @@ mod tests {
     #[test]
     fn display_shows_placed_stones() {
         let mut board = Board::new();
-        board.place(PositionId::new(0), Stone::Black).unwrap();
-        board.place(PositionId::new(1), Stone::White).unwrap();
+        let corner = pos(0, 0);
+        let right = Offset::new(0, 1);
+        board.place(corner, Stone::Black).unwrap();
+        board
+            .place(corner.from_offset(right).unwrap(), Stone::White)
+            .unwrap();
         let display = board.to_string();
 
         assert!(display.starts_with("X O"));
@@ -228,7 +243,7 @@ mod tests {
     fn horizontal_win_detection() {
         let mut board = Board::new();
         let right = Offset::new(0, 1);
-        place_line(&mut board, PositionId::new(0), right, Stone::Black, 5);
+        place_line(&mut board, pos(0, 0), right, Stone::Black, 5);
 
         assert!(board.is_finished());
         assert_eq!(board.outcome(), Some(Outcome::BlackWins));
@@ -238,7 +253,7 @@ mod tests {
     fn vertical_win_detection() {
         let mut board = Board::new();
         let down = Offset::new(1, 0);
-        place_line(&mut board, PositionId::new(0), down, Stone::White, 5);
+        place_line(&mut board, pos(0, 0), down, Stone::White, 5);
 
         assert!(board.is_finished());
         assert_eq!(board.outcome(), Some(Outcome::WhiteWins));
@@ -248,7 +263,7 @@ mod tests {
     fn diagonal_down_right_win_detection() {
         let mut board = Board::new();
         let down_right = Offset::new(1, 1);
-        place_line(&mut board, PositionId::new(0), down_right, Stone::Black, 5);
+        place_line(&mut board, pos(0, 0), down_right, Stone::Black, 5);
 
         assert!(board.is_finished());
         assert_eq!(board.outcome(), Some(Outcome::BlackWins));
@@ -258,7 +273,7 @@ mod tests {
     fn diagonal_down_left_win_detection() {
         let mut board = Board::new();
         let down_left = Offset::new(1, -1);
-        place_line(&mut board, PositionId::new(4), down_left, Stone::Black, 5);
+        place_line(&mut board, pos(0, 4), down_left, Stone::Black, 5);
 
         assert!(board.is_finished());
         assert_eq!(board.outcome(), Some(Outcome::BlackWins));
@@ -268,7 +283,7 @@ mod tests {
     fn no_win_with_four_in_a_row() {
         let mut board = Board::new();
         let right = Offset::new(0, 1);
-        place_line(&mut board, PositionId::new(0), right, Stone::Black, 4);
+        place_line(&mut board, pos(0, 0), right, Stone::Black, 4);
 
         assert!(!board.is_finished());
         assert_eq!(board.outcome(), None);
@@ -278,9 +293,11 @@ mod tests {
     fn returns_error_when_placing_after_win() {
         let mut board = Board::new();
         let right = Offset::new(0, 1);
-        place_line(&mut board, PositionId::new(0), right, Stone::Black, 5);
+        let corner = pos(0, 0);
+        place_line(&mut board, corner, right, Stone::Black, 5);
 
-        let err = board.place(PositionId::new(5), Stone::White).unwrap_err();
+        let after_win = pos(0, 5);
+        let err = board.place(after_win, Stone::White).unwrap_err();
         assert_eq!(err.to_string(), "Game is already finished");
     }
 
@@ -288,7 +305,7 @@ mod tests {
     fn returns_error_when_placing_empty_stone() {
         let mut board = Board::new();
 
-        let err = board.place(PositionId::new(0), Stone::Empty).unwrap_err();
+        let err = board.place(pos(0, 0), Stone::Empty).unwrap_err();
         assert_eq!(err.to_string(), "Cannot place empty stone");
     }
 
@@ -297,9 +314,9 @@ mod tests {
         let mut board = Board::new();
 
         // Fill board with modified checkerboard pattern that avoids 5-in-a-row
-        for pos in PositionId::iter() {
-            let row = pos.row();
-            let col = pos.col();
+        for position in PositionId::iter() {
+            let row = position.row();
+            let col = position.col();
             let checkerboard = (row + col) % 2 == 0;
             let flip_band = (row / 4) % 2 == 1;
             let stone = if checkerboard ^ flip_band {
@@ -307,7 +324,7 @@ mod tests {
             } else {
                 Stone::Black
             };
-            board.place(pos, stone).unwrap();
+            board.place(position, stone).unwrap();
         }
 
         assert_eq!(board.outcome(), Some(Outcome::Draw));
