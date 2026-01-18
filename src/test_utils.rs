@@ -224,12 +224,6 @@ impl ScriptedMatchRunner {
     }
 }
 
-impl Default for ScriptedMatchRunner {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl RunMatch for ScriptedMatchRunner {
     fn run_match(
         &self,
@@ -301,15 +295,6 @@ pub struct FakeEvolvableStrategy {
     genes: Vec<u8>,
 }
 
-impl FakeEvolvableStrategy {
-    pub fn new(label: impl Into<String>, genes: Vec<u8>) -> Self {
-        Self {
-            label: label.into(),
-            genes,
-        }
-    }
-}
-
 impl Strategy for FakeEvolvableStrategy {
     fn cache_dependencies(&self) -> &[CacheId] {
         &[]
@@ -340,7 +325,10 @@ impl EvolvableStrategy for FakeEvolvableStrategy {
     }
 
     fn from_genes(label: impl Into<String>, genes: Vec<Self::Gene>) -> Self {
-        Self::new(label, genes)
+        Self {
+            label: label.into(),
+            genes,
+        }
     }
 
     fn genes(&self) -> &[Self::Gene] {
