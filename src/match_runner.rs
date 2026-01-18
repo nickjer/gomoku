@@ -4,6 +4,16 @@ use crate::match_result::MatchResult;
 use crate::stone::Stone;
 use crate::strategy::Strategy;
 
+/// Trait for running matches between strategies.
+pub trait RunMatch {
+    fn run_match(
+        &self,
+        black_strategy: &dyn Strategy,
+        white_strategy: &dyn Strategy,
+        rng: &mut fastrand::Rng,
+    ) -> MatchResult;
+}
+
 /// Runs a match between two strategies.
 #[derive(Debug, Default)]
 pub struct MatchRunner;
@@ -64,6 +74,17 @@ impl MatchRunner {
             turn_count,
             board.to_string(),
         )
+    }
+}
+
+impl RunMatch for MatchRunner {
+    fn run_match(
+        &self,
+        black_strategy: &dyn Strategy,
+        white_strategy: &dyn Strategy,
+        rng: &mut fastrand::Rng,
+    ) -> MatchResult {
+        self.run(black_strategy, white_strategy, rng)
     }
 }
 
