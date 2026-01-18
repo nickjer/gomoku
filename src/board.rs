@@ -311,19 +311,10 @@ mod tests {
 
     #[test]
     fn outcome_is_draw_when_board_full_without_winner() {
-        let mut board = Board::new();
+        use crate::test_utils::draw_moves;
 
-        // Fill board with modified checkerboard pattern that avoids 5-in-a-row
-        for position in PositionId::iter() {
-            let row = position.row();
-            let col = position.col();
-            let checkerboard = (row + col) % 2 == 0;
-            let flip_band = (row / 4) % 2 == 1;
-            let stone = if checkerboard ^ flip_band {
-                Stone::White
-            } else {
-                Stone::Black
-            };
+        let mut board = Board::new();
+        for (position, stone) in draw_moves() {
             board.place(position, stone).unwrap();
         }
 
