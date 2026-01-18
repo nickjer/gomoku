@@ -2,5 +2,27 @@
 name = "gomoku"
 version = "0.1.0"
 edition = "2024"
+description = "An evolutionary genetic algorithm tool that optimizes strategies for playing Gomoku (five in a row)"
+license = "MIT"
+keywords = ["gomoku", "genetic-algorithm", "evolution", "game", "ai"]
+categories = ["command-line-utilities", "game-development", "algorithms"]
 
 [dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+fastrand = "2"
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
