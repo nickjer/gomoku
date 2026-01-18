@@ -31,24 +31,30 @@ impl<F: Eq + Hash + Clone> BestPositionSelector<F> {
         position_fingerprints: &[(PositionId, F)],
         rng: &mut fastrand::Rng,
     ) -> PositionId {
-        let best_priority = position_fingerprints
-            .iter()
-            .map(|(_, f)| {
-                *self
-                    .priority_map
-                    .get(f)
-                    .expect("Unknown fingerprint in priority map")
-            })
-            .min()
-            .expect("No positions provided");
+        let mut best_priority = usize::MAX;
+        let mut best_positions = Vec::new();
 
-        let best: Vec<_> = position_fingerprints
-            .iter()
-            .filter(|(_, f)| self.priority_map[f] == best_priority)
-            .map(|(pos, _)| *pos)
-            .collect();
+        for &(pos, ref fingerprint) in position_fingerprints {
+            let priority = *self
+                .priority_map
+                .get(fingerprint)
+                .expect("Unknown fingerprint in priority map");
 
-        best[rng.usize(..best.len())]
+            match priority.cmp(&best_priority) {
+                std::cmp::Ordering::Less => {
+                    best_priority = priority;
+                    best_positions.clear();
+                    best_positions.push(pos);
+                }
+                std::cmp::Ordering::Equal => {
+                    best_positions.push(pos);
+                }
+                std::cmp::Ordering::Greater => {}
+            }
+        }
+
+        assert!(!best_positions.is_empty(), "No positions provided");
+        best_positions[rng.usize(..best_positions.len())]
     }
 }
 
