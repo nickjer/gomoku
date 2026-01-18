@@ -14,6 +14,7 @@ use crate::position::Position;
 use crate::position_id::PositionId;
 use crate::stone::Stone;
 use crate::strategy::Strategy;
+use crate::tournament::{RunTournament, Standing};
 
 /// A test individual with a fitness value for selection tests.
 pub struct TestIndividual {
@@ -254,5 +255,31 @@ impl RunMatch for ScriptedMatchRunner {
             0,
             String::new(),
         )
+    }
+}
+
+/// A test tournament that returns standings in a predetermined order.
+pub struct ScriptedTournament {
+    ranking: Vec<&'static str>,
+}
+
+impl ScriptedTournament {
+    pub fn new(ranking: Vec<&'static str>) -> Self {
+        Self { ranking }
+    }
+}
+
+impl RunTournament for ScriptedTournament {
+    fn run<S: Strategy>(&self, strategies: &[S], _rng: &mut fastrand::Rng) -> Vec<Standing> {
+        self.ranking
+            .iter()
+            .map(|&label| {
+                let index = strategies
+                    .iter()
+                    .position(|s| s.label() == label)
+                    .unwrap_or_else(|| panic!("Strategy with label '{label}' not found"));
+                Standing::new(index, 0, 0, 0, 0)
+            })
+            .collect()
     }
 }

@@ -17,8 +17,7 @@ pub mod position_map;
 pub mod simple;
 pub mod stone;
 pub mod strategy;
-pub mod swiss_tournament;
-pub mod tournament_result;
+pub mod tournament;
 
 #[cfg(test)]
 mod test_utils;

@@ -1,6 +1,6 @@
-/// The result for a single strategy in a tournament.
+/// The standing for a single strategy in a tournament.
 #[derive(Debug, Clone)]
-pub struct TournamentResult {
+pub struct Standing {
     strategy_index: usize,
     wins: u32,
     losses: u32,
@@ -8,7 +8,7 @@ pub struct TournamentResult {
     byes: u32,
 }
 
-impl TournamentResult {
+impl Standing {
     #[must_use]
     pub fn new(strategy_index: usize, wins: u32, losses: u32, draws: u32, byes: u32) -> Self {
         Self {
@@ -52,12 +52,12 @@ mod tests {
 
     #[test]
     fn accessors_return_correct_values() {
-        let result = TournamentResult::new(5, 3, 1, 2, 1);
+        let standing = Standing::new(5, 3, 1, 2, 1);
 
-        assert_eq!(result.strategy_index(), 5);
-        assert_eq!(result.wins(), 3);
-        assert_eq!(result.losses(), 1);
-        assert_eq!(result.draws(), 2);
-        assert_eq!(result.byes(), 1);
+        assert_eq!(standing.strategy_index(), 5);
+        assert_eq!(standing.wins(), 3);
+        assert_eq!(standing.losses(), 1);
+        assert_eq!(standing.draws(), 2);
+        assert_eq!(standing.byes(), 1);
     }
 }
