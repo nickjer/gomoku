@@ -160,8 +160,11 @@ impl Evolver {
 
         let mut child_genes = debug_span!("crossover").in_scope(|| {
             if rng.f64() < self.crossover_rate {
-                self.crossover
-                    .crossover(parent1.strategy().genes(), parent2.strategy().genes(), rng)
+                self.crossover.crossover(
+                    parent1.strategy().genes(),
+                    parent2.strategy().genes(),
+                    rng,
+                )
             } else {
                 parent1.strategy().genes().to_vec()
             }
@@ -173,9 +176,8 @@ impl Evolver {
             }
         });
 
-        debug_span!("from_genes").in_scope(|| {
-            S::from_genes(format!("gen{generation}_{index}"), child_genes)
-        })
+        debug_span!("from_genes")
+            .in_scope(|| S::from_genes(format!("gen{generation}_{index}"), child_genes))
     }
 }
 

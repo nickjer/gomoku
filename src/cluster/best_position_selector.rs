@@ -1,12 +1,13 @@
-use std::collections::HashMap;
 use std::hash::Hash;
+
+use ahash::AHashMap;
 
 use crate::position_id::PositionId;
 
 /// Selects the best position based on fingerprint priority.
 #[derive(Debug, Clone)]
 pub struct BestPositionSelector<F> {
-    priority_map: HashMap<F, usize>,
+    priority_map: AHashMap<F, usize>,
 }
 
 impl<F: Eq + Hash + Clone> BestPositionSelector<F> {
