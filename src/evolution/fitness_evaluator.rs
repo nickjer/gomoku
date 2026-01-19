@@ -1,6 +1,6 @@
 use crate::match_runner::RunMatch;
 use crate::strategy::Strategy;
-use crate::tournament::RunTournament;
+use crate::tournament::{RunTournament, Tournament};
 
 use super::Individual;
 
@@ -11,9 +11,9 @@ use super::Individual;
 /// # Panics
 ///
 /// Panics if the tournament returns duplicate or invalid strategy indices.
-pub fn evaluate<S: Strategy, T: RunTournament, R: RunMatch>(
+pub fn evaluate<S: Strategy, R: RunMatch>(
     strategies: Vec<S>,
-    tournament: &T,
+    tournament: &Tournament,
     match_runner: &R,
     rng: &mut fastrand::Rng,
 ) -> Vec<Individual<S>> {
@@ -40,7 +40,8 @@ pub fn evaluate<S: Strategy, T: RunTournament, R: RunMatch>(
 mod tests {
     use super::*;
     use crate::evolution::selection::HasFitness;
-    use crate::test_utils::{ScriptedMatchRunner, ScriptedTournament, StubStrategy};
+    use crate::test_utils::{ScriptedMatchRunner, StubStrategy};
+    use crate::tournament::Scripted;
 
     fn dummy_match_runner() -> ScriptedMatchRunner {
         ScriptedMatchRunner::new()
@@ -53,7 +54,7 @@ mod tests {
             StubStrategy::new("b"),
             StubStrategy::new("c"),
         ];
-        let tournament = ScriptedTournament::new(vec!["b", "a", "c"]);
+        let tournament = Scripted::new(vec!["b", "a", "c"]).into();
         let mut rng = fastrand::Rng::with_seed(42);
 
         let individuals = evaluate(strategies, &tournament, &dummy_match_runner(), &mut rng);
@@ -70,7 +71,7 @@ mod tests {
             StubStrategy::new("b"),
             StubStrategy::new("c"),
         ];
-        let tournament = ScriptedTournament::new(vec!["a", "b", "c"]);
+        let tournament = Scripted::new(vec!["a", "b", "c"]).into();
         let mut rng = fastrand::Rng::with_seed(42);
 
         let individuals = evaluate(strategies, &tournament, &dummy_match_runner(), &mut rng);
@@ -87,7 +88,7 @@ mod tests {
             StubStrategy::new("b"),
             StubStrategy::new("c"),
         ];
-        let tournament = ScriptedTournament::new(vec!["c", "a", "b"]);
+        let tournament = Scripted::new(vec!["c", "a", "b"]).into();
         let mut rng = fastrand::Rng::with_seed(42);
 
         let individuals = evaluate(strategies, &tournament, &dummy_match_runner(), &mut rng);

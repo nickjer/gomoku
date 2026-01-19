@@ -10,6 +10,7 @@ categories = ["command-line-utilities", "game-development", "algorithms"]
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+enum_dispatch = "0.3"
 fastrand = "2"
 serde = { version = "1", features = ["derive"] }
 tracing = "0.1"

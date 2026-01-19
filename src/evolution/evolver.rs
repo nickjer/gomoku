@@ -1,6 +1,6 @@
 use crate::match_runner::RunMatch;
 use crate::strategy::EvolvableStrategy;
-use crate::tournament::RunTournament;
+use crate::tournament::Tournament;
 
 use super::crossover::Crossover;
 use super::mutation::Mutation;
@@ -8,7 +8,7 @@ use super::selection::Selection;
 use super::{Individual, Population, evaluate};
 
 /// Configuration and execution of the evolutionary algorithm.
-pub struct Evolver<T> {
+pub struct Evolver {
     population_size: usize,
     generations: u32,
     elitism: usize,
@@ -17,11 +17,18 @@ pub struct Evolver<T> {
     mutation: Mutation,
     mutation_rate: f64,
     selection: Selection,
-    tournament: T,
+    tournament: Tournament,
 }
 
-impl<T: RunTournament> Evolver<T> {
-    pub fn new(tournament: T) -> Self {
+impl Default for Evolver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Evolver {
+    #[must_use]
+    pub fn new() -> Self {
         Self {
             population_size: 32,
             generations: 10,
@@ -31,7 +38,7 @@ impl<T: RunTournament> Evolver<T> {
             mutation: Mutation::default(),
             mutation_rate: 0.1,
             selection: Selection::default(),
-            tournament,
+            tournament: Tournament::default(),
         }
     }
 
@@ -80,6 +87,12 @@ impl<T: RunTournament> Evolver<T> {
     #[must_use]
     pub fn selection(mut self, selection: Selection) -> Self {
         self.selection = selection;
+        self
+    }
+
+    #[must_use]
+    pub fn tournament(mut self, tournament: Tournament) -> Self {
+        self.tournament = tournament;
         self
     }
 
@@ -161,7 +174,7 @@ impl<T: RunTournament> Evolver<T> {
 mod tests {
     use super::*;
     use crate::strategy::Strategy;
-    use crate::test_utils::{FakeEvolvableStrategy, InputOrderTournament, ScriptedMatchRunner};
+    use crate::test_utils::{FakeEvolvableStrategy, ScriptedMatchRunner};
 
     fn dummy_match_runner() -> ScriptedMatchRunner {
         ScriptedMatchRunner::new()
@@ -169,9 +182,7 @@ mod tests {
 
     #[test]
     fn evolve_returns_population_with_correct_size() {
-        let evolver = Evolver::new(InputOrderTournament)
-            .population_size(4)
-            .generations(0);
+        let evolver = Evolver::new().population_size(4).generations(0);
         let mut rng = fastrand::Rng::with_seed(42);
 
         let population: Population<FakeEvolvableStrategy> =
@@ -182,9 +193,7 @@ mod tests {
 
     #[test]
     fn evolve_with_zero_generations_returns_initial_population() {
-        let evolver = Evolver::new(InputOrderTournament)
-            .population_size(4)
-            .generations(0);
+        let evolver = Evolver::new().population_size(4).generations(0);
         let mut rng = fastrand::Rng::with_seed(42);
 
         let population: Population<FakeEvolvableStrategy> =
@@ -195,9 +204,7 @@ mod tests {
 
     #[test]
     fn evolve_increments_generation() {
-        let evolver = Evolver::new(InputOrderTournament)
-            .population_size(4)
-            .generations(3);
+        let evolver = Evolver::new().population_size(4).generations(3);
         let mut rng = fastrand::Rng::with_seed(42);
 
         let population: Population<FakeEvolvableStrategy> =
@@ -208,12 +215,8 @@ mod tests {
 
     #[test]
     fn evolve_is_deterministic_with_same_seed() {
-        let evolver1 = Evolver::new(InputOrderTournament)
-            .population_size(4)
-            .generations(2);
-        let evolver2 = Evolver::new(InputOrderTournament)
-            .population_size(4)
-            .generations(2);
+        let evolver1 = Evolver::new().population_size(4).generations(2);
+        let evolver2 = Evolver::new().population_size(4).generations(2);
         let match_runner = dummy_match_runner();
 
         let pop1: Population<FakeEvolvableStrategy> =
@@ -236,7 +239,7 @@ mod tests {
 
     #[test]
     fn evolve_preserves_elites() {
-        let evolver = Evolver::new(InputOrderTournament)
+        let evolver = Evolver::new()
             .population_size(4)
             .elitism(2)
             .generations(1)
@@ -259,7 +262,7 @@ mod tests {
 
     #[test]
     fn builder_methods_set_values() {
-        let evolver = Evolver::new(InputOrderTournament)
+        let evolver = Evolver::new()
             .population_size(64)
             .generations(20)
             .elitism(4)
@@ -278,7 +281,7 @@ mod tests {
         let match_runner = dummy_match_runner();
 
         // Get gen0 population
-        let gen0: Population<FakeEvolvableStrategy> = Evolver::new(InputOrderTournament)
+        let gen0: Population<FakeEvolvableStrategy> = Evolver::new()
             .population_size(4)
             .generations(0)
             .evolve(&match_runner, &mut fastrand::Rng::with_seed(42));
@@ -290,7 +293,7 @@ mod tests {
             .collect();
 
         // Run one generation with no crossover, no mutation
-        let gen1: Population<FakeEvolvableStrategy> = Evolver::new(InputOrderTournament)
+        let gen1: Population<FakeEvolvableStrategy> = Evolver::new()
             .population_size(4)
             .elitism(0)
             .generations(1)
@@ -314,7 +317,7 @@ mod tests {
         let match_runner = dummy_match_runner();
 
         // Get gen0 population
-        let gen0: Population<FakeEvolvableStrategy> = Evolver::new(InputOrderTournament)
+        let gen0: Population<FakeEvolvableStrategy> = Evolver::new()
             .population_size(4)
             .generations(0)
             .evolve(&match_runner, &mut fastrand::Rng::with_seed(42));
@@ -326,7 +329,7 @@ mod tests {
             .collect();
 
         // Run one generation with no crossover but 100% mutation
-        let gen1: Population<FakeEvolvableStrategy> = Evolver::new(InputOrderTournament)
+        let gen1: Population<FakeEvolvableStrategy> = Evolver::new()
             .population_size(4)
             .elitism(0)
             .generations(1)
@@ -346,7 +349,7 @@ mod tests {
     #[test]
     fn crossover_rate_one_produces_valid_permutations() {
         // Run one generation with 100% crossover but no mutation
-        let gen1: Population<FakeEvolvableStrategy> = Evolver::new(InputOrderTournament)
+        let gen1: Population<FakeEvolvableStrategy> = Evolver::new()
             .population_size(4)
             .elitism(0)
             .generations(1)

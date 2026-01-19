@@ -4,7 +4,7 @@ use crate::match_runner::RunMatch;
 use crate::outcome::Outcome;
 use crate::strategy::Strategy;
 
-use super::Standing;
+use super::{RunTournament, Standing};
 
 /// Returns the number of rounds for a given number of strategies.
 #[must_use]
@@ -25,24 +25,6 @@ impl Swiss {
         Self
     }
 
-    /// Runs a Swiss tournament with the given strategies.
-    ///
-    /// Returns standings sorted by ranking (best first).
-    pub fn run<S: Strategy, R: RunMatch>(
-        &self,
-        strategies: &[S],
-        match_runner: &R,
-        rng: &mut fastrand::Rng,
-    ) -> Vec<Standing> {
-        let mut state = State::new(strategies.len());
-
-        for _ in 0..total_rounds(strategies.len()) {
-            Self::play_round(&mut state, strategies, match_runner, rng);
-        }
-
-        state.build_standings()
-    }
-
     fn play_round<S: Strategy, R: RunMatch>(
         state: &mut State,
         strategies: &[S],
@@ -53,11 +35,8 @@ impl Swiss {
 
         for (black_idx, white_idx) in pairings {
             if let Some(white_idx) = white_idx {
-                let result = match_runner.run_match(
-                    &strategies[black_idx],
-                    &strategies[white_idx],
-                    rng,
-                );
+                let result =
+                    match_runner.run_match(&strategies[black_idx], &strategies[white_idx], rng);
                 Self::update_state(state, black_idx, white_idx, result.outcome());
             } else {
                 state.award_bye(black_idx);
@@ -100,6 +79,26 @@ impl Swiss {
             Outcome::WhiteWins => state.award_win(white_idx, black_idx),
             Outcome::Draw => state.award_draw(black_idx, white_idx),
         }
+    }
+}
+
+impl RunTournament for Swiss {
+    /// Runs a Swiss tournament with the given strategies.
+    ///
+    /// Returns standings sorted by ranking (best first).
+    fn run<S: Strategy, R: RunMatch>(
+        &self,
+        strategies: &[S],
+        match_runner: &R,
+        rng: &mut fastrand::Rng,
+    ) -> Vec<Standing> {
+        let mut state = State::new(strategies.len());
+
+        for _ in 0..total_rounds(strategies.len()) {
+            Self::play_round(&mut state, strategies, match_runner, rng);
+        }
+
+        state.build_standings()
     }
 }
 

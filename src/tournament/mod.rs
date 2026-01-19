@@ -4,10 +4,13 @@ mod swiss;
 pub use standing::Standing;
 pub use swiss::{Swiss, total_rounds};
 
+use enum_dispatch::enum_dispatch;
+
 use crate::match_runner::RunMatch;
 use crate::strategy::Strategy;
 
 /// Trait for running tournaments.
+#[enum_dispatch]
 pub trait RunTournament {
     fn run<S: Strategy, R: RunMatch>(
         &self,
@@ -17,22 +20,80 @@ pub trait RunTournament {
     ) -> Vec<Standing>;
 }
 
-/// Enum for polymorphic tournament dispatch.
+/// Test tournament: returns standings in input order (first strategy ranks first).
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, Default)]
-pub enum Tournament {
-    #[default]
-    Swiss,
-}
+pub struct InputOrder;
 
-impl RunTournament for Tournament {
+#[cfg(test)]
+impl RunTournament for InputOrder {
     fn run<S: Strategy, R: RunMatch>(
         &self,
         strategies: &[S],
-        match_runner: &R,
-        rng: &mut fastrand::Rng,
+        _match_runner: &R,
+        _rng: &mut fastrand::Rng,
     ) -> Vec<Standing> {
-        match self {
-            Tournament::Swiss => Swiss::new().run(strategies, match_runner, rng),
+        (0..strategies.len())
+            .map(|i| Standing::new(i, 0, 0, 0, 0))
+            .collect()
+    }
+}
+
+/// Test tournament: returns standings in the specified label order.
+#[cfg(test)]
+#[derive(Debug, Clone)]
+pub struct Scripted {
+    ranking: Vec<&'static str>,
+}
+
+#[cfg(test)]
+impl Scripted {
+    pub fn new(ranking: Vec<&'static str>) -> Self {
+        Self { ranking }
+    }
+}
+
+#[cfg(test)]
+impl RunTournament for Scripted {
+    fn run<S: Strategy, R: RunMatch>(
+        &self,
+        strategies: &[S],
+        _match_runner: &R,
+        _rng: &mut fastrand::Rng,
+    ) -> Vec<Standing> {
+        self.ranking
+            .iter()
+            .map(|&label| {
+                let index = strategies
+                    .iter()
+                    .position(|s| s.label() == label)
+                    .unwrap_or_else(|| panic!("Strategy with label '{label}' not found"));
+                Standing::new(index, 0, 0, 0, 0)
+            })
+            .collect()
+    }
+}
+
+/// Enum for polymorphic tournament dispatch.
+#[enum_dispatch(RunTournament)]
+#[derive(Debug, Clone)]
+pub enum Tournament {
+    Swiss,
+    #[cfg(test)]
+    InputOrder,
+    #[cfg(test)]
+    Scripted,
+}
+
+impl Default for Tournament {
+    fn default() -> Self {
+        #[cfg(not(test))]
+        {
+            Swiss.into()
+        }
+        #[cfg(test)]
+        {
+            InputOrder.into()
         }
     }
 }
@@ -45,7 +106,7 @@ mod tests {
     #[test]
     fn swiss_variant_runs_tournament() {
         let match_runner = ScriptedMatchRunner::new().add("a", "b", Winner::Label("a"));
-        let tournament = Tournament::Swiss;
+        let tournament: Tournament = Swiss::new().into();
         let strategies = vec![StubStrategy::new("a"), StubStrategy::new("b")];
         let mut rng = fastrand::Rng::with_seed(42);
 
