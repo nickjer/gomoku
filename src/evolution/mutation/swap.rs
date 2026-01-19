@@ -1,20 +1,9 @@
+use super::RunMutation;
+
 /// Result of a swap mutation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SwapResult<T> {
+struct SwapResult<T> {
     child: Vec<T>,
     swapped: (usize, usize),
-}
-
-impl<T> SwapResult<T> {
-    #[must_use]
-    pub fn into_child(self) -> Vec<T> {
-        self.child
-    }
-
-    #[cfg(test)]
-    fn swapped(&self) -> (usize, usize) {
-        self.swapped
-    }
 }
 
 /// Swap mutation: exchanges two random elements.
@@ -27,10 +16,7 @@ impl Swap {
         Self
     }
 
-    /// # Panics
-    ///
-    /// Panics if genes has fewer than 2 elements.
-    pub fn mutate<T: Clone>(&self, genes: &[T], rng: &mut fastrand::Rng) -> SwapResult<T> {
+    fn mutate_internal<T: Clone>(&self, genes: &[T], rng: &mut fastrand::Rng) -> SwapResult<T> {
         assert!(genes.len() >= 2, "swap requires at least 2 genes");
 
         let a = rng.usize(..genes.len());
@@ -47,17 +33,33 @@ impl Swap {
     }
 }
 
+impl RunMutation for Swap {
+    fn mutate<T: Clone>(&self, genes: &[T], rng: &mut fastrand::Rng) -> Vec<T> {
+        self.mutate_internal(genes, rng).child
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mutate_returns_child_from_internal() {
+        let genes = vec![1, 2, 3, 4, 5];
+
+        let internal = Swap.mutate_internal(&genes, &mut fastrand::Rng::with_seed(42));
+        let public = Swap.mutate(&genes, &mut fastrand::Rng::with_seed(42));
+
+        assert_eq!(public, internal.child);
+    }
 
     #[test]
     fn swaps_two_elements() {
         let genes = vec![1, 2, 3, 4, 5];
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let result = Swap::new().mutate(&genes, &mut rng);
-        let (a, b) = result.swapped();
+        let result = Swap.mutate_internal(&genes, &mut rng);
+        let (a, b) = result.swapped;
 
         assert_eq!(result.child[a], genes[b]);
         assert_eq!(result.child[b], genes[a]);
@@ -68,7 +70,7 @@ mod tests {
         let genes = vec![1, 2, 3, 4, 5];
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let result = Swap::new().mutate(&genes, &mut rng);
+        let result = Swap.mutate_internal(&genes, &mut rng);
 
         assert_eq!(result.child.len(), genes.len());
     }
@@ -79,8 +81,8 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(42);
 
         for _ in 0..100 {
-            let result = Swap::new().mutate(&genes, &mut rng);
-            let (a, b) = result.swapped();
+            let result = Swap.mutate_internal(&genes, &mut rng);
+            let (a, b) = result.swapped;
             assert_ne!(a, b);
         }
     }
@@ -91,7 +93,7 @@ mod tests {
         let genes = vec![1];
         let mut rng = fastrand::Rng::with_seed(42);
 
-        Swap::new().mutate(&genes, &mut rng);
+        Swap.mutate_internal(&genes, &mut rng);
     }
 
     #[test]
@@ -99,8 +101,8 @@ mod tests {
         let genes = vec![1, 2, 3, 4, 5];
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let result = Swap::new().mutate(&genes, &mut rng);
-        let mut sorted = result.into_child();
+        let result = Swap.mutate_internal(&genes, &mut rng);
+        let mut sorted = result.child;
         sorted.sort();
 
         assert_eq!(sorted, vec![1, 2, 3, 4, 5]);

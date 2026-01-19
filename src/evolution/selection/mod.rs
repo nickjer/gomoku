@@ -1,5 +1,7 @@
 mod tournament;
 
+use enum_dispatch::enum_dispatch;
+
 pub use tournament::{Tournament, TournamentMode};
 
 /// Trait for items that can be selected based on fitness.
@@ -7,22 +9,21 @@ pub trait HasFitness {
     fn fitness(&self) -> u32;
 }
 
-/// Enum for polymorphic selection dispatch.
-#[derive(Debug, Clone, Copy)]
-pub enum Selection {
-    Tournament(Tournament),
+/// Trait for selection operations.
+#[enum_dispatch]
+pub trait RunSelection {
+    fn select<'a, T: HasFitness>(&self, population: &'a [T], rng: &mut fastrand::Rng) -> &'a T;
 }
 
-impl Selection {
-    pub fn select<'a, T: HasFitness>(&self, population: &'a [T], rng: &mut fastrand::Rng) -> &'a T {
-        match self {
-            Selection::Tournament(t) => t.select(population, rng),
-        }
-    }
+/// Enum for polymorphic selection dispatch.
+#[enum_dispatch(RunSelection)]
+#[derive(Debug, Clone, Copy)]
+pub enum Selection {
+    Tournament,
 }
 
 impl Default for Selection {
     fn default() -> Self {
-        Selection::Tournament(Tournament::new(3, TournamentMode::WithReplacement))
+        Tournament::default().into()
     }
 }

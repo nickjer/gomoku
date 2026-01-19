@@ -2,9 +2,9 @@ use crate::match_runner::RunMatch;
 use crate::strategy::EvolvableStrategy;
 use crate::tournament::Tournament;
 
-use super::crossover::Crossover;
-use super::mutation::Mutation;
-use super::selection::Selection;
+use super::crossover::{Crossover, RunCrossover};
+use super::mutation::{Mutation, RunMutation};
+use super::selection::{RunSelection, Selection};
 use super::{Individual, Population, evaluate};
 
 /// Configuration and execution of the evolutionary algorithm.

@@ -63,6 +63,15 @@ Prefer static dispatch and zero-cost abstractions over dynamic dispatch. Use enu
 - `#[must_use]` on constructors and getters returning owned/computed values
 - `const fn` where possible
 
+### Implementation Order
+
+Struct implementations must follow this order:
+
+1. Struct definition
+2. Main `impl` block (constructors, public methods, private methods)
+3. Standard library traits (`Default`, `Clone`, `Display`, etc.)
+4. Custom traits (`RunCrossover`, `RunMutation`, `RunSelection`, etc.)
+
 ### Linting
 - Clippy `all` and `pedantic` warnings enabled
 - `unsafe_code = "forbid"`

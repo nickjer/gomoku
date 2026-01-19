@@ -1,33 +1,35 @@
 mod order;
 mod pmx;
 
-pub use order::{Order, OrderResult};
-pub use pmx::{Pmx, PmxResult};
+use std::hash::Hash;
 
-/// Enum for polymorphic crossover dispatch.
-#[derive(Debug, Clone, Copy)]
-pub enum Crossover {
-    Order(Order),
-    Pmx(Pmx),
-}
+use enum_dispatch::enum_dispatch;
 
-impl Crossover {
-    pub fn crossover<T: Clone + Eq + std::hash::Hash>(
+pub use order::Order;
+pub use pmx::Pmx;
+
+/// Trait for crossover operations.
+#[enum_dispatch]
+pub trait RunCrossover {
+    fn crossover<T: Clone + Eq + Hash>(
         &self,
         parent1: &[T],
         parent2: &[T],
         rng: &mut fastrand::Rng,
-    ) -> Vec<T> {
-        match self {
-            Crossover::Order(c) => c.crossover(parent1, parent2, rng).into_child(),
-            Crossover::Pmx(c) => c.crossover(parent1, parent2, rng).into_child(),
-        }
-    }
+    ) -> Vec<T>;
+}
+
+/// Enum for polymorphic crossover dispatch.
+#[enum_dispatch(RunCrossover)]
+#[derive(Debug, Clone, Copy)]
+pub enum Crossover {
+    Order,
+    Pmx,
 }
 
 impl Default for Crossover {
     fn default() -> Self {
-        Crossover::Order(Order::new())
+        Order.into()
     }
 }
 
@@ -41,7 +43,8 @@ mod tests {
         let parent2 = vec![5, 4, 3, 2, 1];
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let child = Crossover::Order(Order::new()).crossover(&parent1, &parent2, &mut rng);
+        let crossover: Crossover = Order.into();
+        let child = crossover.crossover(&parent1, &parent2, &mut rng);
 
         let mut sorted = child.clone();
         sorted.sort();
@@ -54,7 +57,8 @@ mod tests {
         let parent2 = vec![5, 4, 3, 2, 1];
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let child = Crossover::Pmx(Pmx::new()).crossover(&parent1, &parent2, &mut rng);
+        let crossover: Crossover = Pmx.into();
+        let child = crossover.crossover(&parent1, &parent2, &mut rng);
 
         let mut sorted = child.clone();
         sorted.sort();

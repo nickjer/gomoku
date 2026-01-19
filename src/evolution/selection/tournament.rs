@@ -1,4 +1,4 @@
-use super::HasFitness;
+use super::{HasFitness, RunSelection};
 
 /// Mode for tournament selection sampling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,10 +22,11 @@ impl Tournament {
         Self { size, mode }
     }
 
-    /// # Panics
-    ///
-    /// Panics if the population is empty or smaller than the tournament size.
-    pub fn select<'a, T: HasFitness>(&self, population: &'a [T], rng: &mut fastrand::Rng) -> &'a T {
+    fn select_internal<'a, T: HasFitness>(
+        &self,
+        population: &'a [T],
+        rng: &mut fastrand::Rng,
+    ) -> &'a T {
         assert!(
             !population.is_empty(),
             "cannot select from empty population"
@@ -67,6 +68,18 @@ impl Tournament {
             .map(|&i| &population[i])
             .max_by_key(|ind| ind.fitness())
             .expect("tournament size is non-zero")
+    }
+}
+
+impl Default for Tournament {
+    fn default() -> Self {
+        Self::new(3, TournamentMode::WithReplacement)
+    }
+}
+
+impl RunSelection for Tournament {
+    fn select<'a, T: HasFitness>(&self, population: &'a [T], rng: &mut fastrand::Rng) -> &'a T {
+        self.select_internal(population, rng)
     }
 }
 

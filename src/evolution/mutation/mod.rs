@@ -2,31 +2,30 @@ mod insert;
 mod inversion;
 mod swap;
 
-pub use insert::{Insert, InsertResult};
-pub use inversion::{Inversion, InversionResult};
-pub use swap::{Swap, SwapResult};
+use enum_dispatch::enum_dispatch;
 
-/// Enum for polymorphic mutation dispatch.
-#[derive(Debug, Clone, Copy)]
-pub enum Mutation {
-    Swap(Swap),
-    Insert(Insert),
-    Inversion(Inversion),
+pub use insert::Insert;
+pub use inversion::Inversion;
+pub use swap::Swap;
+
+/// Trait for mutation operations.
+#[enum_dispatch]
+pub trait RunMutation {
+    fn mutate<T: Clone>(&self, genes: &[T], rng: &mut fastrand::Rng) -> Vec<T>;
 }
 
-impl Mutation {
-    pub fn mutate<T: Clone>(&self, genes: &[T], rng: &mut fastrand::Rng) -> Vec<T> {
-        match self {
-            Mutation::Swap(m) => m.mutate(genes, rng).into_child(),
-            Mutation::Insert(m) => m.mutate(genes, rng).into_child(),
-            Mutation::Inversion(m) => m.mutate(genes, rng).into_child(),
-        }
-    }
+/// Enum for polymorphic mutation dispatch.
+#[enum_dispatch(RunMutation)]
+#[derive(Debug, Clone, Copy)]
+pub enum Mutation {
+    Swap,
+    Insert,
+    Inversion,
 }
 
 impl Default for Mutation {
     fn default() -> Self {
-        Mutation::Swap(Swap::new())
+        Swap.into()
     }
 }
 
@@ -39,7 +38,8 @@ mod tests {
         let genes = vec![1, 2, 3, 4, 5];
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let result = Mutation::Swap(Swap::new()).mutate(&genes, &mut rng);
+        let mutation: Mutation = Swap.into();
+        let result = mutation.mutate(&genes, &mut rng);
 
         let mut sorted = result.clone();
         sorted.sort();
@@ -51,7 +51,8 @@ mod tests {
         let genes = vec![1, 2, 3, 4, 5];
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let result = Mutation::Insert(Insert::new()).mutate(&genes, &mut rng);
+        let mutation: Mutation = Insert.into();
+        let result = mutation.mutate(&genes, &mut rng);
 
         let mut sorted = result.clone();
         sorted.sort();
@@ -63,7 +64,8 @@ mod tests {
         let genes = vec![1, 2, 3, 4, 5];
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let result = Mutation::Inversion(Inversion::new()).mutate(&genes, &mut rng);
+        let mutation: Mutation = Inversion.into();
+        let result = mutation.mutate(&genes, &mut rng);
 
         let mut sorted = result.clone();
         sorted.sort();

@@ -1,24 +1,12 @@
 use std::collections::HashSet;
 use std::hash::Hash;
 
+use super::RunCrossover;
+
 /// Result of an order crossover.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OrderResult<T> {
+struct OrderResult<T> {
     child: Vec<T>,
     segment: (usize, usize),
-}
-
-impl<T> OrderResult<T> {
-    #[must_use]
-    pub fn into_child(self) -> Vec<T> {
-        self.child
-    }
-
-    /// Returns (start, end) indices of the copied segment (both inclusive).
-    #[cfg(test)]
-    fn segment(&self) -> (usize, usize) {
-        self.segment
-    }
 }
 
 /// Order crossover (OX): copies a segment from parent1, fills remaining positions
@@ -32,10 +20,7 @@ impl Order {
         Self
     }
 
-    /// # Panics
-    ///
-    /// Panics if parent2 doesn't contain all elements from parent1.
-    pub fn crossover<T: Clone + Eq + Hash>(
+    fn crossover_internal<T: Clone + Eq + Hash>(
         &self,
         parent1: &[T],
         parent2: &[T],
@@ -67,9 +52,32 @@ impl Order {
     }
 }
 
+impl RunCrossover for Order {
+    fn crossover<T: Clone + Eq + Hash>(
+        &self,
+        parent1: &[T],
+        parent2: &[T],
+        rng: &mut fastrand::Rng,
+    ) -> Vec<T> {
+        self.crossover_internal(parent1, parent2, rng).child
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn crossover_returns_child_from_internal() {
+        let parent1 = vec![1, 2, 3, 4, 5, 6, 7, 8];
+        let parent2 = vec![8, 7, 6, 5, 4, 3, 2, 1];
+
+        let internal =
+            Order.crossover_internal(&parent1, &parent2, &mut fastrand::Rng::with_seed(42));
+        let public = Order.crossover(&parent1, &parent2, &mut fastrand::Rng::with_seed(42));
+
+        assert_eq!(public, internal.child);
+    }
 
     #[test]
     fn child_has_same_size() {
@@ -77,7 +85,7 @@ mod tests {
         let parent2 = vec![8, 7, 6, 5, 4, 3, 2, 1];
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let result = Order::new().crossover(&parent1, &parent2, &mut rng);
+        let result = Order.crossover_internal(&parent1, &parent2, &mut rng);
 
         assert_eq!(result.child.len(), parent1.len());
     }
@@ -89,8 +97,8 @@ mod tests {
         // Seed 13 produces segment (1, 5) - 5 elements
         let mut rng = fastrand::Rng::with_seed(13);
 
-        let result = Order::new().crossover(&parent1, &parent2, &mut rng);
-        let mut sorted = result.into_child();
+        let result = Order.crossover_internal(&parent1, &parent2, &mut rng);
+        let mut sorted = result.child;
         sorted.sort();
 
         assert_eq!(sorted, vec![1, 2, 3, 4, 5, 6, 7, 8]);
@@ -103,8 +111,8 @@ mod tests {
         // Seed 13 produces segment (1, 5) - 5 elements
         let mut rng = fastrand::Rng::with_seed(13);
 
-        let result = Order::new().crossover(&parent1, &parent2, &mut rng);
-        let (start, end) = result.segment();
+        let result = Order.crossover_internal(&parent1, &parent2, &mut rng);
+        let (start, end) = result.segment;
 
         assert!(end - start >= 2, "segment too small: ({start}, {end})");
         assert_eq!(&result.child[start..=end], &parent1[start..=end]);
@@ -117,8 +125,8 @@ mod tests {
         // Seed 13 produces segment (1, 5) - leaves positions 0, 6, 7 outside
         let mut rng = fastrand::Rng::with_seed(13);
 
-        let result = Order::new().crossover(&parent1, &parent2, &mut rng);
-        let (start, end) = result.segment();
+        let result = Order.crossover_internal(&parent1, &parent2, &mut rng);
+        let (start, end) = result.segment;
 
         assert!(end - start >= 2, "segment too small: ({start}, {end})");
 
@@ -147,8 +155,8 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(42);
 
         for _ in 0..100 {
-            let result = Order::new().crossover(&parent1, &parent2, &mut rng);
-            let (start, end) = result.segment();
+            let result = Order.crossover_internal(&parent1, &parent2, &mut rng);
+            let (start, end) = result.segment;
             assert!(start <= end);
         }
     }
@@ -159,10 +167,10 @@ mod tests {
         let parent2 = vec![1];
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let result = Order::new().crossover(&parent1, &parent2, &mut rng);
+        let result = Order.crossover_internal(&parent1, &parent2, &mut rng);
 
         assert_eq!(result.child, vec![1]);
-        assert_eq!(result.segment(), (0, 0));
+        assert_eq!(result.segment, (0, 0));
     }
 
     #[test]
@@ -170,8 +178,10 @@ mod tests {
         let parent1 = vec![1, 2, 3, 4, 5, 6, 7, 8];
         let parent2 = vec![8, 7, 6, 5, 4, 3, 2, 1];
 
-        let result1 = Order::new().crossover(&parent1, &parent2, &mut fastrand::Rng::with_seed(42));
-        let result2 = Order::new().crossover(&parent1, &parent2, &mut fastrand::Rng::with_seed(42));
+        let result1 =
+            Order.crossover_internal(&parent1, &parent2, &mut fastrand::Rng::with_seed(42));
+        let result2 =
+            Order.crossover_internal(&parent1, &parent2, &mut fastrand::Rng::with_seed(42));
 
         assert_eq!(result1.child, result2.child);
     }
@@ -183,9 +193,9 @@ mod tests {
 
         let results: Vec<_> = (0..20)
             .map(|seed| {
-                Order::new()
-                    .crossover(&parent1, &parent2, &mut fastrand::Rng::with_seed(seed))
-                    .into_child()
+                Order
+                    .crossover_internal(&parent1, &parent2, &mut fastrand::Rng::with_seed(seed))
+                    .child
             })
             .collect();
 
