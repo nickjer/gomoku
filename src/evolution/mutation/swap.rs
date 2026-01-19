@@ -10,8 +10,9 @@ impl Swap {
         Self
     }
 
+    #[allow(clippy::unused_self)]
     fn mutate_internal<T: Clone>(
-        &self,
+        self,
         genes: &[T],
         rng: &mut fastrand::Rng,
     ) -> (Vec<T>, (usize, usize)) {

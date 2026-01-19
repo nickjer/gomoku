@@ -1,6 +1,8 @@
 use std::collections::BTreeSet;
 use std::sync::LazyLock;
 
+use serde::{Deserialize, Serialize};
+
 use crate::cache_repository::CacheRepository;
 use crate::cluster::NeighborCounts;
 use crate::cluster::fingerprint::combinations_for_total;
@@ -8,12 +10,29 @@ use crate::cluster::offsets;
 use crate::position_id::PositionId;
 use crate::stone::Stone;
 
+type Nn3Tuple = (NeighborCounts, NeighborCounts, NeighborCounts);
+
 /// Fingerprint based on NN1, NN2, and NN3 neighbors.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+///
+/// Serializes as a 3-tuple of neighbor counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(from = "Nn3Tuple", into = "Nn3Tuple")]
 pub struct FingerprintNN3 {
     nn1: NeighborCounts,
     nn2: NeighborCounts,
     nn3: NeighborCounts,
+}
+
+impl From<Nn3Tuple> for FingerprintNN3 {
+    fn from((nn1, nn2, nn3): Nn3Tuple) -> Self {
+        Self::new(nn1, nn2, nn3)
+    }
+}
+
+impl From<FingerprintNN3> for Nn3Tuple {
+    fn from(fp: FingerprintNN3) -> Self {
+        (fp.nn1, fp.nn2, fp.nn3)
+    }
 }
 
 impl FingerprintNN3 {

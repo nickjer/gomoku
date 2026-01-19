@@ -1,9 +1,26 @@
+use serde::{Deserialize, Serialize};
+
 /// Counts of stones in a neighbor ring from the current player's perspective.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+///
+/// Serializes as a tuple `(player, opponent, empty)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(from = "(u8, u8, u8)", into = "(u8, u8, u8)")]
 pub struct NeighborCounts {
     player: u8,
     opponent: u8,
     empty: u8,
+}
+
+impl From<(u8, u8, u8)> for NeighborCounts {
+    fn from((player, opponent, empty): (u8, u8, u8)) -> Self {
+        Self::new(player, opponent, empty)
+    }
+}
+
+impl From<NeighborCounts> for (u8, u8, u8) {
+    fn from(counts: NeighborCounts) -> Self {
+        (counts.player, counts.opponent, counts.empty)
+    }
 }
 
 impl NeighborCounts {

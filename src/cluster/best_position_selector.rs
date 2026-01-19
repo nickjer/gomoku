@@ -4,6 +4,7 @@ use std::hash::Hash;
 use crate::position_id::PositionId;
 
 /// Selects the best position based on fingerprint priority.
+#[derive(Debug, Clone)]
 pub struct BestPositionSelector<F> {
     priority_map: HashMap<F, usize>,
 }

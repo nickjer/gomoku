@@ -33,6 +33,14 @@ impl<S> Population<S> {
             generation: self.generation + 1,
         }
     }
+
+    #[must_use]
+    pub fn into_strategies(self) -> Vec<S> {
+        self.individuals
+            .into_iter()
+            .map(Individual::into_strategy)
+            .collect()
+    }
 }
 
 #[cfg(test)]

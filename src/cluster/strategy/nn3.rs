@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use crate::board::Board;
 use crate::cache_id::CacheId;
 use crate::cache_repository::CacheRepository;
@@ -8,10 +10,33 @@ use crate::stone::Stone;
 use crate::strategy::{EvolvableStrategy, Strategy};
 
 /// A strategy based on NN3 fingerprints with evolvable gene priority.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(from = "NN3Raw", into = "NN3Raw")]
 pub struct NN3 {
     label: String,
     genes: Vec<FingerprintNN3>,
     selector: BestPositionSelector<FingerprintNN3>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct NN3Raw {
+    label: String,
+    genes: Vec<FingerprintNN3>,
+}
+
+impl From<NN3Raw> for NN3 {
+    fn from(raw: NN3Raw) -> Self {
+        Self::new(raw.label, raw.genes)
+    }
+}
+
+impl From<NN3> for NN3Raw {
+    fn from(strategy: NN3) -> Self {
+        Self {
+            label: strategy.label,
+            genes: strategy.genes,
+        }
+    }
 }
 
 impl NN3 {

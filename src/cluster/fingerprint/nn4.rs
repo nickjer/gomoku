@@ -1,6 +1,8 @@
 use std::collections::BTreeSet;
 use std::sync::LazyLock;
 
+use serde::{Deserialize, Serialize};
+
 use crate::cache_repository::CacheRepository;
 use crate::cluster::NeighborCounts;
 use crate::cluster::fingerprint::combinations_for_total;
@@ -8,13 +10,30 @@ use crate::cluster::offsets;
 use crate::position_id::PositionId;
 use crate::stone::Stone;
 
+type Nn4Tuple = (NeighborCounts, NeighborCounts, NeighborCounts, NeighborCounts);
+
 /// Fingerprint based on all four neighbor rings (NN1-NN4).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+///
+/// Serializes as a 4-tuple of neighbor counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(from = "Nn4Tuple", into = "Nn4Tuple")]
 pub struct FingerprintNN4 {
     nn1: NeighborCounts,
     nn2: NeighborCounts,
     nn3: NeighborCounts,
     nn4: NeighborCounts,
+}
+
+impl From<Nn4Tuple> for FingerprintNN4 {
+    fn from((nn1, nn2, nn3, nn4): Nn4Tuple) -> Self {
+        Self::new(nn1, nn2, nn3, nn4)
+    }
+}
+
+impl From<FingerprintNN4> for Nn4Tuple {
+    fn from(fp: FingerprintNN4) -> Self {
+        (fp.nn1, fp.nn2, fp.nn3, fp.nn4)
+    }
 }
 
 impl FingerprintNN4 {

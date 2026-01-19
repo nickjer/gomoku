@@ -14,8 +14,9 @@ impl Pmx {
         Self
     }
 
+    #[allow(clippy::unused_self)]
     fn crossover_internal<T: Clone + Eq + Hash>(
-        &self,
+        self,
         parent1: &[T],
         parent2: &[T],
         rng: &mut fastrand::Rng,

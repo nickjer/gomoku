@@ -1,6 +1,7 @@
 #![warn(clippy::as_conversions)]
 
 pub mod board;
+pub mod cli;
 pub mod cache_id;
 pub mod cache_repository;
 pub mod cluster;

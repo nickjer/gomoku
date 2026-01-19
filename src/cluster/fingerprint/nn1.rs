@@ -1,6 +1,8 @@
 use std::collections::BTreeSet;
 use std::sync::LazyLock;
 
+use serde::{Deserialize, Serialize};
+
 use crate::cache_repository::CacheRepository;
 use crate::cluster::NeighborCounts;
 use crate::cluster::fingerprint::combinations_for_total;
@@ -8,10 +10,27 @@ use crate::cluster::offsets;
 use crate::position_id::PositionId;
 use crate::stone::Stone;
 
+type Nn1Tuple = (NeighborCounts,);
+
 /// Fingerprint based on NN1 (orthogonal) neighbors only.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+///
+/// Serializes as a 1-tuple `((player, opponent, empty),)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(from = "Nn1Tuple", into = "Nn1Tuple")]
 pub struct FingerprintNN1 {
     counts: NeighborCounts,
+}
+
+impl From<Nn1Tuple> for FingerprintNN1 {
+    fn from((counts,): Nn1Tuple) -> Self {
+        Self::new(counts)
+    }
+}
+
+impl From<FingerprintNN1> for Nn1Tuple {
+    fn from(fp: FingerprintNN1) -> Self {
+        (fp.counts,)
+    }
 }
 
 impl FingerprintNN1 {

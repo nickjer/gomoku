@@ -16,8 +16,9 @@ impl Freestyle {
         Self
     }
 
+    #[allow(clippy::unused_self)]
     fn run_internal(
-        &self,
+        self,
         black_strategy: &dyn Strategy,
         white_strategy: &dyn Strategy,
         rng: &mut fastrand::Rng,
