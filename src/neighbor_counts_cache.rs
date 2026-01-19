@@ -1,5 +1,5 @@
+use crate::cluster::NeighborCounts;
 use crate::neighbor_cache::NeighborCache;
-use crate::pair::NeighborCounts;
 use crate::position_id::PositionId;
 use crate::position_map::PositionMap;
 use crate::stone::Stone;

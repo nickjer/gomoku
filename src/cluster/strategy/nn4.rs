@@ -1,8 +1,8 @@
 use crate::board::Board;
 use crate::cache_id::CacheId;
 use crate::cache_repository::CacheRepository;
-use crate::pair::BestPositionSelector;
-use crate::pair::fingerprint::FingerprintNN4;
+use crate::cluster::BestPositionSelector;
+use crate::cluster::fingerprint::FingerprintNN4;
 use crate::position_id::PositionId;
 use crate::stone::Stone;
 use crate::strategy::{EvolvableStrategy, Strategy};
@@ -83,7 +83,7 @@ impl Strategy for NN4 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pair::NeighborCounts;
+    use crate::cluster::NeighborCounts;
     use crate::position::Position;
     use std::collections::HashSet;
 

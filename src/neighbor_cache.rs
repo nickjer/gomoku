@@ -1,7 +1,7 @@
 use std::sync::LazyLock;
 
+use crate::cluster::offsets;
 use crate::offset::Offset;
-use crate::pair::offsets;
 use crate::position_id::PositionId;
 use crate::position_map::PositionMap;
 

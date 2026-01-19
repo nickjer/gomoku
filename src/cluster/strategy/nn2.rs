@@ -1,22 +1,22 @@
 use crate::board::Board;
 use crate::cache_id::CacheId;
 use crate::cache_repository::CacheRepository;
-use crate::pair::BestPositionSelector;
-use crate::pair::fingerprint::FingerprintNN3;
+use crate::cluster::BestPositionSelector;
+use crate::cluster::fingerprint::FingerprintNN2;
 use crate::position_id::PositionId;
 use crate::stone::Stone;
 use crate::strategy::{EvolvableStrategy, Strategy};
 
-/// A strategy based on NN3 fingerprints with evolvable gene priority.
-pub struct NN3 {
+/// A strategy based on NN2 fingerprints with evolvable gene priority.
+pub struct NN2 {
     label: String,
-    genes: Vec<FingerprintNN3>,
-    selector: BestPositionSelector<FingerprintNN3>,
+    genes: Vec<FingerprintNN2>,
+    selector: BestPositionSelector<FingerprintNN2>,
 }
 
-impl NN3 {
+impl NN2 {
     #[must_use]
-    pub fn new(label: impl Into<String>, genes: Vec<FingerprintNN3>) -> Self {
+    pub fn new(label: impl Into<String>, genes: Vec<FingerprintNN2>) -> Self {
         let selector = BestPositionSelector::new(&genes);
         Self {
             label: label.into(),
@@ -26,11 +26,11 @@ impl NN3 {
     }
 }
 
-impl EvolvableStrategy for NN3 {
-    type Gene = FingerprintNN3;
+impl EvolvableStrategy for NN2 {
+    type Gene = FingerprintNN2;
 
     fn random_genes(rng: &mut fastrand::Rng) -> Vec<Self::Gene> {
-        let mut genes = FingerprintNN3::all().to_vec();
+        let mut genes = FingerprintNN2::all().to_vec();
         rng.shuffle(&mut genes);
         genes
     }
@@ -44,13 +44,9 @@ impl EvolvableStrategy for NN3 {
     }
 }
 
-impl Strategy for NN3 {
+impl Strategy for NN2 {
     fn cache_dependencies(&self) -> &[CacheId] {
-        &[
-            CacheId::NeighborNN1,
-            CacheId::NeighborNN2,
-            CacheId::NeighborNN3,
-        ]
+        &[CacheId::NeighborNN1, CacheId::NeighborNN2]
     }
 
     fn choose_move(
@@ -66,7 +62,7 @@ impl Strategy for NN3 {
             .map(|&pos| {
                 (
                     pos,
-                    FingerprintNN3::calculate(pos, current_stone, cache_repo),
+                    FingerprintNN2::calculate(pos, current_stone, cache_repo),
                 )
             })
             .collect();
@@ -82,7 +78,7 @@ impl Strategy for NN3 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pair::NeighborCounts;
+    use crate::cluster::NeighborCounts;
     use crate::position::Position;
     use std::collections::HashSet;
 
@@ -94,8 +90,8 @@ mod tests {
         NeighborCounts::new(player, opponent, empty)
     }
 
-    fn fp3(nn1: NeighborCounts, nn2: NeighborCounts, nn3: NeighborCounts) -> FingerprintNN3 {
-        FingerprintNN3::new(nn1, nn2, nn3)
+    fn fp2(nn1: NeighborCounts, nn2: NeighborCounts) -> FingerprintNN2 {
+        FingerprintNN2::new(nn1, nn2)
     }
 
     struct TestContext {
@@ -108,7 +104,6 @@ mod tests {
             let mut cache_repo = CacheRepository::new();
             cache_repo.activate(CacheId::NeighborNN1);
             cache_repo.activate(CacheId::NeighborNN2);
-            cache_repo.activate(CacheId::NeighborNN3);
             Self {
                 cache_repo,
                 rng: fastrand::Rng::new(),
@@ -124,7 +119,7 @@ mod tests {
     #[test]
     fn choose_move_returns_empty_position() {
         let mut ctx = TestContext::new();
-        let strategy = NN3::new("test", FingerprintNN3::all().to_vec());
+        let strategy = NN2::new("test", FingerprintNN2::all().to_vec());
         let board = Board::new();
 
         let result = strategy.choose_move(Stone::Black, &board, &ctx.cache_repo, &mut ctx.rng);
@@ -133,56 +128,48 @@ mod tests {
     }
 
     #[test]
-    fn choose_move_prefers_nn3_pattern_when_prioritized() {
-        //       5   6   7   8   9
-        //     +---+---+---+---+---+
-        //  5  |   |   |   |   |   |
-        //     +---+---+---+---+---+
-        //  6  |   | B | W |   |   |
-        //     +---+---+---+---+---+
-        //  7  |   | B |(*)| B |   |
-        //     +---+---+---+---+---+
-        //  8  |   |   | W | W |   |
-        //     +---+---+---+---+---+
-        //  9  |   |   |   |   |   |
-        //     +---+---+---+---+---+
+    fn choose_move_prefers_edge_mixed_when_prioritized() {
+        // Board setup (top-left corner):
         //
-        // (*) = center (7,7), playing as Black
-        // NN1: (6,7)=W, (8,7)=W, (7,6)=B, (7,8)=B → self=2, opp=2, empty=0
-        // NN2: (6,6)=B, (8,8)=W                   → self=1, opp=1, empty=2
-        // NN3: all empty                          → self=0, opp=0, empty=4
+        //        col 0   col 1
+        //      +-------+-------+
+        // row 0|   B   |   B   |
+        //      +-------+-------+
+        // row 1|  (*)  |       |   (*) = position being evaluated
+        //      +-------+-------+
+        // row 2|   W   |   W   |
+        //      +-------+-------+
+        //
+        // Position (1,0):
+        //   NN1: (0,0)=B, (2,0)=W, (1,1)=empty → self=1, opp=1, empty=1
+        //   NN2: (0,1)=B, (2,1)=W             → self=1, opp=1, empty=0
         let mut ctx = TestContext::new();
-        let specific_fp = fp3(counts(2, 2, 0), counts(1, 1, 2), counts(0, 0, 4));
-        let mut priority = vec![specific_fp];
-        priority.extend(FingerprintNN3::all().iter().filter(|&&f| f != specific_fp));
+        let edge_mixed = fp2(counts(1, 1, 1), counts(1, 1, 0));
+        let mut priority = vec![edge_mixed];
+        priority.extend(FingerprintNN2::all().iter().filter(|&&f| f != edge_mixed));
 
-        let strategy = NN3::new("test", priority);
+        let strategy = NN2::new("test", priority);
         let mut board = Board::new();
 
-        // NN1 neighbors
-        ctx.place(&mut board, pos(6, 7), Stone::White); // up
-        ctx.place(&mut board, pos(8, 7), Stone::White); // down
-        ctx.place(&mut board, pos(7, 6), Stone::Black); // left
-        ctx.place(&mut board, pos(7, 8), Stone::Black); // right
-
-        // NN2 neighbors
-        ctx.place(&mut board, pos(6, 6), Stone::Black); // up-left
-        ctx.place(&mut board, pos(8, 8), Stone::White); // down-right
+        ctx.place(&mut board, pos(0, 0), Stone::Black);
+        ctx.place(&mut board, pos(2, 0), Stone::White);
+        ctx.place(&mut board, pos(0, 1), Stone::Black);
+        ctx.place(&mut board, pos(2, 1), Stone::White);
 
         let result = strategy.choose_move(Stone::Black, &board, &ctx.cache_repo, &mut ctx.rng);
-        let fingerprint = FingerprintNN3::calculate(result, Stone::Black, &ctx.cache_repo);
+        let fingerprint = FingerprintNN2::calculate(result, Stone::Black, &ctx.cache_repo);
 
-        assert_eq!(result, pos(7, 7)); // center
-        assert_eq!(fingerprint, specific_fp);
+        assert_eq!(result, pos(1, 0));
+        assert_eq!(fingerprint, edge_mixed);
     }
 
     #[test]
     #[should_panic(expected = "Unknown fingerprint in priority map")]
     fn choose_move_panics_on_unknown_fingerprint() {
         let mut ctx = TestContext::new();
-        let incomplete_priority = vec![fp3(counts(0, 0, 4), counts(0, 0, 4), counts(0, 0, 4))];
+        let incomplete_priority = vec![fp2(counts(0, 0, 4), counts(0, 0, 4))];
 
-        let strategy = NN3::new("test", incomplete_priority);
+        let strategy = NN2::new("test", incomplete_priority);
         let mut board = Board::new();
         ctx.place(&mut board, PositionId::center(), Stone::Black);
 
@@ -191,15 +178,15 @@ mod tests {
 
     #[test]
     fn label_returns_provided_label() {
-        let strategy = NN3::new("my_nn3_strategy", FingerprintNN3::all().to_vec());
+        let strategy = NN2::new("my_nn2_strategy", FingerprintNN2::all().to_vec());
 
-        assert_eq!(strategy.label(), "my_nn3_strategy");
+        assert_eq!(strategy.label(), "my_nn2_strategy");
     }
 
     #[test]
     fn genes_returns_fingerprint_priority() {
-        let priority: Vec<_> = FingerprintNN3::all().to_vec();
-        let strategy = NN3::new("test", priority.clone());
+        let priority: Vec<_> = FingerprintNN2::all().to_vec();
+        let strategy = NN2::new("test", priority.clone());
 
         assert_eq!(strategy.genes(), priority.as_slice());
     }
@@ -207,18 +194,18 @@ mod tests {
     #[test]
     fn random_genes_has_correct_size() {
         let mut rng = fastrand::Rng::with_seed(42);
-        let strategy = NN3::random("test", &mut rng);
+        let strategy = NN2::random("test", &mut rng);
 
-        assert_eq!(strategy.genes().len(), FingerprintNN3::all().len());
+        assert_eq!(strategy.genes().len(), FingerprintNN2::all().len());
     }
 
     #[test]
     fn random_genes_contains_all_fingerprints() {
         let mut rng = fastrand::Rng::with_seed(42);
-        let strategy = NN3::random("test", &mut rng);
+        let strategy = NN2::random("test", &mut rng);
 
         let genes_set: HashSet<_> = strategy.genes().iter().collect();
-        let all_set: HashSet<_> = FingerprintNN3::all().iter().collect();
+        let all_set: HashSet<_> = FingerprintNN2::all().iter().collect();
 
         assert_eq!(genes_set, all_set);
     }
@@ -226,23 +213,23 @@ mod tests {
     #[test]
     fn random_genes_is_shuffled() {
         let mut rng = fastrand::Rng::with_seed(42);
-        let strategy = NN3::random("test", &mut rng);
+        let strategy = NN2::random("test", &mut rng);
 
-        assert_ne!(strategy.genes(), FingerprintNN3::all());
+        assert_ne!(strategy.genes(), FingerprintNN2::all());
     }
 
     #[test]
     fn random_genes_deterministic_with_same_seed() {
-        let strategy1 = NN3::random("test", &mut fastrand::Rng::with_seed(42));
-        let strategy2 = NN3::random("test", &mut fastrand::Rng::with_seed(42));
+        let strategy1 = NN2::random("test", &mut fastrand::Rng::with_seed(42));
+        let strategy2 = NN2::random("test", &mut fastrand::Rng::with_seed(42));
 
         assert_eq!(strategy1.genes(), strategy2.genes());
     }
 
     #[test]
     fn random_genes_different_with_different_seeds() {
-        let strategy1 = NN3::random("test", &mut fastrand::Rng::with_seed(1));
-        let strategy2 = NN3::random("test", &mut fastrand::Rng::with_seed(2));
+        let strategy1 = NN2::random("test", &mut fastrand::Rng::with_seed(1));
+        let strategy2 = NN2::random("test", &mut fastrand::Rng::with_seed(2));
 
         assert_ne!(strategy1.genes(), strategy2.genes());
     }

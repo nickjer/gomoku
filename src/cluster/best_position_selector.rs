@@ -61,7 +61,7 @@ impl<F: Eq + Hash + Clone> BestPositionSelector<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pair::NeighborCounts;
+    use crate::cluster::NeighborCounts;
     use crate::position::Position;
 
     fn pos(row: u8, col: u8) -> PositionId {

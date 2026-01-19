@@ -8,7 +8,7 @@ pub use nn2::FingerprintNN2;
 pub use nn3::FingerprintNN3;
 pub use nn4::FingerprintNN4;
 
-use crate::pair::NeighborCounts;
+use crate::cluster::NeighborCounts;
 
 /// Generates all possible `NeighborCounts` combinations for a given total neighbor count.
 #[must_use]
