@@ -8,11 +8,11 @@ keywords = ["gomoku", "genetic-algorithm", "evolution", "game", "ai"]
 categories = ["command-line-utilities", "game-development", "algorithms"]
 
 [dependencies]
-ahash = "0.8"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 enum_dispatch = "0.3"
 fastrand = "2"
+rapidhash = "4"
 ron = "0.10"
 serde = { version = "1", features = ["derive"] }
 strum = { version = "0.27", features = ["derive"] }

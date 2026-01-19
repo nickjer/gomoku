@@ -1,13 +1,13 @@
 use std::hash::Hash;
 
-use ahash::AHashMap;
+use rapidhash::RapidHashMap;
 
 use crate::position_id::PositionId;
 
 /// Selects the best position based on fingerprint priority.
 #[derive(Debug, Clone)]
 pub struct BestPositionSelector<F> {
-    priority_map: AHashMap<F, usize>,
+    priority_map: RapidHashMap<F, usize>,
 }
 
 impl<F: Eq + Hash + Clone> BestPositionSelector<F> {
