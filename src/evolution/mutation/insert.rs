@@ -1,11 +1,5 @@
 use super::RunMutation;
 
-/// Result of an insert mutation.
-struct InsertResult<T> {
-    child: Vec<T>,
-    moved: (usize, usize),
-}
-
 /// Insert mutation: removes an element and reinserts it at a different position.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Insert;
@@ -16,7 +10,11 @@ impl Insert {
         Self
     }
 
-    fn mutate_internal<T: Clone>(&self, genes: &[T], rng: &mut fastrand::Rng) -> InsertResult<T> {
+    fn mutate_internal<T: Clone>(
+        &self,
+        genes: &[T],
+        rng: &mut fastrand::Rng,
+    ) -> (Vec<T>, (usize, usize)) {
         assert!(genes.len() >= 2, "insert requires at least 2 genes");
 
         let from = rng.usize(..genes.len());
@@ -27,16 +25,13 @@ impl Insert {
         let element = child.remove(from);
         child.insert(to, element);
 
-        InsertResult {
-            child,
-            moved: (from, to),
-        }
+        (child, (from, to))
     }
 }
 
 impl RunMutation for Insert {
     fn mutate<T: Clone>(&self, genes: &[T], rng: &mut fastrand::Rng) -> Vec<T> {
-        self.mutate_internal(genes, rng).child
+        self.mutate_internal(genes, rng).0
     }
 }
 
@@ -48,10 +43,10 @@ mod tests {
     fn mutate_returns_child_from_internal() {
         let genes = vec![1, 2, 3, 4, 5];
 
-        let internal = Insert.mutate_internal(&genes, &mut fastrand::Rng::with_seed(42));
+        let (child, _) = Insert.mutate_internal(&genes, &mut fastrand::Rng::with_seed(42));
         let public = Insert.mutate(&genes, &mut fastrand::Rng::with_seed(42));
 
-        assert_eq!(public, internal.child);
+        assert_eq!(public, child);
     }
 
     #[test]
@@ -59,10 +54,9 @@ mod tests {
         let genes = vec![1, 2, 3, 4, 5];
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let result = Insert.mutate_internal(&genes, &mut rng);
-        let (from, to) = result.moved;
+        let (child, (from, to)) = Insert.mutate_internal(&genes, &mut rng);
 
-        assert_eq!(result.child[to], genes[from]);
+        assert_eq!(child[to], genes[from]);
     }
 
     #[test]
@@ -70,9 +64,9 @@ mod tests {
         let genes = vec![1, 2, 3, 4, 5];
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let result = Insert.mutate_internal(&genes, &mut rng);
+        let (child, _) = Insert.mutate_internal(&genes, &mut rng);
 
-        assert_eq!(result.child.len(), genes.len());
+        assert_eq!(child.len(), genes.len());
     }
 
     #[test]
@@ -81,8 +75,7 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(42);
 
         for _ in 0..100 {
-            let result = Insert.mutate_internal(&genes, &mut rng);
-            let (from, to) = result.moved;
+            let (_, (from, to)) = Insert.mutate_internal(&genes, &mut rng);
             assert_ne!(from, to);
         }
     }
@@ -101,11 +94,10 @@ mod tests {
         let genes = vec![1, 2, 3, 4, 5];
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let result = Insert.mutate_internal(&genes, &mut rng);
-        let mut sorted = result.child;
-        sorted.sort();
+        let (mut child, _) = Insert.mutate_internal(&genes, &mut rng);
+        child.sort();
 
-        assert_eq!(sorted, vec![1, 2, 3, 4, 5]);
+        assert_eq!(child, vec![1, 2, 3, 4, 5]);
     }
 
     #[test]
@@ -114,15 +106,14 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(42);
 
         for _ in 0..100 {
-            let result = Insert.mutate_internal(&genes, &mut rng);
-            let (from, to) = result.moved;
+            let (child, (from, to)) = Insert.mutate_internal(&genes, &mut rng);
             let (lo, hi) = if from < to { (from, to) } else { (to, from) };
 
             for i in 0..lo {
-                assert_eq!(result.child[i], genes[i]);
+                assert_eq!(child[i], genes[i]);
             }
             for i in (hi + 1)..genes.len() {
-                assert_eq!(result.child[i], genes[i]);
+                assert_eq!(child[i], genes[i]);
             }
         }
     }
@@ -133,12 +124,11 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(42);
 
         for _ in 0..1000 {
-            let result = Insert.mutate_internal(&genes, &mut rng);
-            let (from, to) = result.moved;
+            let (child, (from, to)) = Insert.mutate_internal(&genes, &mut rng);
 
             if from < to {
                 for i in from..to {
-                    assert_eq!(result.child[i], genes[i + 1]);
+                    assert_eq!(child[i], genes[i + 1]);
                 }
                 return;
             }
@@ -152,12 +142,11 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(42);
 
         for _ in 0..1000 {
-            let result = Insert.mutate_internal(&genes, &mut rng);
-            let (from, to) = result.moved;
+            let (child, (from, to)) = Insert.mutate_internal(&genes, &mut rng);
 
             if from > to {
                 for i in (to + 1)..=from {
-                    assert_eq!(result.child[i], genes[i - 1]);
+                    assert_eq!(child[i], genes[i - 1]);
                 }
                 return;
             }

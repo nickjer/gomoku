@@ -1,11 +1,5 @@
 use super::RunMutation;
 
-/// Result of an inversion mutation.
-struct InversionResult<T> {
-    child: Vec<T>,
-    segment: (usize, usize),
-}
-
 /// Inversion mutation: reverses a random segment of the sequence.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Inversion;
@@ -20,7 +14,7 @@ impl Inversion {
         &self,
         genes: &[T],
         rng: &mut fastrand::Rng,
-    ) -> InversionResult<T> {
+    ) -> (Vec<T>, (usize, usize)) {
         assert!(genes.len() >= 2, "inversion requires at least 2 genes");
 
         let a = rng.usize(..genes.len());
@@ -32,16 +26,13 @@ impl Inversion {
         let mut child = genes.to_vec();
         child[start..=end].reverse();
 
-        InversionResult {
-            child,
-            segment: (start, end),
-        }
+        (child, (start, end))
     }
 }
 
 impl RunMutation for Inversion {
     fn mutate<T: Clone>(&self, genes: &[T], rng: &mut fastrand::Rng) -> Vec<T> {
-        self.mutate_internal(genes, rng).child
+        self.mutate_internal(genes, rng).0
     }
 }
 
@@ -53,10 +44,10 @@ mod tests {
     fn mutate_returns_child_from_internal() {
         let genes = vec![1, 2, 3, 4, 5];
 
-        let internal = Inversion.mutate_internal(&genes, &mut fastrand::Rng::with_seed(42));
+        let (child, _) = Inversion.mutate_internal(&genes, &mut fastrand::Rng::with_seed(42));
         let public = Inversion.mutate(&genes, &mut fastrand::Rng::with_seed(42));
 
-        assert_eq!(public, internal.child);
+        assert_eq!(public, child);
     }
 
     #[test]
@@ -65,22 +56,21 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(42);
 
         for _ in 0..100 {
-            let result = Inversion.mutate_internal(&genes, &mut rng);
-            let (start, end) = result.segment;
+            let (child, (start, end)) = Inversion.mutate_internal(&genes, &mut rng);
 
             // Elements before segment unchanged
             for i in 0..start {
-                assert_eq!(result.child[i], genes[i]);
+                assert_eq!(child[i], genes[i]);
             }
 
             // Segment is reversed
             for i in start..=end {
-                assert_eq!(result.child[i], genes[end - (i - start)]);
+                assert_eq!(child[i], genes[end - (i - start)]);
             }
 
             // Elements after segment unchanged
             for i in (end + 1)..genes.len() {
-                assert_eq!(result.child[i], genes[i]);
+                assert_eq!(child[i], genes[i]);
             }
         }
     }
@@ -90,9 +80,9 @@ mod tests {
         let genes = vec![1, 2, 3, 4, 5];
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let result = Inversion.mutate_internal(&genes, &mut rng);
+        let (child, _) = Inversion.mutate_internal(&genes, &mut rng);
 
-        assert_eq!(result.child.len(), genes.len());
+        assert_eq!(child.len(), genes.len());
     }
 
     #[test]
@@ -101,8 +91,7 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(42);
 
         for _ in 0..100 {
-            let result = Inversion.mutate_internal(&genes, &mut rng);
-            let (start, end) = result.segment;
+            let (_, (start, end)) = Inversion.mutate_internal(&genes, &mut rng);
             assert!(start < end);
         }
     }
@@ -121,10 +110,9 @@ mod tests {
         let genes = vec![1, 2, 3, 4, 5];
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let result = Inversion.mutate_internal(&genes, &mut rng);
-        let mut sorted = result.child;
-        sorted.sort();
+        let (mut child, _) = Inversion.mutate_internal(&genes, &mut rng);
+        child.sort();
 
-        assert_eq!(sorted, vec![1, 2, 3, 4, 5]);
+        assert_eq!(child, vec![1, 2, 3, 4, 5]);
     }
 }

@@ -3,12 +3,6 @@ use std::hash::Hash;
 
 use super::RunCrossover;
 
-/// Result of a PMX crossover.
-struct PmxResult<T> {
-    child: Vec<T>,
-    segment: (usize, usize),
-}
-
 /// Partially Mapped Crossover (PMX): copies a segment from parent1, then fills
 /// remaining positions using a mapping to resolve conflicts.
 #[derive(Debug, Default, Clone, Copy)]
@@ -25,7 +19,7 @@ impl Pmx {
         parent1: &[T],
         parent2: &[T],
         rng: &mut fastrand::Rng,
-    ) -> PmxResult<T> {
+    ) -> (Vec<T>, (usize, usize)) {
         let size = parent1.len();
 
         let a = rng.usize(..size);
@@ -50,10 +44,7 @@ impl Pmx {
             })
             .collect();
 
-        PmxResult {
-            child,
-            segment: (start, end),
-        }
+        (child, (start, end))
     }
 }
 
@@ -64,7 +55,7 @@ impl RunCrossover for Pmx {
         parent2: &[T],
         rng: &mut fastrand::Rng,
     ) -> Vec<T> {
-        self.crossover_internal(parent1, parent2, rng).child
+        self.crossover_internal(parent1, parent2, rng).0
     }
 }
 
@@ -77,11 +68,11 @@ mod tests {
         let parent1 = vec![1, 2, 3, 4, 5, 6, 7, 8];
         let parent2 = vec![8, 7, 6, 5, 4, 3, 2, 1];
 
-        let internal =
+        let (child, _) =
             Pmx.crossover_internal(&parent1, &parent2, &mut fastrand::Rng::with_seed(42));
         let public = Pmx.crossover(&parent1, &parent2, &mut fastrand::Rng::with_seed(42));
 
-        assert_eq!(public, internal.child);
+        assert_eq!(public, child);
     }
 
     #[test]
@@ -90,9 +81,9 @@ mod tests {
         let parent2 = vec![8, 7, 6, 5, 4, 3, 2, 1];
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let result = Pmx.crossover_internal(&parent1, &parent2, &mut rng);
+        let (child, _) = Pmx.crossover_internal(&parent1, &parent2, &mut rng);
 
-        assert_eq!(result.child.len(), parent1.len());
+        assert_eq!(child.len(), parent1.len());
     }
 
     #[test]
@@ -102,11 +93,10 @@ mod tests {
         // Seed 13 produces segment (1, 5) - 5 elements
         let mut rng = fastrand::Rng::with_seed(13);
 
-        let result = Pmx.crossover_internal(&parent1, &parent2, &mut rng);
-        let mut sorted = result.child;
-        sorted.sort();
+        let (mut child, _) = Pmx.crossover_internal(&parent1, &parent2, &mut rng);
+        child.sort();
 
-        assert_eq!(sorted, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(child, vec![1, 2, 3, 4, 5, 6, 7, 8]);
     }
 
     #[test]
@@ -116,11 +106,10 @@ mod tests {
         // Seed 13 produces segment (1, 5) - 5 elements
         let mut rng = fastrand::Rng::with_seed(13);
 
-        let result = Pmx.crossover_internal(&parent1, &parent2, &mut rng);
-        let (start, end) = result.segment;
+        let (child, (start, end)) = Pmx.crossover_internal(&parent1, &parent2, &mut rng);
 
         assert!(end - start >= 2, "segment too small: ({start}, {end})");
-        assert_eq!(&result.child[start..=end], &parent1[start..=end]);
+        assert_eq!(&child[start..=end], &parent1[start..=end]);
     }
 
     #[test]
@@ -130,8 +119,7 @@ mod tests {
         // Seed 13 produces segment (1, 5) - 5 elements
         let mut rng = fastrand::Rng::with_seed(13);
 
-        let result = Pmx.crossover_internal(&parent1, &parent2, &mut rng);
-        let (start, end) = result.segment;
+        let (child, (start, end)) = Pmx.crossover_internal(&parent1, &parent2, &mut rng);
 
         assert!(end - start >= 2, "segment too small: ({start}, {end})");
 
@@ -141,7 +129,7 @@ mod tests {
         for i in (0..start).chain(end + 1..parent1.len()) {
             if !segment_values.contains(&parent2[i]) {
                 assert_eq!(
-                    result.child[i], parent2[i],
+                    child[i], parent2[i],
                     "position {i} should use parent2 directly"
                 );
                 tested_count += 1;
@@ -157,8 +145,7 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(42);
 
         for _ in 0..100 {
-            let result = Pmx.crossover_internal(&parent1, &parent2, &mut rng);
-            let (start, end) = result.segment;
+            let (_, (start, end)) = Pmx.crossover_internal(&parent1, &parent2, &mut rng);
             assert!(start <= end);
         }
     }
@@ -169,10 +156,10 @@ mod tests {
         let parent2 = vec![1];
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let result = Pmx.crossover_internal(&parent1, &parent2, &mut rng);
+        let (child, segment) = Pmx.crossover_internal(&parent1, &parent2, &mut rng);
 
-        assert_eq!(result.child, vec![1]);
-        assert_eq!(result.segment, (0, 0));
+        assert_eq!(child, vec![1]);
+        assert_eq!(segment, (0, 0));
     }
 
     #[test]
@@ -180,10 +167,12 @@ mod tests {
         let parent1 = vec![1, 2, 3, 4, 5, 6, 7, 8];
         let parent2 = vec![8, 7, 6, 5, 4, 3, 2, 1];
 
-        let result1 = Pmx.crossover_internal(&parent1, &parent2, &mut fastrand::Rng::with_seed(42));
-        let result2 = Pmx.crossover_internal(&parent1, &parent2, &mut fastrand::Rng::with_seed(42));
+        let (child1, _) =
+            Pmx.crossover_internal(&parent1, &parent2, &mut fastrand::Rng::with_seed(42));
+        let (child2, _) =
+            Pmx.crossover_internal(&parent1, &parent2, &mut fastrand::Rng::with_seed(42));
 
-        assert_eq!(result1.child, result2.child);
+        assert_eq!(child1, child2);
     }
 
     #[test]
@@ -194,7 +183,7 @@ mod tests {
         let results: Vec<_> = (0..20)
             .map(|seed| {
                 Pmx.crossover_internal(&parent1, &parent2, &mut fastrand::Rng::with_seed(seed))
-                    .child
+                    .0
             })
             .collect();
 
@@ -208,12 +197,11 @@ mod tests {
         let parent2 = vec![3, 4, 5, 6, 7, 8, 1, 2];
 
         for seed in 0..100 {
-            let result =
+            let (mut child, _) =
                 Pmx.crossover_internal(&parent1, &parent2, &mut fastrand::Rng::with_seed(seed));
-            let mut sorted = result.child;
-            sorted.sort();
+            child.sort();
             assert_eq!(
-                sorted,
+                child,
                 vec![1, 2, 3, 4, 5, 6, 7, 8],
                 "seed {seed} produced invalid permutation"
             );
