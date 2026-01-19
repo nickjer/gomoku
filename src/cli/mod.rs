@@ -1,8 +1,8 @@
 mod evolvable_strategies;
 mod evolve;
 
-pub use evolve::{EvolveArgs, run_evolve};
 pub use evolvable_strategies::EvolvableStrategies;
+pub use evolve::{EvolveArgs, run_evolve};
 
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};

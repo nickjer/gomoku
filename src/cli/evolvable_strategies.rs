@@ -19,7 +19,10 @@ mod tests {
     #[test]
     fn serialization_round_trip_nn1() {
         let mut rng = fastrand::Rng::with_seed(42);
-        let strategies = vec![NN1::random("test1", &mut rng), NN1::random("test2", &mut rng)];
+        let strategies = vec![
+            NN1::random("test1", &mut rng),
+            NN1::random("test2", &mut rng),
+        ];
         let original = EvolvableStrategies::Nn1 { strategies };
 
         let serialized = ron::to_string(&original).unwrap();

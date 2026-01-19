@@ -95,25 +95,41 @@ pub fn run_evolve(args: &EvolveArgs) -> Result<()> {
 
     let output_strategies = match strategies {
         EvolvableStrategies::Nn1 { strategies } => {
-            info!(strategy_type = "Nn1", population = strategies.len(), "Starting evolution");
+            info!(
+                strategy_type = "Nn1",
+                population = strategies.len(),
+                "Starting evolution"
+            );
             EvolvableStrategies::Nn1 {
                 strategies: run_evolution(&evolver, strategies, &mut rng),
             }
         }
         EvolvableStrategies::Nn2 { strategies } => {
-            info!(strategy_type = "Nn2", population = strategies.len(), "Starting evolution");
+            info!(
+                strategy_type = "Nn2",
+                population = strategies.len(),
+                "Starting evolution"
+            );
             EvolvableStrategies::Nn2 {
                 strategies: run_evolution(&evolver, strategies, &mut rng),
             }
         }
         EvolvableStrategies::Nn3 { strategies } => {
-            info!(strategy_type = "Nn3", population = strategies.len(), "Starting evolution");
+            info!(
+                strategy_type = "Nn3",
+                population = strategies.len(),
+                "Starting evolution"
+            );
             EvolvableStrategies::Nn3 {
                 strategies: run_evolution(&evolver, strategies, &mut rng),
             }
         }
         EvolvableStrategies::Nn4 { strategies } => {
-            info!(strategy_type = "Nn4", population = strategies.len(), "Starting evolution");
+            info!(
+                strategy_type = "Nn4",
+                population = strategies.len(),
+                "Starting evolution"
+            );
             EvolvableStrategies::Nn4 {
                 strategies: run_evolution(&evolver, strategies, &mut rng),
             }
@@ -124,8 +140,8 @@ pub fn run_evolve(args: &EvolveArgs) -> Result<()> {
         .depth_limit(2)
         .compact_arrays(true)
         .separator(String::new());
-    let output =
-        ron::ser::to_string_pretty(&output_strategies, config).context("Failed to serialize strategies")?;
+    let output = ron::ser::to_string_pretty(&output_strategies, config)
+        .context("Failed to serialize strategies")?;
 
     fs::write(&args.output, output)
         .with_context(|| format!("Failed to write output file: {}", args.output.display()))?;
@@ -155,19 +171,20 @@ fn load_or_generate(args: &EvolveArgs, rng: &mut fastrand::Rng) -> Result<Evolva
         let content = fs::read_to_string(input_path)
             .with_context(|| format!("Failed to read input file: {}", input_path.display()))?;
 
-        let strategies: EvolvableStrategies = ron::from_str(&content)
-            .with_context(|| format!("Failed to parse strategies from: {}", input_path.display()))?;
+        let strategies: EvolvableStrategies = ron::from_str(&content).with_context(|| {
+            format!("Failed to parse strategies from: {}", input_path.display())
+        })?;
 
         info!(path = %input_path.display(), "Loaded strategies from file");
         Ok(strategies)
     } else {
-        let strategy_type = args
-            .strategy_type
-            .ok_or_else(|| anyhow::anyhow!("STRATEGY argument is required when not using --input"))?;
+        let strategy_type = args.strategy_type.ok_or_else(|| {
+            anyhow::anyhow!("STRATEGY argument is required when not using --input")
+        })?;
 
-        let population = args
-            .population
-            .ok_or_else(|| anyhow::anyhow!("POPULATION argument is required when not using --input"))?;
+        let population = args.population.ok_or_else(|| {
+            anyhow::anyhow!("POPULATION argument is required when not using --input")
+        })?;
 
         info!(count = population, "Generating random strategies");
 

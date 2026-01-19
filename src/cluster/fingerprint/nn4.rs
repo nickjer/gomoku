@@ -10,7 +10,12 @@ use crate::cluster::offsets;
 use crate::position_id::PositionId;
 use crate::stone::Stone;
 
-type Nn4Tuple = (NeighborCounts, NeighborCounts, NeighborCounts, NeighborCounts);
+type Nn4Tuple = (
+    NeighborCounts,
+    NeighborCounts,
+    NeighborCounts,
+    NeighborCounts,
+);
 
 /// Fingerprint based on all four neighbor rings (NN1-NN4).
 ///
