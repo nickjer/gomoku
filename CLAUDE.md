@@ -66,7 +66,16 @@ The `Evolver` orchestrates the genetic algorithm. Call `evolve(strategies, rng)`
 `CacheRepository` provides lazy-loaded `NeighborCountsCache` instances for each NN level, updated incrementally as stones are placed.
 
 ### CLI
-The CLI is a work in progress.
+
+```bash
+# Generate and evolve random strategies
+cargo run --release -- evolve -o output.ron nn4 16
+
+# Continue from saved strategies
+cargo run --release -- evolve -i input.ron -o output.ron -g 50
+```
+
+**Options:** `-o/--output` (required), `-i/--input`, `-g/--generations` [10], `-e/--elitism` [2], `-c/--crossover` (order/pmx) [order], `--crossover-rate` [0.8], `-m/--mutation` (swap/insert/inversion) [swap], `--mutation-rate` [0.1], `--seed`, `-l/--log-level` (error/warn/info/debug/trace).
 
 ## Code Style
 
