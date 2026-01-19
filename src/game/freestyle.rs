@@ -4,34 +4,19 @@ use crate::match_result::MatchResult;
 use crate::stone::Stone;
 use crate::strategy::Strategy;
 
-/// Trait for playing games between strategies.
-pub trait Play {
-    fn play(
-        &self,
-        black_strategy: &dyn Strategy,
-        white_strategy: &dyn Strategy,
-        rng: &mut fastrand::Rng,
-    ) -> MatchResult;
-}
+use super::Play;
 
-/// Plays a game between two strategies.
-#[derive(Debug, Default)]
-pub struct Game;
+/// Freestyle Gomoku: 5+ in a row wins, no restrictions.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Freestyle;
 
-impl Game {
+impl Freestyle {
     #[must_use]
     pub fn new() -> Self {
         Self
     }
 
-    /// Runs a match between the black and white strategies.
-    ///
-    /// Returns a `MatchResult` containing the outcome and metadata.
-    ///
-    /// # Panics
-    ///
-    /// Panics if a strategy returns an invalid move (non-empty position).
-    pub fn run(
+    fn run_internal(
         &self,
         black_strategy: &dyn Strategy,
         white_strategy: &dyn Strategy,
@@ -77,14 +62,14 @@ impl Game {
     }
 }
 
-impl Play for Game {
+impl Play for Freestyle {
     fn play(
         &self,
         black_strategy: &dyn Strategy,
         white_strategy: &dyn Strategy,
         rng: &mut fastrand::Rng,
     ) -> MatchResult {
-        self.run(black_strategy, white_strategy, rng)
+        self.run_internal(black_strategy, white_strategy, rng)
     }
 }
 
@@ -97,10 +82,10 @@ mod tests {
     #[test]
     fn returns_match_result_with_black_wins() {
         let (black, white) = ScriptedStrategy::black_wins();
-        let game = Game::new();
+        let game = Freestyle::new();
         let mut rng = fastrand::Rng::new();
 
-        let result = game.run(&black, &white, &mut rng);
+        let result = game.play(&black, &white, &mut rng);
 
         assert_eq!(result.outcome(), Outcome::BlackWins);
     }
@@ -108,10 +93,10 @@ mod tests {
     #[test]
     fn returns_match_result_with_white_wins() {
         let (black, white) = ScriptedStrategy::white_wins();
-        let game = Game::new();
+        let game = Freestyle::new();
         let mut rng = fastrand::Rng::new();
 
-        let result = game.run(&black, &white, &mut rng);
+        let result = game.play(&black, &white, &mut rng);
 
         assert_eq!(result.outcome(), Outcome::WhiteWins);
     }
@@ -119,10 +104,10 @@ mod tests {
     #[test]
     fn returns_match_result_with_draw() {
         let (black, white) = ScriptedStrategy::draw();
-        let game = Game::new();
+        let game = Freestyle::new();
         let mut rng = fastrand::Rng::new();
 
-        let result = game.run(&black, &white, &mut rng);
+        let result = game.play(&black, &white, &mut rng);
 
         assert_eq!(result.outcome(), Outcome::Draw);
     }
@@ -130,10 +115,10 @@ mod tests {
     #[test]
     fn turn_count_is_correct() {
         let (black, white) = ScriptedStrategy::black_wins();
-        let game = Game::new();
+        let game = Freestyle::new();
         let mut rng = fastrand::Rng::new();
 
-        let result = game.run(&black, &white, &mut rng);
+        let result = game.play(&black, &white, &mut rng);
 
         // Black plays 5 moves, white plays 4 moves = 9 total
         assert_eq!(result.turn_count(), 9);
@@ -147,10 +132,10 @@ mod tests {
         );
         let white =
             ScriptedStrategy::with_positions("white_label", &[(1, 0), (1, 1), (1, 2), (1, 3)]);
-        let game = Game::new();
+        let game = Freestyle::new();
         let mut rng = fastrand::Rng::new();
 
-        let result = game.run(&black, &white, &mut rng);
+        let result = game.play(&black, &white, &mut rng);
 
         assert_eq!(result.black_label(), "black_label");
         assert_eq!(result.white_label(), "white_label");
@@ -159,10 +144,10 @@ mod tests {
     #[test]
     fn captures_board_state() {
         let (black, white) = ScriptedStrategy::black_wins();
-        let game = Game::new();
+        let game = Freestyle::new();
         let mut rng = fastrand::Rng::new();
 
-        let result = game.run(&black, &white, &mut rng);
+        let result = game.play(&black, &white, &mut rng);
 
         assert!(!result.board_state().is_empty());
     }
