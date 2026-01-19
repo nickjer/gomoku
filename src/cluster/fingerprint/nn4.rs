@@ -171,4 +171,45 @@ mod tests {
         assert_eq!(fingerprint.nn3().empty(), 4);
         assert_eq!(fingerprint.nn4().empty(), 8);
     }
+
+    #[test]
+    fn serializes_as_4_tuple() {
+        let fingerprint = FingerprintNN4::new(
+            NeighborCounts::new(1, 2, 1),
+            NeighborCounts::new(0, 0, 4),
+            NeighborCounts::new(2, 1, 1),
+            NeighborCounts::new(3, 2, 3),
+        );
+
+        let serialized = ron::to_string(&fingerprint).unwrap();
+
+        assert_eq!(serialized, "((1,2,1),(0,0,4),(2,1,1),(3,2,3))");
+    }
+
+    #[test]
+    fn deserializes_from_4_tuple() {
+        let serialized = "((1, 2, 1), (0, 0, 4), (2, 1, 1), (3, 2, 3))";
+
+        let fingerprint: FingerprintNN4 = ron::from_str(serialized).unwrap();
+
+        assert_eq!(fingerprint.nn1(), NeighborCounts::new(1, 2, 1));
+        assert_eq!(fingerprint.nn2(), NeighborCounts::new(0, 0, 4));
+        assert_eq!(fingerprint.nn3(), NeighborCounts::new(2, 1, 1));
+        assert_eq!(fingerprint.nn4(), NeighborCounts::new(3, 2, 3));
+    }
+
+    #[test]
+    fn serialization_round_trip() {
+        let original = FingerprintNN4::new(
+            NeighborCounts::new(2, 1, 1),
+            NeighborCounts::new(3, 0, 1),
+            NeighborCounts::new(0, 2, 2),
+            NeighborCounts::new(4, 1, 3),
+        );
+
+        let serialized = ron::to_string(&original).unwrap();
+        let deserialized: FingerprintNN4 = ron::from_str(&serialized).unwrap();
+
+        assert_eq!(deserialized, original);
+    }
 }

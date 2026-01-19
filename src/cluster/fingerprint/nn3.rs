@@ -147,4 +147,42 @@ mod tests {
         assert_eq!(fingerprint.nn2().empty(), 4);
         assert_eq!(fingerprint.nn3().empty(), 4);
     }
+
+    #[test]
+    fn serializes_as_3_tuple() {
+        let fingerprint = FingerprintNN3::new(
+            NeighborCounts::new(1, 2, 1),
+            NeighborCounts::new(0, 0, 4),
+            NeighborCounts::new(2, 1, 1),
+        );
+
+        let serialized = ron::to_string(&fingerprint).unwrap();
+
+        assert_eq!(serialized, "((1,2,1),(0,0,4),(2,1,1))");
+    }
+
+    #[test]
+    fn deserializes_from_3_tuple() {
+        let serialized = "((1, 2, 1), (0, 0, 4), (2, 1, 1))";
+
+        let fingerprint: FingerprintNN3 = ron::from_str(serialized).unwrap();
+
+        assert_eq!(fingerprint.nn1(), NeighborCounts::new(1, 2, 1));
+        assert_eq!(fingerprint.nn2(), NeighborCounts::new(0, 0, 4));
+        assert_eq!(fingerprint.nn3(), NeighborCounts::new(2, 1, 1));
+    }
+
+    #[test]
+    fn serialization_round_trip() {
+        let original = FingerprintNN3::new(
+            NeighborCounts::new(2, 1, 1),
+            NeighborCounts::new(3, 0, 1),
+            NeighborCounts::new(0, 2, 2),
+        );
+
+        let serialized = ron::to_string(&original).unwrap();
+        let deserialized: FingerprintNN3 = ron::from_str(&serialized).unwrap();
+
+        assert_eq!(deserialized, original);
+    }
 }

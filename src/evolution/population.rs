@@ -84,4 +84,13 @@ mod tests {
         assert_eq!(next.generation(), 1);
         assert_eq!(next.individuals().len(), 1);
     }
+
+    #[test]
+    fn into_strategies_extracts_strategies() {
+        let pop = population(&[10, 20, 30]);
+
+        let strategies = pop.into_strategies();
+
+        assert_eq!(strategies.len(), 3);
+    }
 }
