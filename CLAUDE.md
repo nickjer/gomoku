@@ -41,14 +41,26 @@ Move selection for fingerprint-based strategies (NN1-NN4):
 3. Select position with highest priority (lowest index)
 4. Break ties randomly
 
+### Game
+The `Game` enum represents Gomoku rule variants using `enum_dispatch`:
+- **Freestyle**: 5+ in a row wins, no restrictions (current implementation)
+- Future variants: Standard, Renju, Caro (commented out)
+- Test-only variants: `Stub` (panics if called), `Scripted` (predetermined outcomes)
+
+### Tournament
+The `Tournament` enum manages competition formats using `enum_dispatch`:
+- **Swiss**: Swiss-system tournament with Buchholz tiebreaker
+- Test-only variants: `InputOrder`, `Scripted`
+
 ### Evolution
-The `Evolver` orchestrates the genetic algorithm with configurable parameters:
+The `Evolver` orchestrates the genetic algorithm. Call `evolve(strategies, rng)` with initial strategies.
 
 - **Fitness**: Swiss tournament ranking (`population_size - rank`)
 - **Selection** enum: `TournamentWithReplacement`, `TournamentWithoutReplacement`
 - **Crossover** enum: `Order` (OX), `Pmx` (Partially Mapped Crossover)
 - **Mutation** enum: `Swap`, `Insert`, `Inversion`
 - **Elitism**: Preserve top N performers unchanged each generation
+- **Game**: Game variant to use for matches (defaults to `Freestyle`)
 
 ### Caching
 `CacheRepository` provides lazy-loaded `NeighborCountsCache` instances for each NN level, updated incrementally as stones are placed.
@@ -58,10 +70,23 @@ The CLI is a work in progress.
 
 ## Code Style
 
-Prefer static dispatch and zero-cost abstractions over dynamic dispatch. Use enum variants (e.g., `Crossover`, `Mutation`, `Selection`) rather than trait objects.
+Prefer static dispatch and zero-cost abstractions over dynamic dispatch. Use `enum_dispatch` for polymorphism (e.g., `Game`, `Tournament`, `Crossover`, `Mutation`, `Selection`) rather than trait objects.
 
 - `#[must_use]` on constructors and getters returning owned/computed values
 - `const fn` where possible
+
+### Test-Only Enum Variants
+Use `#[cfg(test)]` for test-only enum variants. The enum's `Default` impl can return different variants based on `#[cfg(test)]` vs `#[cfg(not(test))]`:
+```rust
+impl Default for Game {
+    fn default() -> Self {
+        #[cfg(not(test))]
+        { Freestyle.into() }
+        #[cfg(test)]
+        { Stub.into() }
+    }
+}
+```
 
 ### Implementation Order
 
