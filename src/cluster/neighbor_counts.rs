@@ -1,9 +1,11 @@
+use std::hash::{Hash, Hasher};
+
 use serde::{Deserialize, Serialize};
 
 /// Counts of stones in a neighbor ring from the current player's perspective.
 ///
 /// Serializes as a tuple `(player, opponent, empty)`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(from = "(u8, u8, u8)", into = "(u8, u8, u8)")]
 pub struct NeighborCounts {
     player: u8,
@@ -46,6 +48,19 @@ impl NeighborCounts {
     #[must_use]
     pub const fn empty(&self) -> u8 {
         self.empty
+    }
+
+    /// Packs the three u8 values into a single u64 for efficient hashing.
+    #[allow(clippy::as_conversions)] // Widening u8 to u64 is always safe
+    #[must_use]
+    const fn packed(self) -> u64 {
+        (self.player as u64) | ((self.opponent as u64) << 8) | ((self.empty as u64) << 16)
+    }
+}
+
+impl Hash for NeighborCounts {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.packed().hash(state);
     }
 }
 
