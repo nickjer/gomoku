@@ -16,41 +16,44 @@ pub fn total_rounds(count: usize) -> u32 {
 }
 
 /// A Swiss-system tournament runner.
-#[derive(Debug, Clone)]
-pub struct Swiss<R> {
-    match_runner: R,
-}
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Swiss;
 
-impl<R: RunMatch> Swiss<R> {
+impl Swiss {
     #[must_use]
-    pub fn new(match_runner: R) -> Self {
-        Self { match_runner }
+    pub fn new() -> Self {
+        Self
     }
 
     /// Runs a Swiss tournament with the given strategies.
     ///
     /// Returns standings sorted by ranking (best first).
-    pub fn run<S: Strategy>(&self, strategies: &[S], rng: &mut fastrand::Rng) -> Vec<Standing> {
+    pub fn run<S: Strategy, R: RunMatch>(
+        &self,
+        strategies: &[S],
+        match_runner: &R,
+        rng: &mut fastrand::Rng,
+    ) -> Vec<Standing> {
         let mut state = State::new(strategies.len());
 
         for _ in 0..total_rounds(strategies.len()) {
-            self.play_round(&mut state, strategies, rng);
+            Self::play_round(&mut state, strategies, match_runner, rng);
         }
 
         state.build_standings()
     }
 
-    fn play_round<S: Strategy>(
-        &self,
+    fn play_round<S: Strategy, R: RunMatch>(
         state: &mut State,
         strategies: &[S],
+        match_runner: &R,
         rng: &mut fastrand::Rng,
     ) {
         let pairings = Self::generate_pairings(state);
 
         for (black_idx, white_idx) in pairings {
             if let Some(white_idx) = white_idx {
-                let result = self.match_runner.run_match(
+                let result = match_runner.run_match(
                     &strategies[black_idx],
                     &strategies[white_idx],
                     rng,
@@ -234,48 +237,48 @@ mod tests {
 
     #[test]
     fn run_returns_standings() {
-        let runner = ScriptedMatchRunner::new().add("a", "b", Winner::Label("a"));
-        let tournament = Swiss::new(runner);
+        let match_runner = ScriptedMatchRunner::new().add("a", "b", Winner::Label("a"));
+        let tournament = Swiss::new();
         let strategies = make_strategies(&["a", "b"]);
         let mut rng = fastrand::Rng::new();
 
-        let standings = tournament.run(&strategies, &mut rng);
+        let standings = tournament.run(&strategies, &match_runner, &mut rng);
 
         assert_eq!(standings.len(), 2);
     }
 
     #[test]
     fn winner_ranks_first() {
-        let runner = ScriptedMatchRunner::new().add("a", "b", Winner::Label("a"));
-        let tournament = Swiss::new(runner);
+        let match_runner = ScriptedMatchRunner::new().add("a", "b", Winner::Label("a"));
+        let tournament = Swiss::new();
         let strategies = make_strategies(&["a", "b"]);
         let mut rng = fastrand::Rng::new();
 
-        let standings = tournament.run(&strategies, &mut rng);
+        let standings = tournament.run(&strategies, &match_runner, &mut rng);
 
         assert_eq!(labels(&standings, &strategies), vec!["a", "b"]);
     }
 
     #[test]
     fn loser_ranks_last() {
-        let runner = ScriptedMatchRunner::new().add("a", "b", Winner::Label("b"));
-        let tournament = Swiss::new(runner);
+        let match_runner = ScriptedMatchRunner::new().add("a", "b", Winner::Label("b"));
+        let tournament = Swiss::new();
         let strategies = make_strategies(&["a", "b"]);
         let mut rng = fastrand::Rng::new();
 
-        let standings = tournament.run(&strategies, &mut rng);
+        let standings = tournament.run(&strategies, &match_runner, &mut rng);
 
         assert_eq!(labels(&standings, &strategies), vec!["b", "a"]);
     }
 
     #[test]
     fn draw_keeps_original_order() {
-        let runner = ScriptedMatchRunner::new().add("a", "b", Winner::Draw);
-        let tournament = Swiss::new(runner);
+        let match_runner = ScriptedMatchRunner::new().add("a", "b", Winner::Draw);
+        let tournament = Swiss::new();
         let strategies = make_strategies(&["a", "b"]);
         let mut rng = fastrand::Rng::new();
 
-        let standings = tournament.run(&strategies, &mut rng);
+        let standings = tournament.run(&strategies, &match_runner, &mut rng);
 
         assert_eq!(labels(&standings, &strategies), vec!["a", "b"]);
     }
@@ -286,14 +289,14 @@ mod tests {
         // Round 1: a vs b (a wins), c gets bye (2 points)
         // Round 2: a vs c (a wins), b gets bye (2 points)
         // Final: a=4, b=2, c=2
-        let runner = ScriptedMatchRunner::new()
+        let match_runner = ScriptedMatchRunner::new()
             .add("a", "b", Winner::Label("a"))
             .add("a", "c", Winner::Label("a"));
-        let tournament = Swiss::new(runner);
+        let tournament = Swiss::new();
         let strategies = make_strategies(&["a", "b", "c"]);
         let mut rng = fastrand::Rng::new();
 
-        let standings = tournament.run(&strategies, &mut rng);
+        let standings = tournament.run(&strategies, &match_runner, &mut rng);
 
         assert_eq!(labels(&standings, &strategies), vec!["a", "b", "c"]);
     }
@@ -305,16 +308,16 @@ mod tests {
         // Round 2: a vs d (draw), b vs c (b wins)
         // Final points: a=3, d=3, b=2, c=0
         // Buchholz: a played b(2)+d(3)=5, d played c(0)+a(3)=3
-        let runner = ScriptedMatchRunner::new()
+        let match_runner = ScriptedMatchRunner::new()
             .add("a", "b", Winner::Label("a"))
             .add("c", "d", Winner::Label("d"))
             .add("a", "d", Winner::Draw)
             .add("b", "c", Winner::Label("b"));
-        let tournament = Swiss::new(runner);
+        let tournament = Swiss::new();
         let strategies = make_strategies(&["a", "b", "c", "d"]);
         let mut rng = fastrand::Rng::new();
 
-        let standings = tournament.run(&strategies, &mut rng);
+        let standings = tournament.run(&strategies, &match_runner, &mut rng);
 
         assert_eq!(labels(&standings, &strategies), vec!["a", "d", "b", "c"]);
     }
@@ -327,16 +330,16 @@ mod tests {
         // Final points: c=4, a=2, b=2, d=0
         // Buchholz for a: b(2) + c(4) = 6
         // Buchholz for b: a(2) + d(0) = 2
-        let runner = ScriptedMatchRunner::new()
+        let match_runner = ScriptedMatchRunner::new()
             .add("a", "b", Winner::Label("a"))
             .add("c", "d", Winner::Label("c"))
             .add("a", "c", Winner::Label("c"))
             .add("b", "d", Winner::Label("b"));
-        let tournament = Swiss::new(runner);
+        let tournament = Swiss::new();
         let strategies = make_strategies(&["a", "b", "c", "d"]);
         let mut rng = fastrand::Rng::new();
 
-        let standings = tournament.run(&strategies, &mut rng);
+        let standings = tournament.run(&strategies, &match_runner, &mut rng);
 
         assert_eq!(labels(&standings, &strategies), vec!["c", "a", "b", "d"]);
     }

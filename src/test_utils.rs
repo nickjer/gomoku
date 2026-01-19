@@ -264,7 +264,12 @@ impl ScriptedTournament {
 }
 
 impl RunTournament for ScriptedTournament {
-    fn run<S: Strategy>(&self, strategies: &[S], _rng: &mut fastrand::Rng) -> Vec<Standing> {
+    fn run<S: Strategy, R: RunMatch>(
+        &self,
+        strategies: &[S],
+        _match_runner: &R,
+        _rng: &mut fastrand::Rng,
+    ) -> Vec<Standing> {
         self.ranking
             .iter()
             .map(|&label| {
@@ -282,7 +287,12 @@ impl RunTournament for ScriptedTournament {
 pub struct InputOrderTournament;
 
 impl RunTournament for InputOrderTournament {
-    fn run<S: Strategy>(&self, strategies: &[S], _rng: &mut fastrand::Rng) -> Vec<Standing> {
+    fn run<S: Strategy, R: RunMatch>(
+        &self,
+        strategies: &[S],
+        _match_runner: &R,
+        _rng: &mut fastrand::Rng,
+    ) -> Vec<Standing> {
         (0..strategies.len())
             .map(|i| Standing::new(i, 0, 0, 0, 0))
             .collect()
