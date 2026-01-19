@@ -7,8 +7,8 @@ use crate::board::Board;
 use crate::cache_id::CacheId;
 use crate::cache_repository::CacheRepository;
 use crate::evolution::selection::HasFitness;
+use crate::game::Play;
 use crate::match_result::MatchResult;
-use crate::match_runner::RunMatch;
 use crate::outcome::Outcome;
 use crate::position::Position;
 use crate::position_id::PositionId;
@@ -189,11 +189,11 @@ impl Strategy for StubStrategy {
 }
 
 /// A test match runner that returns predetermined outcomes.
-pub struct ScriptedMatchRunner {
+pub struct ScriptedGame {
     outcomes: HashMap<(String, String), Winner>,
 }
 
-impl ScriptedMatchRunner {
+impl ScriptedGame {
     pub fn new() -> Self {
         Self {
             outcomes: HashMap::new(),
@@ -223,8 +223,8 @@ impl ScriptedMatchRunner {
     }
 }
 
-impl RunMatch for ScriptedMatchRunner {
-    fn run_match(
+impl Play for ScriptedGame {
+    fn play(
         &self,
         black_strategy: &dyn Strategy,
         white_strategy: &dyn Strategy,

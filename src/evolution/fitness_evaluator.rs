@@ -1,4 +1,4 @@
-use crate::match_runner::RunMatch;
+use crate::game::Play;
 use crate::strategy::Strategy;
 use crate::tournament::{RunTournament, Tournament};
 
@@ -11,13 +11,13 @@ use super::Individual;
 /// # Panics
 ///
 /// Panics if the tournament returns duplicate or invalid strategy indices.
-pub fn evaluate<S: Strategy, R: RunMatch>(
+pub fn evaluate<S: Strategy, R: Play>(
     strategies: Vec<S>,
     tournament: &Tournament,
-    match_runner: &R,
+    game: &R,
     rng: &mut fastrand::Rng,
 ) -> Vec<Individual<S>> {
-    let standings = tournament.run(&strategies, match_runner, rng);
+    let standings = tournament.run(&strategies, game, rng);
     let population_size = strategies.len();
 
     let mut strategies: Vec<Option<S>> = strategies.into_iter().map(Some).collect();
@@ -40,11 +40,11 @@ pub fn evaluate<S: Strategy, R: RunMatch>(
 mod tests {
     use super::*;
     use crate::evolution::selection::HasFitness;
-    use crate::test_utils::{ScriptedMatchRunner, StubStrategy};
+    use crate::test_utils::{ScriptedGame, StubStrategy};
     use crate::tournament::Scripted;
 
-    fn dummy_match_runner() -> ScriptedMatchRunner {
-        ScriptedMatchRunner::new()
+    fn stub_game() -> ScriptedGame {
+        ScriptedGame::new()
     }
 
     #[test]
@@ -57,7 +57,7 @@ mod tests {
         let tournament = Scripted::new(vec!["b", "a", "c"]).into();
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let individuals = evaluate(strategies, &tournament, &dummy_match_runner(), &mut rng);
+        let individuals = evaluate(strategies, &tournament, &stub_game(), &mut rng);
 
         assert_eq!(individuals[0].strategy().label(), "b");
         assert_eq!(individuals[1].strategy().label(), "a");
@@ -74,7 +74,7 @@ mod tests {
         let tournament = Scripted::new(vec!["a", "b", "c"]).into();
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let individuals = evaluate(strategies, &tournament, &dummy_match_runner(), &mut rng);
+        let individuals = evaluate(strategies, &tournament, &stub_game(), &mut rng);
 
         assert_eq!(individuals[0].fitness(), 3); // population_size - 0
         assert_eq!(individuals[1].fitness(), 2); // population_size - 1
@@ -91,7 +91,7 @@ mod tests {
         let tournament = Scripted::new(vec!["c", "a", "b"]).into();
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let individuals = evaluate(strategies, &tournament, &dummy_match_runner(), &mut rng);
+        let individuals = evaluate(strategies, &tournament, &stub_game(), &mut rng);
         let mut labels: Vec<_> = individuals.iter().map(|i| i.strategy().label()).collect();
         labels.sort();
 

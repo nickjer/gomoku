@@ -4,9 +4,9 @@ use crate::match_result::MatchResult;
 use crate::stone::Stone;
 use crate::strategy::Strategy;
 
-/// Trait for running matches between strategies.
-pub trait RunMatch {
-    fn run_match(
+/// Trait for playing games between strategies.
+pub trait Play {
+    fn play(
         &self,
         black_strategy: &dyn Strategy,
         white_strategy: &dyn Strategy,
@@ -14,11 +14,11 @@ pub trait RunMatch {
     ) -> MatchResult;
 }
 
-/// Runs a match between two strategies.
+/// Plays a game between two strategies.
 #[derive(Debug, Default)]
-pub struct MatchRunner;
+pub struct Game;
 
-impl MatchRunner {
+impl Game {
     #[must_use]
     pub fn new() -> Self {
         Self
@@ -77,8 +77,8 @@ impl MatchRunner {
     }
 }
 
-impl RunMatch for MatchRunner {
-    fn run_match(
+impl Play for Game {
+    fn play(
         &self,
         black_strategy: &dyn Strategy,
         white_strategy: &dyn Strategy,
@@ -97,10 +97,10 @@ mod tests {
     #[test]
     fn returns_match_result_with_black_wins() {
         let (black, white) = ScriptedStrategy::black_wins();
-        let runner = MatchRunner::new();
+        let game = Game::new();
         let mut rng = fastrand::Rng::new();
 
-        let result = runner.run(&black, &white, &mut rng);
+        let result = game.run(&black, &white, &mut rng);
 
         assert_eq!(result.outcome(), Outcome::BlackWins);
     }
@@ -108,10 +108,10 @@ mod tests {
     #[test]
     fn returns_match_result_with_white_wins() {
         let (black, white) = ScriptedStrategy::white_wins();
-        let runner = MatchRunner::new();
+        let game = Game::new();
         let mut rng = fastrand::Rng::new();
 
-        let result = runner.run(&black, &white, &mut rng);
+        let result = game.run(&black, &white, &mut rng);
 
         assert_eq!(result.outcome(), Outcome::WhiteWins);
     }
@@ -119,10 +119,10 @@ mod tests {
     #[test]
     fn returns_match_result_with_draw() {
         let (black, white) = ScriptedStrategy::draw();
-        let runner = MatchRunner::new();
+        let game = Game::new();
         let mut rng = fastrand::Rng::new();
 
-        let result = runner.run(&black, &white, &mut rng);
+        let result = game.run(&black, &white, &mut rng);
 
         assert_eq!(result.outcome(), Outcome::Draw);
     }
@@ -130,10 +130,10 @@ mod tests {
     #[test]
     fn turn_count_is_correct() {
         let (black, white) = ScriptedStrategy::black_wins();
-        let runner = MatchRunner::new();
+        let game = Game::new();
         let mut rng = fastrand::Rng::new();
 
-        let result = runner.run(&black, &white, &mut rng);
+        let result = game.run(&black, &white, &mut rng);
 
         // Black plays 5 moves, white plays 4 moves = 9 total
         assert_eq!(result.turn_count(), 9);
@@ -147,10 +147,10 @@ mod tests {
         );
         let white =
             ScriptedStrategy::with_positions("white_label", &[(1, 0), (1, 1), (1, 2), (1, 3)]);
-        let runner = MatchRunner::new();
+        let game = Game::new();
         let mut rng = fastrand::Rng::new();
 
-        let result = runner.run(&black, &white, &mut rng);
+        let result = game.run(&black, &white, &mut rng);
 
         assert_eq!(result.black_label(), "black_label");
         assert_eq!(result.white_label(), "white_label");
@@ -159,10 +159,10 @@ mod tests {
     #[test]
     fn captures_board_state() {
         let (black, white) = ScriptedStrategy::black_wins();
-        let runner = MatchRunner::new();
+        let game = Game::new();
         let mut rng = fastrand::Rng::new();
 
-        let result = runner.run(&black, &white, &mut rng);
+        let result = game.run(&black, &white, &mut rng);
 
         assert!(!result.board_state().is_empty());
     }

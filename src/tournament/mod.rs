@@ -6,16 +6,16 @@ pub use swiss::{Swiss, total_rounds};
 
 use enum_dispatch::enum_dispatch;
 
-use crate::match_runner::RunMatch;
+use crate::game::Play;
 use crate::strategy::Strategy;
 
 /// Trait for running tournaments.
 #[enum_dispatch]
 pub trait RunTournament {
-    fn run<S: Strategy, R: RunMatch>(
+    fn run<S: Strategy, R: Play>(
         &self,
         strategies: &[S],
-        match_runner: &R,
+        game: &R,
         rng: &mut fastrand::Rng,
     ) -> Vec<Standing>;
 }
@@ -27,10 +27,10 @@ pub struct InputOrder;
 
 #[cfg(test)]
 impl RunTournament for InputOrder {
-    fn run<S: Strategy, R: RunMatch>(
+    fn run<S: Strategy, R: Play>(
         &self,
         strategies: &[S],
-        _match_runner: &R,
+        _game: &R,
         _rng: &mut fastrand::Rng,
     ) -> Vec<Standing> {
         (0..strategies.len())
@@ -55,10 +55,10 @@ impl Scripted {
 
 #[cfg(test)]
 impl RunTournament for Scripted {
-    fn run<S: Strategy, R: RunMatch>(
+    fn run<S: Strategy, R: Play>(
         &self,
         strategies: &[S],
-        _match_runner: &R,
+        _game: &R,
         _rng: &mut fastrand::Rng,
     ) -> Vec<Standing> {
         self.ranking
@@ -101,16 +101,16 @@ impl Default for Tournament {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::{ScriptedMatchRunner, StubStrategy, Winner};
+    use crate::test_utils::{ScriptedGame, StubStrategy, Winner};
 
     #[test]
     fn swiss_variant_runs_tournament() {
-        let match_runner = ScriptedMatchRunner::new().add("a", "b", Winner::Label("a"));
+        let game = ScriptedGame::new().add("a", "b", Winner::Label("a"));
         let tournament: Tournament = Swiss::new().into();
         let strategies = vec![StubStrategy::new("a"), StubStrategy::new("b")];
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let standings = tournament.run(&strategies, &match_runner, &mut rng);
+        let standings = tournament.run(&strategies, &game, &mut rng);
 
         assert_eq!(standings.len(), 2);
     }
