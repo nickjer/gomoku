@@ -272,6 +272,39 @@ mod tests {
     }
 
     #[test]
+    fn default_creates_evolver() {
+        let evolver = Evolver::default();
+
+        assert_eq!(evolver.generations, 10);
+        assert_eq!(evolver.elitism, 2);
+    }
+
+    #[test]
+    fn crossover_builder_sets_crossover() {
+        let _evolver = Evolver::new().crossover(Crossover::default());
+    }
+
+    #[test]
+    fn mutation_builder_sets_mutation() {
+        let _evolver = Evolver::new().mutation(Mutation::default());
+    }
+
+    #[test]
+    fn selection_builder_sets_selection() {
+        let _evolver = Evolver::new().selection(Selection::default());
+    }
+
+    #[test]
+    fn tournament_builder_sets_tournament() {
+        let _evolver = Evolver::new().tournament(Tournament::default());
+    }
+
+    #[test]
+    fn game_builder_sets_game() {
+        let _evolver = Evolver::new().game(Game::default());
+    }
+
+    #[test]
     fn no_crossover_no_mutation_preserves_parent_genes() {
         let mut rng = fastrand::Rng::with_seed(42);
         let strategies = make_strategies(&mut rng, 4);
