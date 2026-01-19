@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::game::Play;
+use crate::game::{Game, Play};
 use crate::outcome::Outcome;
 use crate::strategy::Strategy;
 
@@ -25,10 +25,10 @@ impl Swiss {
         Self
     }
 
-    fn play_round<S: Strategy, R: Play>(
+    fn play_round<S: Strategy>(
         state: &mut State,
         strategies: &[S],
-        game: &R,
+        game: &Game,
         rng: &mut fastrand::Rng,
     ) {
         let pairings = Self::generate_pairings(state);
@@ -85,10 +85,10 @@ impl RunTournament for Swiss {
     /// Runs a Swiss tournament with the given strategies.
     ///
     /// Returns standings sorted by ranking (best first).
-    fn run<S: Strategy, R: Play>(
+    fn run<S: Strategy>(
         &self,
         strategies: &[S],
-        game: &R,
+        game: &Game,
         rng: &mut fastrand::Rng,
     ) -> Vec<Standing> {
         let mut state = State::new(strategies.len());
@@ -192,7 +192,8 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::{ScriptedGame, StubStrategy, Winner};
+    use crate::game::Scripted;
+    use crate::test_utils::StubStrategy;
 
     fn make_strategies(labels: &[&str]) -> Vec<StubStrategy> {
         labels
@@ -235,7 +236,7 @@ mod tests {
 
     #[test]
     fn run_returns_standings() {
-        let game = ScriptedGame::new().add("a", "b", Winner::Label("a"));
+        let game: Game = Scripted::new().add("a", "b", Some("a")).into();
         let tournament = Swiss::new();
         let strategies = make_strategies(&["a", "b"]);
         let mut rng = fastrand::Rng::new();
@@ -247,7 +248,7 @@ mod tests {
 
     #[test]
     fn winner_ranks_first() {
-        let game = ScriptedGame::new().add("a", "b", Winner::Label("a"));
+        let game: Game = Scripted::new().add("a", "b", Some("a")).into();
         let tournament = Swiss::new();
         let strategies = make_strategies(&["a", "b"]);
         let mut rng = fastrand::Rng::new();
@@ -259,7 +260,7 @@ mod tests {
 
     #[test]
     fn loser_ranks_last() {
-        let game = ScriptedGame::new().add("a", "b", Winner::Label("b"));
+        let game: Game = Scripted::new().add("a", "b", Some("b")).into();
         let tournament = Swiss::new();
         let strategies = make_strategies(&["a", "b"]);
         let mut rng = fastrand::Rng::new();
@@ -271,7 +272,7 @@ mod tests {
 
     #[test]
     fn draw_keeps_original_order() {
-        let game = ScriptedGame::new().add("a", "b", Winner::Draw);
+        let game: Game = Scripted::new().add("a", "b", None).into();
         let tournament = Swiss::new();
         let strategies = make_strategies(&["a", "b"]);
         let mut rng = fastrand::Rng::new();
@@ -287,10 +288,10 @@ mod tests {
         // Round 1: a vs b (a wins), c gets bye (2 points)
         // Round 2: a vs c (a wins), b gets bye (2 points)
         // Final: a=4, b=2, c=2
-        let game =
-            ScriptedGame::new()
-                .add("a", "b", Winner::Label("a"))
-                .add("a", "c", Winner::Label("a"));
+        let game: Game = Scripted::new()
+            .add("a", "b", Some("a"))
+            .add("a", "c", Some("a"))
+            .into();
         let tournament = Swiss::new();
         let strategies = make_strategies(&["a", "b", "c"]);
         let mut rng = fastrand::Rng::new();
@@ -307,11 +308,12 @@ mod tests {
         // Round 2: a vs d (draw), b vs c (b wins)
         // Final points: a=3, d=3, b=2, c=0
         // Buchholz: a played b(2)+d(3)=5, d played c(0)+a(3)=3
-        let game = ScriptedGame::new()
-            .add("a", "b", Winner::Label("a"))
-            .add("c", "d", Winner::Label("d"))
-            .add("a", "d", Winner::Draw)
-            .add("b", "c", Winner::Label("b"));
+        let game: Game = Scripted::new()
+            .add("a", "b", Some("a"))
+            .add("c", "d", Some("d"))
+            .add("a", "d", None)
+            .add("b", "c", Some("b"))
+            .into();
         let tournament = Swiss::new();
         let strategies = make_strategies(&["a", "b", "c", "d"]);
         let mut rng = fastrand::Rng::new();
@@ -329,11 +331,12 @@ mod tests {
         // Final points: c=4, a=2, b=2, d=0
         // Buchholz for a: b(2) + c(4) = 6
         // Buchholz for b: a(2) + d(0) = 2
-        let game = ScriptedGame::new()
-            .add("a", "b", Winner::Label("a"))
-            .add("c", "d", Winner::Label("c"))
-            .add("a", "c", Winner::Label("c"))
-            .add("b", "d", Winner::Label("b"));
+        let game: Game = Scripted::new()
+            .add("a", "b", Some("a"))
+            .add("c", "d", Some("c"))
+            .add("a", "c", Some("c"))
+            .add("b", "d", Some("b"))
+            .into();
         let tournament = Swiss::new();
         let strategies = make_strategies(&["a", "b", "c", "d"]);
         let mut rng = fastrand::Rng::new();

@@ -1,4 +1,4 @@
-use crate::game::Play;
+use crate::game::Game;
 use crate::strategy::EvolvableStrategy;
 use crate::tournament::Tournament;
 
@@ -18,6 +18,7 @@ pub struct Evolver {
     mutation_rate: f64,
     selection: Selection,
     tournament: Tournament,
+    game: Game,
 }
 
 impl Default for Evolver {
@@ -39,6 +40,7 @@ impl Evolver {
             mutation_rate: 0.1,
             selection: Selection::default(),
             tournament: Tournament::default(),
+            game: Game::default(),
         }
     }
 
@@ -96,19 +98,21 @@ impl Evolver {
         self
     }
 
+    #[must_use]
+    pub fn game(mut self, game: Game) -> Self {
+        self.game = game;
+        self
+    }
+
     /// Runs the evolutionary algorithm and returns the final population.
-    pub fn evolve<S: EvolvableStrategy, R: Play>(
-        &self,
-        game: &R,
-        rng: &mut fastrand::Rng,
-    ) -> Population<S> {
+    pub fn evolve<S: EvolvableStrategy>(&self, rng: &mut fastrand::Rng) -> Population<S> {
         let strategies = self.create_initial_population::<S>(rng);
-        let individuals = evaluate(strategies, &self.tournament, game, rng);
+        let individuals = evaluate(strategies, &self.tournament, &self.game, rng);
         let mut population = Population::new(individuals);
 
         for _ in 0..self.generations {
             let new_strategies = self.create_next_generation(&population, rng);
-            let new_individuals = evaluate(new_strategies, &self.tournament, game, rng);
+            let new_individuals = evaluate(new_strategies, &self.tournament, &self.game, rng);
             population = population.next_generation(new_individuals);
         }
 
@@ -174,18 +178,14 @@ impl Evolver {
 mod tests {
     use super::*;
     use crate::strategy::Strategy;
-    use crate::test_utils::{FakeEvolvableStrategy, ScriptedGame};
-
-    fn stub_game() -> ScriptedGame {
-        ScriptedGame::new()
-    }
+    use crate::test_utils::FakeEvolvableStrategy;
 
     #[test]
     fn evolve_returns_population_with_correct_size() {
         let evolver = Evolver::new().population_size(4).generations(0);
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let population: Population<FakeEvolvableStrategy> = evolver.evolve(&stub_game(), &mut rng);
+        let population: Population<FakeEvolvableStrategy> = evolver.evolve(&mut rng);
 
         assert_eq!(population.individuals().len(), 4);
     }
@@ -195,7 +195,7 @@ mod tests {
         let evolver = Evolver::new().population_size(4).generations(0);
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let population: Population<FakeEvolvableStrategy> = evolver.evolve(&stub_game(), &mut rng);
+        let population: Population<FakeEvolvableStrategy> = evolver.evolve(&mut rng);
 
         assert_eq!(population.generation(), 0);
     }
@@ -205,7 +205,7 @@ mod tests {
         let evolver = Evolver::new().population_size(4).generations(3);
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let population: Population<FakeEvolvableStrategy> = evolver.evolve(&stub_game(), &mut rng);
+        let population: Population<FakeEvolvableStrategy> = evolver.evolve(&mut rng);
 
         assert_eq!(population.generation(), 3);
     }
@@ -214,12 +214,11 @@ mod tests {
     fn evolve_is_deterministic_with_same_seed() {
         let evolver1 = Evolver::new().population_size(4).generations(2);
         let evolver2 = Evolver::new().population_size(4).generations(2);
-        let game = stub_game();
 
         let pop1: Population<FakeEvolvableStrategy> =
-            evolver1.evolve(&game, &mut fastrand::Rng::with_seed(42));
+            evolver1.evolve(&mut fastrand::Rng::with_seed(42));
         let pop2: Population<FakeEvolvableStrategy> =
-            evolver2.evolve(&game, &mut fastrand::Rng::with_seed(42));
+            evolver2.evolve(&mut fastrand::Rng::with_seed(42));
 
         let labels1: Vec<_> = pop1
             .individuals()
@@ -244,7 +243,7 @@ mod tests {
             .mutation_rate(0.0);
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let population: Population<FakeEvolvableStrategy> = evolver.evolve(&stub_game(), &mut rng);
+        let population: Population<FakeEvolvableStrategy> = evolver.evolve(&mut rng);
 
         // With InputOrderTournament, gen0_0 and gen0_1 have highest fitness
         // They should be preserved as elites in gen1
@@ -274,13 +273,11 @@ mod tests {
 
     #[test]
     fn no_crossover_no_mutation_preserves_parent_genes() {
-        let game = stub_game();
-
         // Get gen0 population
         let gen0: Population<FakeEvolvableStrategy> = Evolver::new()
             .population_size(4)
             .generations(0)
-            .evolve(&game, &mut fastrand::Rng::with_seed(42));
+            .evolve(&mut fastrand::Rng::with_seed(42));
 
         let parent_genes: Vec<Vec<u8>> = gen0
             .individuals()
@@ -295,7 +292,7 @@ mod tests {
             .generations(1)
             .crossover_rate(0.0)
             .mutation_rate(0.0)
-            .evolve(&game, &mut fastrand::Rng::with_seed(42));
+            .evolve(&mut fastrand::Rng::with_seed(42));
 
         // Every offspring should have genes identical to some parent
         for individual in gen1.individuals() {
@@ -310,13 +307,11 @@ mod tests {
 
     #[test]
     fn mutation_rate_one_changes_genes() {
-        let game = stub_game();
-
         // Get gen0 population
         let gen0: Population<FakeEvolvableStrategy> = Evolver::new()
             .population_size(4)
             .generations(0)
-            .evolve(&game, &mut fastrand::Rng::with_seed(42));
+            .evolve(&mut fastrand::Rng::with_seed(42));
 
         let parent_genes: Vec<Vec<u8>> = gen0
             .individuals()
@@ -331,7 +326,7 @@ mod tests {
             .generations(1)
             .crossover_rate(0.0)
             .mutation_rate(1.0)
-            .evolve(&game, &mut fastrand::Rng::with_seed(42));
+            .evolve(&mut fastrand::Rng::with_seed(42));
 
         // At least one offspring should have different genes than all parents
         let any_mutated = gen1.individuals().iter().any(|individual| {
@@ -351,7 +346,7 @@ mod tests {
             .generations(1)
             .crossover_rate(1.0)
             .mutation_rate(0.0)
-            .evolve(&stub_game(), &mut fastrand::Rng::with_seed(42));
+            .evolve(&mut fastrand::Rng::with_seed(42));
 
         // With crossover, offspring genes should still be valid permutations
         for individual in gen1.individuals() {

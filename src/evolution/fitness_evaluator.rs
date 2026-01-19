@@ -1,4 +1,4 @@
-use crate::game::Play;
+use crate::game::Game;
 use crate::strategy::Strategy;
 use crate::tournament::{RunTournament, Tournament};
 
@@ -11,10 +11,10 @@ use super::Individual;
 /// # Panics
 ///
 /// Panics if the tournament returns duplicate or invalid strategy indices.
-pub fn evaluate<S: Strategy, R: Play>(
+pub fn evaluate<S: Strategy>(
     strategies: Vec<S>,
     tournament: &Tournament,
-    game: &R,
+    game: &Game,
     rng: &mut fastrand::Rng,
 ) -> Vec<Individual<S>> {
     let standings = tournament.run(&strategies, game, rng);
@@ -40,11 +40,12 @@ pub fn evaluate<S: Strategy, R: Play>(
 mod tests {
     use super::*;
     use crate::evolution::selection::HasFitness;
-    use crate::test_utils::{ScriptedGame, StubStrategy};
+    use crate::game::Stub;
+    use crate::test_utils::StubStrategy;
     use crate::tournament::Scripted;
 
-    fn stub_game() -> ScriptedGame {
-        ScriptedGame::new()
+    fn stub_game() -> Game {
+        Stub.into()
     }
 
     #[test]
