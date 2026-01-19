@@ -1,4 +1,4 @@
-use tracing::info_span;
+use tracing::{debug_span, info_span, instrument};
 
 use crate::game::Game;
 use crate::strategy::EvolvableStrategy;
@@ -118,6 +118,7 @@ impl Evolver {
         population
     }
 
+    #[instrument(skip_all, fields(population_size = population.individuals().len()))]
     fn create_next_generation<S: EvolvableStrategy>(
         &self,
         population: &Population<S>,
@@ -143,6 +144,7 @@ impl Evolver {
         new_strategies
     }
 
+    #[instrument(level = "debug", skip_all, fields(index = index))]
     fn create_offspring<S: EvolvableStrategy>(
         &self,
         individuals: &[Individual<S>],
@@ -150,21 +152,30 @@ impl Evolver {
         index: usize,
         rng: &mut fastrand::Rng,
     ) -> S {
-        let parent1 = self.selection.select(individuals, rng);
-        let parent2 = self.selection.select(individuals, rng);
+        let (parent1, parent2) = debug_span!("selection").in_scope(|| {
+            let p1 = self.selection.select(individuals, rng);
+            let p2 = self.selection.select(individuals, rng);
+            (p1, p2)
+        });
 
-        let mut child_genes = if rng.f64() < self.crossover_rate {
-            self.crossover
-                .crossover(parent1.strategy().genes(), parent2.strategy().genes(), rng)
-        } else {
-            parent1.strategy().genes().to_vec()
-        };
+        let mut child_genes = debug_span!("crossover").in_scope(|| {
+            if rng.f64() < self.crossover_rate {
+                self.crossover
+                    .crossover(parent1.strategy().genes(), parent2.strategy().genes(), rng)
+            } else {
+                parent1.strategy().genes().to_vec()
+            }
+        });
 
-        if rng.f64() < self.mutation_rate {
-            child_genes = self.mutation.mutate(&child_genes, rng);
-        }
+        debug_span!("mutation").in_scope(|| {
+            if rng.f64() < self.mutation_rate {
+                child_genes = self.mutation.mutate(&child_genes, rng);
+            }
+        });
 
-        S::from_genes(format!("gen{generation}_{index}"), child_genes)
+        debug_span!("from_genes").in_scope(|| {
+            S::from_genes(format!("gen{generation}_{index}"), child_genes)
+        })
     }
 }
 
