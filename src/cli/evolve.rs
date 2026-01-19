@@ -120,8 +120,12 @@ pub fn run_evolve(args: &EvolveArgs) -> Result<()> {
         }
     };
 
-    let output = ron::ser::to_string_pretty(&output_strategies, ron::ser::PrettyConfig::default())
-        .context("Failed to serialize strategies")?;
+    let config = ron::ser::PrettyConfig::default()
+        .depth_limit(2)
+        .compact_arrays(true)
+        .separator(String::new());
+    let output =
+        ron::ser::to_string_pretty(&output_strategies, config).context("Failed to serialize strategies")?;
 
     fs::write(&args.output, output)
         .with_context(|| format!("Failed to write output file: {}", args.output.display()))?;
