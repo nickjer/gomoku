@@ -153,6 +153,7 @@ pub fn run_evolve(args: &EvolveArgs) -> Result<()> {
 
 fn setup_logging(log_level: Option<&str>) -> Result<()> {
     use tracing_subscriber::EnvFilter;
+    use tracing_subscriber::fmt::format::FmtSpan;
 
     let filter = match log_level {
         Some(level) => {
@@ -161,7 +162,10 @@ fn setup_logging(log_level: Option<&str>) -> Result<()> {
         None => EnvFilter::from_default_env(),
     };
 
-    tracing_subscriber::fmt().with_env_filter(filter).init();
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_span_events(FmtSpan::CLOSE)
+        .init();
 
     Ok(())
 }

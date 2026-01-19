@@ -1,3 +1,5 @@
+use tracing::instrument;
+
 use crate::game::Game;
 use crate::strategy::Strategy;
 use crate::tournament::{RunTournament, Tournament};
@@ -11,6 +13,7 @@ use super::Individual;
 /// # Panics
 ///
 /// Panics if the tournament returns duplicate or invalid strategy indices.
+#[instrument(skip_all, fields(population_size = strategies.len(), %tournament))]
 pub fn evaluate<S: Strategy>(
     strategies: Vec<S>,
     tournament: &Tournament,

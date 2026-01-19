@@ -76,7 +76,7 @@ impl RunTournament for Scripted {
 
 /// Enum for polymorphic tournament dispatch.
 #[enum_dispatch(RunTournament)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, strum::Display)]
 pub enum Tournament {
     Swiss,
     #[cfg(test)]

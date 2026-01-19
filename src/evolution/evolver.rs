@@ -1,3 +1,5 @@
+use tracing::info_span;
+
 use crate::game::Game;
 use crate::strategy::EvolvableStrategy;
 use crate::tournament::Tournament;
@@ -105,7 +107,9 @@ impl Evolver {
         let individuals = evaluate(strategies, &self.tournament, &self.game, rng);
         let mut population = Population::new(individuals);
 
-        for _ in 0..self.generations {
+        for generation in 1..=self.generations {
+            let span = info_span!("generation", number = generation);
+            let _guard = span.enter();
             let new_strategies = self.create_next_generation(&population, rng);
             let new_individuals = evaluate(new_strategies, &self.tournament, &self.game, rng);
             population = population.next_generation(new_individuals);
