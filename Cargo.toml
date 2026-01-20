@@ -23,6 +23,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 lto = true
 codegen-units = 1
 panic = "abort"
+debug = true
 
 [lints.rust]
 unsafe_code = "forbid"
