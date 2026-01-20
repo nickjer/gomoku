@@ -1,5 +1,6 @@
-use std::collections::HashSet;
 use std::hash::Hash;
+
+use rapidhash::RapidHashSet;
 
 use super::RunCrossover;
 
@@ -27,7 +28,7 @@ impl Order {
         let b = rng.usize(..size);
         let (start, end) = if a <= b { (a, b) } else { (b, a) };
 
-        let segment: HashSet<_> = parent1[start..=end].iter().collect();
+        let segment: RapidHashSet<_> = parent1[start..=end].iter().collect();
         let mut remaining = parent2.iter().filter(|x| !segment.contains(x));
 
         let child: Vec<T> = (0..size)
@@ -57,6 +58,8 @@ impl RunCrossover for Order {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::*;
 
     #[test]

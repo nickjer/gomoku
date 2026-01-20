@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::sync::LazyLock;
 
+use rapidhash::RapidHashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::cache_repository::CacheRepository;
@@ -102,6 +103,23 @@ impl FingerprintNN2 {
     #[must_use]
     pub fn nn2(&self) -> NeighborCounts {
         self.nn2
+    }
+
+    /// Returns the index of this fingerprint in the `all()` array.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the fingerprint is not in the `all()` array (invalid fingerprint).
+    #[must_use]
+    pub fn index(self) -> u32 {
+        static INDEX_MAP: LazyLock<RapidHashMap<FingerprintNN2, u32>> = LazyLock::new(|| {
+            FingerprintNN2::all()
+                .iter()
+                .enumerate()
+                .map(|(i, &fp)| (fp, u32::try_from(i).unwrap()))
+                .collect()
+        });
+        *INDEX_MAP.get(&self).expect("Invalid fingerprint")
     }
 }
 

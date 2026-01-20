@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 use crate::board::Board;
 use crate::cache_id::CacheId;
 use crate::cache_repository::CacheRepository;
-use crate::cluster::BestPositionSelector;
 use crate::cluster::fingerprint::FingerprintNN3;
+use crate::cluster::select_best_position;
 use crate::position_id::PositionId;
 use crate::stone::Stone;
 use crate::strategy::{EvolvableStrategy, Strategy};
@@ -14,19 +14,21 @@ use crate::strategy::{EvolvableStrategy, Strategy};
 #[serde(from = "NN3Raw", into = "NN3Raw")]
 pub struct NN3 {
     label: String,
-    genes: Vec<FingerprintNN3>,
-    selector: BestPositionSelector<FingerprintNN3>,
+    /// Fingerprint indices in rank order (index 0 = highest priority).
+    ranked_fingerprints: Vec<u32>,
+    /// Reverse lookup: `fingerprint_positions[fp.index()]` = position in `ranked_fingerprints`.
+    fingerprint_positions: Vec<u32>,
 }
 
 #[derive(Serialize, Deserialize)]
 struct NN3Raw {
     label: String,
-    genes: Vec<FingerprintNN3>,
+    ranked_fingerprints: Vec<u32>,
 }
 
 impl From<NN3Raw> for NN3 {
     fn from(raw: NN3Raw) -> Self {
-        Self::new(raw.label, raw.genes)
+        Self::new(raw.label, raw.ranked_fingerprints)
     }
 }
 
@@ -34,28 +36,38 @@ impl From<NN3> for NN3Raw {
     fn from(strategy: NN3) -> Self {
         Self {
             label: strategy.label,
-            genes: strategy.genes,
+            ranked_fingerprints: strategy.ranked_fingerprints,
         }
     }
 }
 
 impl NN3 {
+    /// Creates a new NN3 strategy from fingerprint indices in priority order.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `ranked_fingerprints` contains indices outside the valid range.
     #[must_use]
-    pub fn new(label: impl Into<String>, genes: Vec<FingerprintNN3>) -> Self {
-        let selector = BestPositionSelector::new(&genes);
+    pub fn new(label: impl Into<String>, ranked_fingerprints: Vec<u32>) -> Self {
+        let mut fingerprint_positions = vec![0u32; ranked_fingerprints.len()];
+        for (position, &fp_index) in ranked_fingerprints.iter().enumerate() {
+            let idx = usize::try_from(fp_index).unwrap();
+            fingerprint_positions[idx] = u32::try_from(position).unwrap();
+        }
         Self {
             label: label.into(),
-            genes,
-            selector,
+            ranked_fingerprints,
+            fingerprint_positions,
         }
     }
 }
 
 impl EvolvableStrategy for NN3 {
-    type Gene = FingerprintNN3;
+    type Gene = u32;
 
     fn random_genes(rng: &mut fastrand::Rng) -> Vec<Self::Gene> {
-        let mut genes = FingerprintNN3::all().to_vec();
+        let len = u32::try_from(FingerprintNN3::all().len()).unwrap();
+        let mut genes: Vec<u32> = (0..len).collect();
         rng.shuffle(&mut genes);
         genes
     }
@@ -65,7 +77,7 @@ impl EvolvableStrategy for NN3 {
     }
 
     fn genes(&self) -> &[Self::Gene] {
-        &self.genes
+        &self.ranked_fingerprints
     }
 }
 
@@ -85,18 +97,12 @@ impl Strategy for NN3 {
         cache_repo: &CacheRepository,
         rng: &mut fastrand::Rng,
     ) -> PositionId {
-        let position_fingerprints: Vec<_> = board
-            .empty_position_ids()
-            .iter()
-            .map(|&pos| {
-                (
-                    pos,
-                    FingerprintNN3::calculate(pos, current_stone, cache_repo),
-                )
-            })
-            .collect();
-
-        self.selector.select(&position_fingerprints, rng)
+        select_best_position(
+            board.empty_position_ids(),
+            &self.fingerprint_positions,
+            |pos| FingerprintNN3::calculate(pos, current_stone, cache_repo).index(),
+            rng,
+        )
     }
 
     fn label(&self) -> &str {
@@ -121,6 +127,10 @@ mod tests {
 
     fn fp3(nn1: NeighborCounts, nn2: NeighborCounts, nn3: NeighborCounts) -> FingerprintNN3 {
         FingerprintNN3::new(nn1, nn2, nn3)
+    }
+
+    fn all_indices() -> Vec<u32> {
+        (0..FingerprintNN3::all().len() as u32).collect()
     }
 
     struct TestContext {
@@ -149,7 +159,7 @@ mod tests {
     #[test]
     fn choose_move_returns_empty_position() {
         let mut ctx = TestContext::new();
-        let strategy = NN3::new("test", FingerprintNN3::all().to_vec());
+        let strategy = NN3::new("test", all_indices());
         let board = Board::new();
 
         let result = strategy.choose_move(Stone::Black, &board, &ctx.cache_repo, &mut ctx.rng);
@@ -178,8 +188,10 @@ mod tests {
         // NN3: all empty                          → self=0, opp=0, empty=4
         let mut ctx = TestContext::new();
         let specific_fp = fp3(counts(2, 2, 0), counts(1, 1, 2), counts(0, 0, 4));
-        let mut priority = vec![specific_fp];
-        priority.extend(FingerprintNN3::all().iter().filter(|&&f| f != specific_fp));
+        let specific_fp_index = specific_fp.index();
+        let mut priority = vec![specific_fp_index];
+        priority
+            .extend((0..FingerprintNN3::all().len() as u32).filter(|&i| i != specific_fp_index));
 
         let strategy = NN3::new("test", priority);
         let mut board = Board::new();
@@ -202,28 +214,15 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Unknown fingerprint in priority map")]
-    fn choose_move_panics_on_unknown_fingerprint() {
-        let mut ctx = TestContext::new();
-        let incomplete_priority = vec![fp3(counts(0, 0, 4), counts(0, 0, 4), counts(0, 0, 4))];
-
-        let strategy = NN3::new("test", incomplete_priority);
-        let mut board = Board::new();
-        ctx.place(&mut board, PositionId::center(), Stone::Black);
-
-        strategy.choose_move(Stone::White, &board, &ctx.cache_repo, &mut ctx.rng);
-    }
-
-    #[test]
     fn label_returns_provided_label() {
-        let strategy = NN3::new("my_nn3_strategy", FingerprintNN3::all().to_vec());
+        let strategy = NN3::new("my_nn3_strategy", all_indices());
 
         assert_eq!(strategy.label(), "my_nn3_strategy");
     }
 
     #[test]
-    fn genes_returns_fingerprint_priority() {
-        let priority: Vec<_> = FingerprintNN3::all().to_vec();
+    fn genes_returns_ranked_fingerprints() {
+        let priority = all_indices();
         let strategy = NN3::new("test", priority.clone());
 
         assert_eq!(strategy.genes(), priority.as_slice());
@@ -238,12 +237,12 @@ mod tests {
     }
 
     #[test]
-    fn random_genes_contains_all_fingerprints() {
+    fn random_genes_contains_all_indices() {
         let mut rng = fastrand::Rng::with_seed(42);
         let strategy = NN3::random("test", &mut rng);
 
-        let genes_set: HashSet<_> = strategy.genes().iter().collect();
-        let all_set: HashSet<_> = FingerprintNN3::all().iter().collect();
+        let genes_set: HashSet<_> = strategy.genes().iter().copied().collect();
+        let all_set: HashSet<_> = (0..FingerprintNN3::all().len() as u32).collect();
 
         assert_eq!(genes_set, all_set);
     }
@@ -253,7 +252,8 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(42);
         let strategy = NN3::random("test", &mut rng);
 
-        assert_ne!(strategy.genes(), FingerprintNN3::all());
+        let sequential: Vec<u32> = (0..FingerprintNN3::all().len() as u32).collect();
+        assert_ne!(strategy.genes(), sequential.as_slice());
     }
 
     #[test]

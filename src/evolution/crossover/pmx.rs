@@ -1,5 +1,6 @@
-use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
+
+use rapidhash::{RapidHashMap, RapidHashSet};
 
 use super::RunCrossover;
 
@@ -27,9 +28,10 @@ impl Pmx {
         let b = rng.usize(..size);
         let (start, end) = if a <= b { (a, b) } else { (b, a) };
 
-        let mapping: HashMap<_, _> = (start..=end).map(|i| (&parent1[i], &parent2[i])).collect();
+        let mapping: RapidHashMap<_, _> =
+            (start..=end).map(|i| (&parent1[i], &parent2[i])).collect();
 
-        let segment_values: HashSet<_> = parent1[start..=end].iter().collect();
+        let segment_values: RapidHashSet<_> = parent1[start..=end].iter().collect();
 
         let child: Vec<T> = (0..size)
             .map(|i| {
@@ -62,6 +64,8 @@ impl RunCrossover for Pmx {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::*;
 
     #[test]

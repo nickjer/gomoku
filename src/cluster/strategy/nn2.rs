@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 use crate::board::Board;
 use crate::cache_id::CacheId;
 use crate::cache_repository::CacheRepository;
-use crate::cluster::BestPositionSelector;
 use crate::cluster::fingerprint::FingerprintNN2;
+use crate::cluster::select_best_position;
 use crate::position_id::PositionId;
 use crate::stone::Stone;
 use crate::strategy::{EvolvableStrategy, Strategy};
@@ -14,19 +14,21 @@ use crate::strategy::{EvolvableStrategy, Strategy};
 #[serde(from = "NN2Raw", into = "NN2Raw")]
 pub struct NN2 {
     label: String,
-    genes: Vec<FingerprintNN2>,
-    selector: BestPositionSelector<FingerprintNN2>,
+    /// Fingerprint indices in rank order (index 0 = highest priority).
+    ranked_fingerprints: Vec<u32>,
+    /// Reverse lookup: `fingerprint_positions[fp.index()]` = position in `ranked_fingerprints`.
+    fingerprint_positions: Vec<u32>,
 }
 
 #[derive(Serialize, Deserialize)]
 struct NN2Raw {
     label: String,
-    genes: Vec<FingerprintNN2>,
+    ranked_fingerprints: Vec<u32>,
 }
 
 impl From<NN2Raw> for NN2 {
     fn from(raw: NN2Raw) -> Self {
-        Self::new(raw.label, raw.genes)
+        Self::new(raw.label, raw.ranked_fingerprints)
     }
 }
 
@@ -34,28 +36,38 @@ impl From<NN2> for NN2Raw {
     fn from(strategy: NN2) -> Self {
         Self {
             label: strategy.label,
-            genes: strategy.genes,
+            ranked_fingerprints: strategy.ranked_fingerprints,
         }
     }
 }
 
 impl NN2 {
+    /// Creates a new NN2 strategy from fingerprint indices in priority order.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `ranked_fingerprints` contains indices outside the valid range.
     #[must_use]
-    pub fn new(label: impl Into<String>, genes: Vec<FingerprintNN2>) -> Self {
-        let selector = BestPositionSelector::new(&genes);
+    pub fn new(label: impl Into<String>, ranked_fingerprints: Vec<u32>) -> Self {
+        let mut fingerprint_positions = vec![0u32; ranked_fingerprints.len()];
+        for (position, &fp_index) in ranked_fingerprints.iter().enumerate() {
+            let idx = usize::try_from(fp_index).unwrap();
+            fingerprint_positions[idx] = u32::try_from(position).unwrap();
+        }
         Self {
             label: label.into(),
-            genes,
-            selector,
+            ranked_fingerprints,
+            fingerprint_positions,
         }
     }
 }
 
 impl EvolvableStrategy for NN2 {
-    type Gene = FingerprintNN2;
+    type Gene = u32;
 
     fn random_genes(rng: &mut fastrand::Rng) -> Vec<Self::Gene> {
-        let mut genes = FingerprintNN2::all().to_vec();
+        let len = u32::try_from(FingerprintNN2::all().len()).unwrap();
+        let mut genes: Vec<u32> = (0..len).collect();
         rng.shuffle(&mut genes);
         genes
     }
@@ -65,7 +77,7 @@ impl EvolvableStrategy for NN2 {
     }
 
     fn genes(&self) -> &[Self::Gene] {
-        &self.genes
+        &self.ranked_fingerprints
     }
 }
 
@@ -81,18 +93,12 @@ impl Strategy for NN2 {
         cache_repo: &CacheRepository,
         rng: &mut fastrand::Rng,
     ) -> PositionId {
-        let position_fingerprints: Vec<_> = board
-            .empty_position_ids()
-            .iter()
-            .map(|&pos| {
-                (
-                    pos,
-                    FingerprintNN2::calculate(pos, current_stone, cache_repo),
-                )
-            })
-            .collect();
-
-        self.selector.select(&position_fingerprints, rng)
+        select_best_position(
+            board.empty_position_ids(),
+            &self.fingerprint_positions,
+            |pos| FingerprintNN2::calculate(pos, current_stone, cache_repo).index(),
+            rng,
+        )
     }
 
     fn label(&self) -> &str {
@@ -117,6 +123,10 @@ mod tests {
 
     fn fp2(nn1: NeighborCounts, nn2: NeighborCounts) -> FingerprintNN2 {
         FingerprintNN2::new(nn1, nn2)
+    }
+
+    fn all_indices() -> Vec<u32> {
+        (0..FingerprintNN2::all().len() as u32).collect()
     }
 
     struct TestContext {
@@ -144,7 +154,7 @@ mod tests {
     #[test]
     fn choose_move_returns_empty_position() {
         let mut ctx = TestContext::new();
-        let strategy = NN2::new("test", FingerprintNN2::all().to_vec());
+        let strategy = NN2::new("test", all_indices());
         let board = Board::new();
 
         let result = strategy.choose_move(Stone::Black, &board, &ctx.cache_repo, &mut ctx.rng);
@@ -170,8 +180,9 @@ mod tests {
         //   NN2: (0,1)=B, (2,1)=W             → self=1, opp=1, empty=0
         let mut ctx = TestContext::new();
         let edge_mixed = fp2(counts(1, 1, 1), counts(1, 1, 0));
-        let mut priority = vec![edge_mixed];
-        priority.extend(FingerprintNN2::all().iter().filter(|&&f| f != edge_mixed));
+        let edge_mixed_index = edge_mixed.index();
+        let mut priority = vec![edge_mixed_index];
+        priority.extend((0..FingerprintNN2::all().len() as u32).filter(|&i| i != edge_mixed_index));
 
         let strategy = NN2::new("test", priority);
         let mut board = Board::new();
@@ -189,28 +200,15 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Unknown fingerprint in priority map")]
-    fn choose_move_panics_on_unknown_fingerprint() {
-        let mut ctx = TestContext::new();
-        let incomplete_priority = vec![fp2(counts(0, 0, 4), counts(0, 0, 4))];
-
-        let strategy = NN2::new("test", incomplete_priority);
-        let mut board = Board::new();
-        ctx.place(&mut board, PositionId::center(), Stone::Black);
-
-        strategy.choose_move(Stone::White, &board, &ctx.cache_repo, &mut ctx.rng);
-    }
-
-    #[test]
     fn label_returns_provided_label() {
-        let strategy = NN2::new("my_nn2_strategy", FingerprintNN2::all().to_vec());
+        let strategy = NN2::new("my_nn2_strategy", all_indices());
 
         assert_eq!(strategy.label(), "my_nn2_strategy");
     }
 
     #[test]
-    fn genes_returns_fingerprint_priority() {
-        let priority: Vec<_> = FingerprintNN2::all().to_vec();
+    fn genes_returns_ranked_fingerprints() {
+        let priority = all_indices();
         let strategy = NN2::new("test", priority.clone());
 
         assert_eq!(strategy.genes(), priority.as_slice());
@@ -225,12 +223,12 @@ mod tests {
     }
 
     #[test]
-    fn random_genes_contains_all_fingerprints() {
+    fn random_genes_contains_all_indices() {
         let mut rng = fastrand::Rng::with_seed(42);
         let strategy = NN2::random("test", &mut rng);
 
-        let genes_set: HashSet<_> = strategy.genes().iter().collect();
-        let all_set: HashSet<_> = FingerprintNN2::all().iter().collect();
+        let genes_set: HashSet<_> = strategy.genes().iter().copied().collect();
+        let all_set: HashSet<_> = (0..FingerprintNN2::all().len() as u32).collect();
 
         assert_eq!(genes_set, all_set);
     }
@@ -240,7 +238,8 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(42);
         let strategy = NN2::random("test", &mut rng);
 
-        assert_ne!(strategy.genes(), FingerprintNN2::all());
+        let sequential: Vec<u32> = (0..FingerprintNN2::all().len() as u32).collect();
+        assert_ne!(strategy.genes(), sequential.as_slice());
     }
 
     #[test]

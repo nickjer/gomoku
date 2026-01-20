@@ -1,69 +1,51 @@
-use std::hash::Hash;
-
-use rapidhash::RapidHashMap;
-
 use crate::position_id::PositionId;
 
-/// Selects the best position based on fingerprint priority.
-#[derive(Debug, Clone)]
-pub struct BestPositionSelector<F> {
-    priority_map: RapidHashMap<F, usize>,
-}
+/// Selects the best position based on fingerprint priorities.
+///
+/// # Arguments
+/// * `empty_positions` - The available positions to choose from
+/// * `fingerprint_positions` - Lookup table: `fingerprint_positions[fp_index]` = rank
+/// * `get_fp_index` - Closure to get fingerprint index for a position
+/// * `rng` - Random number generator for tiebreaking
+///
+/// # Panics
+///
+/// Panics if `empty_positions` is empty.
+#[must_use]
+pub fn select_best_position(
+    empty_positions: &[PositionId],
+    fingerprint_positions: &[u32],
+    get_fp_index: impl Fn(PositionId) -> u32,
+    rng: &mut fastrand::Rng,
+) -> PositionId {
+    assert!(!empty_positions.is_empty(), "No empty positions on board");
 
-impl<F: Eq + Hash + Clone> BestPositionSelector<F> {
-    #[must_use]
-    pub fn new(fingerprint_priority: &[F]) -> Self {
-        let priority_map = fingerprint_priority
-            .iter()
-            .cloned()
-            .enumerate()
-            .map(|(idx, f)| (f, idx))
-            .collect();
-        Self { priority_map }
-    }
+    let mut best_rank = u32::MAX;
+    let mut best_positions = Vec::new();
 
-    /// Selects the best position from position-fingerprint pairs.
-    ///
-    /// # Panics
-    ///
-    /// Panics if empty or contains unknown fingerprint.
-    #[must_use]
-    pub fn select(
-        &self,
-        position_fingerprints: &[(PositionId, F)],
-        rng: &mut fastrand::Rng,
-    ) -> PositionId {
-        let mut best_priority = usize::MAX;
-        let mut best_positions = Vec::new();
+    for &pos in empty_positions {
+        let fp_index = usize::try_from(get_fp_index(pos)).unwrap();
+        let rank = fingerprint_positions[fp_index];
 
-        for &(pos, ref fingerprint) in position_fingerprints {
-            let priority = *self
-                .priority_map
-                .get(fingerprint)
-                .expect("Unknown fingerprint in priority map");
-
-            match priority.cmp(&best_priority) {
-                std::cmp::Ordering::Less => {
-                    best_priority = priority;
-                    best_positions.clear();
-                    best_positions.push(pos);
-                }
-                std::cmp::Ordering::Equal => {
-                    best_positions.push(pos);
-                }
-                std::cmp::Ordering::Greater => {}
+        match rank.cmp(&best_rank) {
+            std::cmp::Ordering::Less => {
+                best_rank = rank;
+                best_positions.clear();
+                best_positions.push(pos);
             }
+            std::cmp::Ordering::Equal => {
+                best_positions.push(pos);
+            }
+            std::cmp::Ordering::Greater => {}
         }
-
-        assert!(!best_positions.is_empty(), "No positions provided");
-        best_positions[rng.usize(..best_positions.len())]
     }
+
+    best_positions[rng.usize(..best_positions.len())]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cluster::NeighborCounts;
     use crate::position::Position;
 
     fn pos(row: u8, col: u8) -> PositionId {
@@ -71,38 +53,47 @@ mod tests {
     }
 
     #[test]
-    fn selects_position_with_highest_priority() {
-        let fingerprints = vec![
-            NeighborCounts::new(0, 0, 4),
-            NeighborCounts::new(1, 0, 3),
-            NeighborCounts::new(0, 1, 3),
-        ];
-        let selector = BestPositionSelector::new(&fingerprints);
+    fn selects_position_with_lowest_rank() {
+        // fingerprint_positions[fp_index] = rank
+        // Lower rank = higher priority
+        let fingerprint_positions = vec![2, 0, 1]; // fp 1 has best rank (0)
+        let empty_positions = vec![pos(0, 0), pos(0, 1), pos(0, 2)];
         let mut rng = fastrand::Rng::new();
 
-        let position_fingerprints = vec![
-            (pos(0, 0), NeighborCounts::new(0, 1, 3)), // priority 2
-            (pos(0, 1), NeighborCounts::new(0, 0, 4)), // priority 0 (best)
-            (pos(0, 2), NeighborCounts::new(1, 0, 3)), // priority 1
-        ];
+        // Position 0 -> fp index 0 (rank 2)
+        // Position 1 -> fp index 1 (rank 0, best)
+        // Position 2 -> fp index 2 (rank 1)
+        let get_fp_index = |p: PositionId| match (p.row(), p.col()) {
+            (0, 0) => 0,
+            (0, 1) => 1,
+            (0, 2) => 2,
+            _ => panic!("Unexpected position"),
+        };
 
-        let chosen = selector.select(&position_fingerprints, &mut rng);
+        let chosen = select_best_position(
+            &empty_positions,
+            &fingerprint_positions,
+            get_fp_index,
+            &mut rng,
+        );
 
         assert_eq!(chosen, pos(0, 1));
     }
 
     #[test]
     fn selects_from_tied_positions() {
-        let fingerprints = vec![NeighborCounts::new(0, 0, 4)];
-        let selector = BestPositionSelector::new(&fingerprints);
+        let fingerprint_positions = vec![0, 0]; // Both have same rank
+        let empty_positions = vec![pos(0, 0), pos(0, 1)];
         let mut rng = fastrand::Rng::new();
 
-        let position_fingerprints = vec![
-            (pos(0, 0), NeighborCounts::new(0, 0, 4)),
-            (pos(0, 1), NeighborCounts::new(0, 0, 4)),
-        ];
+        let get_fp_index = |p: PositionId| if p.col() == 0 { 0 } else { 1 };
 
-        let chosen = selector.select(&position_fingerprints, &mut rng);
+        let chosen = select_best_position(
+            &empty_positions,
+            &fingerprint_positions,
+            get_fp_index,
+            &mut rng,
+        );
 
         assert!(chosen == pos(0, 0) || chosen == pos(0, 1));
     }

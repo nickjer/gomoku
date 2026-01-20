@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::sync::LazyLock;
 
+use rapidhash::RapidHashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::cache_repository::CacheRepository;
@@ -93,6 +94,26 @@ impl FingerprintNN4 {
                 .collect()
         });
         &ALL
+    }
+
+    /// Returns the index of this fingerprint in the `all()` array.
+    ///
+    /// This is used for O(1) priority lookups instead of `HashMap` lookups.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the fingerprint is not found in `all()` (should never happen
+    /// for valid fingerprints).
+    #[must_use]
+    pub fn index(self) -> u32 {
+        static INDEX_MAP: LazyLock<RapidHashMap<FingerprintNN4, u32>> = LazyLock::new(|| {
+            FingerprintNN4::all()
+                .iter()
+                .enumerate()
+                .map(|(i, &fp)| (fp, u32::try_from(i).unwrap()))
+                .collect()
+        });
+        *INDEX_MAP.get(&self).expect("Invalid fingerprint")
     }
 
     /// Calculates the fingerprint for a position given the current cache state.
