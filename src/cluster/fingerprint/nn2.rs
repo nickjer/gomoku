@@ -109,32 +109,12 @@ mod tests {
     }
 
     #[test]
-    fn serializes_as_2_tuple() {
-        let fingerprint =
-            FingerprintNN2::new(NeighborCounts::new(1, 2, 1), NeighborCounts::new(0, 0, 4));
-
-        let serialized = ron::to_string(&fingerprint).unwrap();
-
-        assert_eq!(serialized, "((1,2,1),(0,0,4))");
-    }
-
-    #[test]
-    fn deserializes_from_2_tuple() {
-        let serialized = "((1, 2, 1), (0, 0, 4))";
-
-        let fingerprint: FingerprintNN2 = ron::from_str(serialized).unwrap();
-
-        assert_eq!(fingerprint.nn1(), NeighborCounts::new(1, 2, 1));
-        assert_eq!(fingerprint.nn2(), NeighborCounts::new(0, 0, 4));
-    }
-
-    #[test]
     fn serialization_round_trip() {
         let original =
             FingerprintNN2::new(NeighborCounts::new(2, 1, 1), NeighborCounts::new(3, 0, 1));
 
-        let serialized = ron::to_string(&original).unwrap();
-        let deserialized: FingerprintNN2 = ron::from_str(&serialized).unwrap();
+        let bytes = postcard::to_allocvec(&original).unwrap();
+        let deserialized: FingerprintNN2 = postcard::from_bytes(&bytes).unwrap();
 
         assert_eq!(deserialized, original);
     }

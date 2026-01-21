@@ -1,5 +1,3 @@
-use serde::{Deserialize, Serialize};
-
 use crate::board::Board;
 use crate::cache_id::CacheId;
 use crate::cache_repository::CacheRepository;
@@ -13,36 +11,13 @@ use crate::strategy::{EvolvableStrategy, Strategy};
 const CACHE_DEPENDENCIES: &[CacheId] = &[CacheId::FingerprintNN1Index];
 
 /// A strategy based on NN1 fingerprints with evolvable gene priority.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(from = "NN1Raw", into = "NN1Raw")]
+#[derive(Debug, Clone)]
 pub struct NN1 {
     label: String,
     /// Fingerprint indices in rank order (index 0 = highest priority).
     ranked_fingerprints: Vec<Gene>,
     /// Reverse lookup: `fingerprint_positions[fp.index()]` = position in `ranked_fingerprints`.
     fingerprint_positions: Vec<usize>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct NN1Raw {
-    label: String,
-    ranked_fingerprints: Vec<usize>,
-}
-
-impl From<NN1Raw> for NN1 {
-    fn from(raw: NN1Raw) -> Self {
-        let genes = raw.ranked_fingerprints.into_iter().map(Gene::new).collect();
-        Self::new(raw.label, genes)
-    }
-}
-
-impl From<NN1> for NN1Raw {
-    fn from(strategy: NN1) -> Self {
-        Self {
-            label: strategy.label,
-            ranked_fingerprints: strategy.ranked_fingerprints.iter().map(|g| g.index()).collect(),
-        }
-    }
 }
 
 impl NN1 {

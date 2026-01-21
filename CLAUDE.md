@@ -68,14 +68,16 @@ The `Evolver` orchestrates the genetic algorithm. Call `evolve(strategies, rng)`
 ### CLI
 
 ```bash
-# Generate and evolve random strategies
-cargo run --release -- evolve -o tmp/output.ron nn4 16
+# Generate and evolve random strategies (saves to directory)
+cargo run --release -- evolve -o tmp/output nn4 16
 
 # Continue from saved strategies
-cargo run --release -- evolve -i input.ron -o tmp/output.ron -g 50
+cargo run --release -- evolve -i tmp/output -o tmp/output2 -g 50
 ```
 
-**Options:** `-o/--output` (required), `-i/--input`, `-g/--generations` [10], `-e/--elitism` [2], `-c/--crossover` (order/pmx) [order], `--crossover-rate` [0.8], `-m/--mutation` (swap/insert/inversion) [swap], `--mutation-rate` [0.1], `--seed`, `-l/--log-level` (error/warn/info/debug/trace).
+**Output format:** Each strategy is saved as an individual binary file `{rank}_{label}.bin` using postcard serialization.
+
+**Options:** `-o/--output` (required, directory), `-i/--input` (directory), `-g/--generations` [10], `-e/--elitism` [2], `-c/--crossover` (order/pmx) [order], `--crossover-rate` [0.8], `-m/--mutation` (swap/insert/inversion) [swap], `--mutation-rate` [0.1], `--seed`, `-l/--log-level` (error/warn/info/debug/trace).
 
 ## Code Style
 
@@ -121,7 +123,7 @@ The release build includes debug symbols for profiling. Use `perf` for CPU profi
 
 ```bash
 # Profile with frame pointer call graph (recommended - faster analysis)
-perf record -g ./target/release/gomoku evolve -o tmp/profile.ron nn4 100 -g 20
+perf record -g ./target/release/gomoku evolve -o tmp/profile nn4 100 -g 20
 
 # View results (avoid --call-graph dwarf as addr2line can hang)
 perf report --stdio --no-children -n | head -80

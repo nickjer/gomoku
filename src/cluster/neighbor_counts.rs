@@ -54,31 +54,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn serializes_as_tuple() {
-        let counts = NeighborCounts::new(1, 2, 3);
-
-        let serialized = ron::to_string(&counts).unwrap();
-
-        assert_eq!(serialized, "(1,2,3)");
-    }
-
-    #[test]
-    fn deserializes_from_tuple() {
-        let serialized = "(1, 2, 3)";
-
-        let counts: NeighborCounts = ron::from_str(serialized).unwrap();
-
-        assert_eq!(counts.player(), 1);
-        assert_eq!(counts.opponent(), 2);
-        assert_eq!(counts.empty(), 3);
-    }
-
-    #[test]
     fn serialization_round_trip() {
-        let original = NeighborCounts::new(4, 0, 0);
+        let original = NeighborCounts::new(4, 2, 1);
 
-        let serialized = ron::to_string(&original).unwrap();
-        let deserialized: NeighborCounts = ron::from_str(&serialized).unwrap();
+        let bytes = postcard::to_allocvec(&original).unwrap();
+        let deserialized: NeighborCounts = postcard::from_bytes(&bytes).unwrap();
 
         assert_eq!(deserialized, original);
     }

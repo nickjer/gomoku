@@ -56,7 +56,9 @@ impl FingerprintNN2IndexCache {
         self.neighbor_nn1.place(position_id, stone);
         self.neighbor_nn2.place(position_id, stone);
 
-        for &affected_pos in self.neighbor_nn1.affected_positions(position_id)
+        for &affected_pos in self
+            .neighbor_nn1
+            .affected_positions(position_id)
             .iter()
             .chain(self.neighbor_nn2.affected_positions(position_id))
         {
@@ -91,10 +93,8 @@ mod tests {
         let cache = FingerprintNN2IndexCache::new();
         let center = PositionId::center();
 
-        let expected = FingerprintNN2::new(
-            NeighborCounts::new(0, 0, 4),
-            NeighborCounts::new(0, 0, 4),
-        ).index();
+        let expected =
+            FingerprintNN2::new(NeighborCounts::new(0, 0, 4), NeighborCounts::new(0, 0, 4)).index();
 
         assert_eq!(cache.get(center, Stone::Black), expected);
         assert_eq!(cache.get(center, Stone::White), expected);
@@ -108,10 +108,8 @@ mod tests {
 
         cache.place(center, Stone::Black);
 
-        let expected_black = FingerprintNN2::new(
-            NeighborCounts::new(1, 0, 3),
-            NeighborCounts::new(0, 0, 4),
-        ).index();
+        let expected_black =
+            FingerprintNN2::new(NeighborCounts::new(1, 0, 3), NeighborCounts::new(0, 0, 4)).index();
 
         assert_eq!(cache.get(neighbor, Stone::Black), expected_black);
     }

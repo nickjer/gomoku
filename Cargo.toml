@@ -9,16 +9,19 @@ categories = ["command-line-utilities", "game-development", "algorithms"]
 
 [dependencies]
 anyhow = "1"
+postcard = { version = "1", features = ["alloc"] }
 clap = { version = "4", features = ["derive"] }
 enum_dispatch = "0.3"
 fastrand = "2"
 fixedbitset = "0.5"
 rapidhash = "4"
-ron = "0.10"
 serde = { version = "1", features = ["derive"] }
 strum = { version = "0.27", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tempfile = "3"
 
 [profile.release]
 lto = true

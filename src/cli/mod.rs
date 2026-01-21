@@ -5,7 +5,6 @@ pub use evolvable_strategies::EvolvableStrategies;
 pub use evolve::{EvolveArgs, run_evolve};
 
 use clap::ValueEnum;
-use serde::{Deserialize, Serialize};
 
 use crate::evolution::crossover::{Crossover, Order, Pmx};
 use crate::evolution::mutation::{Insert, Inversion, Mutation, Swap};
@@ -14,7 +13,7 @@ use crate::game::{Freestyle, Game};
 use crate::tournament::{Swiss, Tournament as CompetitionTournament};
 
 /// CLI-exposed strategy types for evolution.
-#[derive(Debug, Clone, Copy, ValueEnum, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum CliStrategy {
     Nn1,
     Nn2,

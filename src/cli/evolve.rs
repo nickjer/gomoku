@@ -1,11 +1,12 @@
-use std::fs;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::Args;
 use tracing::info;
 
-use super::evolvable_strategies::EvolvableStrategies;
+use super::evolvable_strategies::{
+    EvolvableStrategies, load_strategies_from_directory, save_strategies_to_directory,
+};
 use super::{CliCrossover, CliMutation, CliStrategy};
 use crate::evolution::{Evolver, Population};
 use crate::game::Freestyle;
@@ -23,12 +24,12 @@ pub struct EvolveArgs {
     #[arg(value_name = "POPULATION")]
     pub population: Option<usize>,
 
-    /// Load strategies from RON file (conflicts with STRATEGY/POPULATION).
-    #[arg(short, long, value_name = "FILE", conflicts_with_all = ["strategy_type", "population"])]
+    /// Load strategies from directory (conflicts with STRATEGY/POPULATION).
+    #[arg(short, long, value_name = "DIR", conflicts_with_all = ["strategy_type", "population"])]
     pub input: Option<PathBuf>,
 
-    /// Output file for evolved strategies.
-    #[arg(short, long, value_name = "FILE")]
+    /// Output directory for evolved strategies.
+    #[arg(short, long, value_name = "DIR")]
     pub output: PathBuf,
 
     /// Number of generations to evolve.
@@ -136,16 +137,7 @@ pub fn run_evolve(args: &EvolveArgs) -> Result<()> {
         }
     };
 
-    let config = ron::ser::PrettyConfig::default()
-        .depth_limit(2)
-        .compact_arrays(true)
-        .separator(String::new());
-    let output = ron::ser::to_string_pretty(&output_strategies, config)
-        .context("Failed to serialize strategies")?;
-
-    fs::write(&args.output, output)
-        .with_context(|| format!("Failed to write output file: {}", args.output.display()))?;
-
+    save_strategies_to_directory(&args.output, &output_strategies)?;
     info!(path = %args.output.display(), "Saved strategies");
 
     Ok(())
@@ -171,15 +163,9 @@ fn setup_logging(log_level: Option<&str>) -> Result<()> {
 }
 
 fn load_or_generate(args: &EvolveArgs, rng: &mut fastrand::Rng) -> Result<EvolvableStrategies> {
-    if let Some(ref input_path) = args.input {
-        let content = fs::read_to_string(input_path)
-            .with_context(|| format!("Failed to read input file: {}", input_path.display()))?;
-
-        let strategies: EvolvableStrategies = ron::from_str(&content).with_context(|| {
-            format!("Failed to parse strategies from: {}", input_path.display())
-        })?;
-
-        info!(path = %input_path.display(), "Loaded strategies from file");
+    if let Some(ref input_dir) = args.input {
+        let strategies = load_strategies_from_directory(input_dir)?;
+        info!(path = %input_dir.display(), "Loaded strategies from directory");
         Ok(strategies)
     } else {
         let strategy_type = args.strategy_type.ok_or_else(|| {

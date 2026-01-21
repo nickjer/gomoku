@@ -6,10 +6,10 @@ use crate::board::Board;
 use crate::cache_id::CacheId;
 use crate::cache_repository::CacheRepository;
 use crate::evolution::selection::HasFitness;
+use crate::gene::Gene;
 use crate::position::Position;
 use crate::position_id::PositionId;
 use crate::stone::Stone;
-use crate::gene::Gene;
 use crate::strategy::{EvolvableStrategy, Strategy};
 
 /// A test individual with a fitness value for selection tests.

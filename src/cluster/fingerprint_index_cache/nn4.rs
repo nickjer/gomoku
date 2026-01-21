@@ -68,7 +68,9 @@ impl FingerprintNN4IndexCache {
         self.neighbor_nn3.place(position_id, stone);
         self.neighbor_nn4.place(position_id, stone);
 
-        for &affected_pos in self.neighbor_nn1.affected_positions(position_id)
+        for &affected_pos in self
+            .neighbor_nn1
+            .affected_positions(position_id)
             .iter()
             .chain(self.neighbor_nn2.affected_positions(position_id))
             .chain(self.neighbor_nn3.affected_positions(position_id))
@@ -115,7 +117,8 @@ mod tests {
             NeighborCounts::new(0, 0, 4),
             NeighborCounts::new(0, 0, 4),
             NeighborCounts::new(0, 0, 8),
-        ).index();
+        )
+        .index();
 
         assert_eq!(cache.get(center, Stone::Black), expected);
         assert_eq!(cache.get(center, Stone::White), expected);
@@ -135,7 +138,8 @@ mod tests {
             NeighborCounts::new(0, 0, 4),
             NeighborCounts::new(0, 0, 4),
             NeighborCounts::new(0, 0, 8),
-        ).index();
+        )
+        .index();
 
         assert_eq!(cache.get(neighbor, Stone::Black), expected_black);
     }
