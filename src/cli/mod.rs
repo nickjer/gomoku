@@ -1,10 +1,50 @@
 mod evolvable_strategies;
 mod evolve;
+mod play;
 
 pub use evolvable_strategies::EvolvableStrategies;
 pub use evolve::{EvolveArgs, run_evolve};
+pub use play::{PlayArgs, run_play};
 
+use anyhow::{Context, Result};
 use clap::ValueEnum;
+use tracing::info;
+
+/// Sets up logging with the specified log level.
+///
+/// # Errors
+///
+/// Returns an error if the log level is invalid.
+pub fn setup_logging(log_level: Option<&str>) -> Result<()> {
+    use tracing_subscriber::EnvFilter;
+    use tracing_subscriber::fmt::format::FmtSpan;
+
+    let filter = match log_level {
+        Some(level) => {
+            EnvFilter::try_new(level).with_context(|| format!("Invalid log level: {level}"))?
+        }
+        None => EnvFilter::from_default_env(),
+    };
+
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_span_events(FmtSpan::CLOSE)
+        .init();
+
+    Ok(())
+}
+
+/// Creates an RNG from an optional seed.
+#[must_use]
+pub fn create_rng(seed: Option<u64>) -> fastrand::Rng {
+    if let Some(seed) = seed {
+        info!(seed, "Using provided RNG seed");
+        fastrand::Rng::with_seed(seed)
+    } else {
+        info!("Using random RNG seed");
+        fastrand::Rng::new()
+    }
+}
 
 use crate::evolution::crossover::{Crossover, Order, Pmx};
 use crate::evolution::mutation::{Insert, Inversion, Mutation, Swap};

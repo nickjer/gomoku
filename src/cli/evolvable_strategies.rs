@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cluster::strategy::{NN1, NN2, NN3, NN4};
 use crate::gene::Gene;
-use crate::strategy::EvolvableStrategy;
+use crate::strategy::{EvolvableStrategy, Strategy};
 
 /// Binary-serializable strategy data (genes only, label comes from filename).
 #[derive(Debug, Serialize, Deserialize)]
@@ -72,6 +72,22 @@ fn save_each<S: EvolvableStrategy>(
     Ok(())
 }
 
+/// Loads a single strategy from a binary file.
+///
+/// # Errors
+///
+/// Returns an error if the file cannot be read or deserialization fails.
+pub fn load_strategy_from_file(path: &Path) -> Result<Box<dyn Strategy>> {
+    let (label, data) = load_strategy_data(path)?;
+
+    Ok(match data {
+        StrategyData::Nn1 { genes } => Box::new(NN1::from_genes(label, genes)),
+        StrategyData::Nn2 { genes } => Box::new(NN2::from_genes(label, genes)),
+        StrategyData::Nn3 { genes } => Box::new(NN3::from_genes(label, genes)),
+        StrategyData::Nn4 { genes } => Box::new(NN4::from_genes(label, genes)),
+    })
+}
+
 /// Loads strategies from a directory of binary files.
 ///
 /// Reads all `.bin` files sorted by filename. Labels are derived from file paths.
@@ -92,27 +108,28 @@ pub fn load_strategies_from_directory(dir: &Path) -> Result<EvolvableStrategies>
 
     entries.sort_by_key(std::fs::DirEntry::file_name);
 
-    let cwd = std::env::current_dir().unwrap_or_default();
     let mut loaded = Vec::with_capacity(entries.len());
-
     for entry in entries {
-        let path = entry.path();
-        let label = path
-            .strip_prefix(&cwd)
-            .unwrap_or(&path)
-            .display()
-            .to_string();
-
-        let bytes =
-            fs::read(&path).with_context(|| format!("Failed to read: {}", path.display()))?;
-
-        let data: StrategyData = postcard::from_bytes(&bytes)
-            .with_context(|| format!("Failed to deserialize: {}", path.display()))?;
-
-        loaded.push((label, data));
+        loaded.push(load_strategy_data(&entry.path())?);
     }
 
     build_strategies(loaded)
+}
+
+fn load_strategy_data(path: &Path) -> Result<(String, StrategyData)> {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let label = path
+        .strip_prefix(&cwd)
+        .unwrap_or(path)
+        .display()
+        .to_string();
+
+    let bytes = fs::read(path).with_context(|| format!("Failed to read: {}", path.display()))?;
+
+    let data: StrategyData = postcard::from_bytes(&bytes)
+        .with_context(|| format!("Failed to deserialize: {}", path.display()))?;
+
+    Ok((label, data))
 }
 
 fn build_strategies(loaded: Vec<(String, StrategyData)>) -> Result<EvolvableStrategies> {

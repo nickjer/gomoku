@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use gomoku::cli::{EvolveArgs, run_evolve};
+use gomoku::cli::{EvolveArgs, PlayArgs, run_evolve, run_play};
 
 #[derive(Parser)]
 #[command(name = "gomoku")]
@@ -15,6 +15,8 @@ struct Cli {
 enum Commands {
     /// Evolve strategies using a genetic algorithm
     Evolve(EvolveArgs),
+    /// Play a game between two strategies
+    Play(PlayArgs),
 }
 
 fn main() -> Result<()> {
@@ -22,5 +24,6 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::Evolve(ref args) => run_evolve(args),
+        Commands::Play(ref args) => run_play(args),
     }
 }

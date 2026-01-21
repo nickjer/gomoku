@@ -1,13 +1,13 @@
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::Args;
 use tracing::info;
 
 use super::evolvable_strategies::{
     EvolvableStrategies, load_strategies_from_directory, save_strategies_to_directory,
 };
-use super::{CliCrossover, CliMutation, CliStrategy};
+use super::{CliCrossover, CliMutation, CliStrategy, create_rng, setup_logging};
 use crate::evolution::{Evolver, Population};
 use crate::game::Freestyle;
 use crate::strategy::EvolvableStrategy;
@@ -74,13 +74,7 @@ pub struct EvolveArgs {
 pub fn run_evolve(args: &EvolveArgs) -> Result<()> {
     setup_logging(args.log_level.as_deref())?;
 
-    let mut rng = if let Some(seed) = args.seed {
-        info!(seed, "Using provided RNG seed");
-        fastrand::Rng::with_seed(seed)
-    } else {
-        info!("Using random RNG seed");
-        fastrand::Rng::new()
-    };
+    let mut rng = create_rng(args.seed);
 
     let strategies = load_or_generate(args, &mut rng)?;
 
@@ -139,25 +133,6 @@ pub fn run_evolve(args: &EvolveArgs) -> Result<()> {
 
     save_strategies_to_directory(&args.output, &output_strategies)?;
     info!(path = %args.output.display(), "Saved strategies");
-
-    Ok(())
-}
-
-fn setup_logging(log_level: Option<&str>) -> Result<()> {
-    use tracing_subscriber::EnvFilter;
-    use tracing_subscriber::fmt::format::FmtSpan;
-
-    let filter = match log_level {
-        Some(level) => {
-            EnvFilter::try_new(level).with_context(|| format!("Invalid log level: {level}"))?
-        }
-        None => EnvFilter::from_default_env(),
-    };
-
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_span_events(FmtSpan::CLOSE)
-        .init();
 
     Ok(())
 }
