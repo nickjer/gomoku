@@ -184,6 +184,7 @@ impl Evolver {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gene::Gene;
     use crate::strategy::{EvolvableStrategy, Strategy};
     use crate::test_utils::FakeEvolvableStrategy;
 
@@ -326,7 +327,7 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(42);
         let strategies = make_strategies(&mut rng, 4);
 
-        let parent_genes: Vec<Vec<u8>> = strategies.iter().map(|s| s.genes().to_vec()).collect();
+        let parent_genes: Vec<Vec<Gene>> = strategies.iter().map(|s| s.genes().to_vec()).collect();
 
         // Run one generation with no crossover, no mutation
         let gen1 = Evolver::new()
@@ -352,7 +353,7 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(42);
         let strategies = make_strategies(&mut rng, 4);
 
-        let parent_genes: Vec<Vec<u8>> = strategies.iter().map(|s| s.genes().to_vec()).collect();
+        let parent_genes: Vec<Vec<Gene>> = strategies.iter().map(|s| s.genes().to_vec()).collect();
 
         // Run one generation with no crossover but 100% mutation
         let gen1 = Evolver::new()
@@ -387,13 +388,10 @@ mod tests {
         // With crossover, offspring genes should still be valid permutations
         for individual in gen1.individuals() {
             let genes = individual.strategy().genes();
-            let mut sorted: Vec<u8> = genes.to_vec();
+            let mut sorted: Vec<Gene> = genes.to_vec();
             sorted.sort();
-            assert_eq!(
-                sorted,
-                vec![1, 2, 3, 4, 5],
-                "genes should be valid permutation"
-            );
+            let expected: Vec<Gene> = (0..5).map(Gene::new).collect();
+            assert_eq!(sorted, expected, "genes should be valid permutation");
         }
     }
 }

@@ -1,8 +1,7 @@
-use std::hash::Hash;
-
-use rapidhash::{RapidHashMap, RapidHashSet};
+use fixedbitset::FixedBitSet;
 
 use super::RunCrossover;
+use crate::gene::Gene;
 
 /// Partially Mapped Crossover (PMX): copies a segment from parent1, then fills
 /// remaining positions using a mapping to resolve conflicts.
@@ -16,33 +15,35 @@ impl Pmx {
     }
 
     #[allow(clippy::unused_self)]
-    fn crossover_internal<T: Clone + Eq + Hash>(
+    fn crossover_internal(
         self,
-        parent1: &[T],
-        parent2: &[T],
+        parent1: &[Gene],
+        parent2: &[Gene],
         rng: &mut fastrand::Rng,
-    ) -> (Vec<T>, (usize, usize)) {
+    ) -> (Vec<Gene>, (usize, usize)) {
         let size = parent1.len();
 
         let a = rng.usize(..size);
         let b = rng.usize(..size);
         let (start, end) = if a <= b { (a, b) } else { (b, a) };
 
-        let mapping: RapidHashMap<_, _> =
-            (start..=end).map(|i| (&parent1[i], &parent2[i])).collect();
+        let mut mapping = vec![Gene::new(0); size];
+        let mut segment_values = FixedBitSet::with_capacity(size);
+        for i in start..=end {
+            mapping[parent1[i].index()] = parent2[i];
+            segment_values.insert(parent1[i].index());
+        }
 
-        let segment_values: RapidHashSet<_> = parent1[start..=end].iter().collect();
-
-        let child: Vec<T> = (0..size)
+        let child: Vec<Gene> = (0..size)
             .map(|i| {
                 if i >= start && i <= end {
-                    parent1[i].clone()
+                    parent1[i]
                 } else {
-                    let mut value = &parent2[i];
-                    while segment_values.contains(value) {
-                        value = mapping[value];
+                    let mut value = parent2[i];
+                    while segment_values.contains(value.index()) {
+                        value = mapping[value.index()];
                     }
-                    value.clone()
+                    value
                 }
             })
             .collect();
@@ -52,12 +53,7 @@ impl Pmx {
 }
 
 impl RunCrossover for Pmx {
-    fn crossover<T: Clone + Eq + Hash>(
-        &self,
-        parent1: &[T],
-        parent2: &[T],
-        rng: &mut fastrand::Rng,
-    ) -> Vec<T> {
+    fn crossover(&self, parent1: &[Gene], parent2: &[Gene], rng: &mut fastrand::Rng) -> Vec<Gene> {
         self.crossover_internal(parent1, parent2, rng).0
     }
 }
@@ -68,10 +64,14 @@ mod tests {
 
     use super::*;
 
+    fn genes(values: &[usize]) -> Vec<Gene> {
+        values.iter().copied().map(Gene::new).collect()
+    }
+
     #[test]
     fn crossover_returns_child_from_internal() {
-        let parent1 = vec![1, 2, 3, 4, 5, 6, 7, 8];
-        let parent2 = vec![8, 7, 6, 5, 4, 3, 2, 1];
+        let parent1 = genes(&[0, 1, 2, 3, 4, 5, 6, 7]);
+        let parent2 = genes(&[7, 6, 5, 4, 3, 2, 1, 0]);
 
         let (child, _) =
             Pmx.crossover_internal(&parent1, &parent2, &mut fastrand::Rng::with_seed(42));
@@ -82,8 +82,8 @@ mod tests {
 
     #[test]
     fn child_has_same_size() {
-        let parent1 = vec![1, 2, 3, 4, 5, 6, 7, 8];
-        let parent2 = vec![8, 7, 6, 5, 4, 3, 2, 1];
+        let parent1 = genes(&[0, 1, 2, 3, 4, 5, 6, 7]);
+        let parent2 = genes(&[7, 6, 5, 4, 3, 2, 1, 0]);
         let mut rng = fastrand::Rng::with_seed(42);
 
         let (child, _) = Pmx.crossover_internal(&parent1, &parent2, &mut rng);
@@ -93,21 +93,21 @@ mod tests {
 
     #[test]
     fn child_is_valid_permutation() {
-        let parent1 = vec![1, 2, 3, 4, 5, 6, 7, 8];
-        let parent2 = vec![8, 7, 6, 5, 4, 3, 2, 1];
+        let parent1 = genes(&[0, 1, 2, 3, 4, 5, 6, 7]);
+        let parent2 = genes(&[7, 6, 5, 4, 3, 2, 1, 0]);
         // Seed 13 produces segment (1, 5) - 5 elements
         let mut rng = fastrand::Rng::with_seed(13);
 
         let (mut child, _) = Pmx.crossover_internal(&parent1, &parent2, &mut rng);
         child.sort();
 
-        assert_eq!(child, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(child, genes(&[0, 1, 2, 3, 4, 5, 6, 7]));
     }
 
     #[test]
     fn segment_from_parent1_preserved() {
-        let parent1 = vec![1, 2, 3, 4, 5, 6, 7, 8];
-        let parent2 = vec![8, 7, 6, 5, 4, 3, 2, 1];
+        let parent1 = genes(&[0, 1, 2, 3, 4, 5, 6, 7]);
+        let parent2 = genes(&[7, 6, 5, 4, 3, 2, 1, 0]);
         // Seed 13 produces segment (1, 5) - 5 elements
         let mut rng = fastrand::Rng::with_seed(13);
 
@@ -119,9 +119,9 @@ mod tests {
 
     #[test]
     fn positions_without_conflict_use_parent2_directly() {
-        let parent1 = vec![1, 2, 3, 4, 5, 6, 7, 8];
-        let parent2 = vec![8, 7, 6, 5, 4, 3, 2, 1];
-        // Seed 13 produces segment (1, 5) - 5 elements
+        let parent1 = genes(&[0, 1, 2, 3, 4, 5, 6, 7]);
+        let parent2 = genes(&[7, 6, 5, 4, 3, 2, 1, 0]);
+        // Seed 13 produces segment (1, 5) - leaves positions 0, 6, 7 outside
         let mut rng = fastrand::Rng::with_seed(13);
 
         let (child, (start, end)) = Pmx.crossover_internal(&parent1, &parent2, &mut rng);
@@ -145,8 +145,8 @@ mod tests {
 
     #[test]
     fn start_less_than_or_equal_to_end() {
-        let parent1 = vec![1, 2, 3, 4, 5, 6, 7, 8];
-        let parent2 = vec![8, 7, 6, 5, 4, 3, 2, 1];
+        let parent1 = genes(&[0, 1, 2, 3, 4, 5, 6, 7]);
+        let parent2 = genes(&[7, 6, 5, 4, 3, 2, 1, 0]);
         let mut rng = fastrand::Rng::with_seed(42);
 
         for _ in 0..100 {
@@ -157,20 +157,20 @@ mod tests {
 
     #[test]
     fn works_with_size_one() {
-        let parent1 = vec![1];
-        let parent2 = vec![1];
+        let parent1 = genes(&[0]);
+        let parent2 = genes(&[0]);
         let mut rng = fastrand::Rng::with_seed(42);
 
         let (child, segment) = Pmx.crossover_internal(&parent1, &parent2, &mut rng);
 
-        assert_eq!(child, vec![1]);
+        assert_eq!(child, genes(&[0]));
         assert_eq!(segment, (0, 0));
     }
 
     #[test]
     fn deterministic_with_same_seed() {
-        let parent1 = vec![1, 2, 3, 4, 5, 6, 7, 8];
-        let parent2 = vec![8, 7, 6, 5, 4, 3, 2, 1];
+        let parent1 = genes(&[0, 1, 2, 3, 4, 5, 6, 7]);
+        let parent2 = genes(&[7, 6, 5, 4, 3, 2, 1, 0]);
 
         let (child1, _) =
             Pmx.crossover_internal(&parent1, &parent2, &mut fastrand::Rng::with_seed(42));
@@ -182,8 +182,8 @@ mod tests {
 
     #[test]
     fn different_seeds_produce_different_results() {
-        let parent1 = vec![1, 2, 3, 4, 5, 6, 7, 8];
-        let parent2 = vec![8, 7, 6, 5, 4, 3, 2, 1];
+        let parent1 = genes(&[0, 1, 2, 3, 4, 5, 6, 7]);
+        let parent2 = genes(&[7, 6, 5, 4, 3, 2, 1, 0]);
 
         let results: Vec<_> = (0..20)
             .map(|seed| {
@@ -198,8 +198,8 @@ mod tests {
 
     #[test]
     fn mapping_resolves_conflicts() {
-        let parent1 = vec![1, 2, 3, 4, 5, 6, 7, 8];
-        let parent2 = vec![3, 4, 5, 6, 7, 8, 1, 2];
+        let parent1 = genes(&[0, 1, 2, 3, 4, 5, 6, 7]);
+        let parent2 = genes(&[2, 3, 4, 5, 6, 7, 0, 1]);
 
         for seed in 0..100 {
             let (mut child, _) =
@@ -207,7 +207,7 @@ mod tests {
             child.sort();
             assert_eq!(
                 child,
-                vec![1, 2, 3, 4, 5, 6, 7, 8],
+                genes(&[0, 1, 2, 3, 4, 5, 6, 7]),
                 "seed {seed} produced invalid permutation"
             );
         }

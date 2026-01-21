@@ -88,12 +88,12 @@ impl FingerprintNN1 {
     ///
     /// Panics if the fingerprint is not in the `all()` array (invalid fingerprint).
     #[must_use]
-    pub fn index(self) -> u32 {
-        static INDEX_MAP: LazyLock<RapidHashMap<FingerprintNN1, u32>> = LazyLock::new(|| {
+    pub fn index(self) -> usize {
+        static INDEX_MAP: LazyLock<RapidHashMap<FingerprintNN1, usize>> = LazyLock::new(|| {
             FingerprintNN1::all()
                 .iter()
                 .enumerate()
-                .map(|(i, &fp)| (fp, u32::try_from(i).unwrap()))
+                .map(|(i, &fp)| (fp, i))
                 .collect()
         });
         *INDEX_MAP.get(&self).expect("Invalid fingerprint")

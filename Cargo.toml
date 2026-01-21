@@ -12,6 +12,7 @@ anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 enum_dispatch = "0.3"
 fastrand = "2"
+fixedbitset = "0.5"
 rapidhash = "4"
 ron = "0.10"
 serde = { version = "1", features = ["derive"] }

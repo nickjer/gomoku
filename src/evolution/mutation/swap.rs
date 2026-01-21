@@ -1,4 +1,5 @@
 use super::RunMutation;
+use crate::gene::Gene;
 
 /// Swap mutation: exchanges two random elements.
 #[derive(Debug, Default, Clone, Copy)]
@@ -11,11 +12,11 @@ impl Swap {
     }
 
     #[allow(clippy::unused_self)]
-    fn mutate_internal<T: Clone>(
+    fn mutate_internal(
         self,
-        genes: &[T],
+        genes: &[Gene],
         rng: &mut fastrand::Rng,
-    ) -> (Vec<T>, (usize, usize)) {
+    ) -> (Vec<Gene>, (usize, usize)) {
         assert!(genes.len() >= 2, "swap requires at least 2 genes");
 
         let a = rng.usize(..genes.len());
@@ -30,7 +31,7 @@ impl Swap {
 }
 
 impl RunMutation for Swap {
-    fn mutate<T: Clone>(&self, genes: &[T], rng: &mut fastrand::Rng) -> Vec<T> {
+    fn mutate(&self, genes: &[Gene], rng: &mut fastrand::Rng) -> Vec<Gene> {
         self.mutate_internal(genes, rng).0
     }
 }
@@ -39,44 +40,48 @@ impl RunMutation for Swap {
 mod tests {
     use super::*;
 
+    fn genes(values: &[usize]) -> Vec<Gene> {
+        values.iter().copied().map(Gene::new).collect()
+    }
+
     #[test]
     fn mutate_returns_child_from_internal() {
-        let genes = vec![1, 2, 3, 4, 5];
+        let g = genes(&[0, 1, 2, 3, 4]);
 
-        let (child, _) = Swap.mutate_internal(&genes, &mut fastrand::Rng::with_seed(42));
-        let public = Swap.mutate(&genes, &mut fastrand::Rng::with_seed(42));
+        let (child, _) = Swap.mutate_internal(&g, &mut fastrand::Rng::with_seed(42));
+        let public = Swap.mutate(&g, &mut fastrand::Rng::with_seed(42));
 
         assert_eq!(public, child);
     }
 
     #[test]
     fn swaps_two_elements() {
-        let genes = vec![1, 2, 3, 4, 5];
+        let g = genes(&[0, 1, 2, 3, 4]);
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let (child, (a, b)) = Swap.mutate_internal(&genes, &mut rng);
+        let (child, (a, b)) = Swap.mutate_internal(&g, &mut rng);
 
-        assert_eq!(child[a], genes[b]);
-        assert_eq!(child[b], genes[a]);
+        assert_eq!(child[a], g[b]);
+        assert_eq!(child[b], g[a]);
     }
 
     #[test]
     fn preserves_length() {
-        let genes = vec![1, 2, 3, 4, 5];
+        let g = genes(&[0, 1, 2, 3, 4]);
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let (child, _) = Swap.mutate_internal(&genes, &mut rng);
+        let (child, _) = Swap.mutate_internal(&g, &mut rng);
 
-        assert_eq!(child.len(), genes.len());
+        assert_eq!(child.len(), g.len());
     }
 
     #[test]
     fn indices_are_different() {
-        let genes = vec![1, 2, 3, 4, 5];
+        let g = genes(&[0, 1, 2, 3, 4]);
         let mut rng = fastrand::Rng::with_seed(42);
 
         for _ in 0..100 {
-            let (_, (a, b)) = Swap.mutate_internal(&genes, &mut rng);
+            let (_, (a, b)) = Swap.mutate_internal(&g, &mut rng);
             assert_ne!(a, b);
         }
     }
@@ -84,20 +89,20 @@ mod tests {
     #[test]
     #[should_panic(expected = "swap requires at least 2 genes")]
     fn panics_with_single_element() {
-        let genes = vec![1];
+        let g = genes(&[0]);
         let mut rng = fastrand::Rng::with_seed(42);
 
-        Swap.mutate_internal(&genes, &mut rng);
+        Swap.mutate_internal(&g, &mut rng);
     }
 
     #[test]
     fn preserves_all_elements() {
-        let genes = vec![1, 2, 3, 4, 5];
+        let g = genes(&[0, 1, 2, 3, 4]);
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let (mut child, _) = Swap.mutate_internal(&genes, &mut rng);
+        let (mut child, _) = Swap.mutate_internal(&g, &mut rng);
         child.sort();
 
-        assert_eq!(child, vec![1, 2, 3, 4, 5]);
+        assert_eq!(child, genes(&[0, 1, 2, 3, 4]));
     }
 }

@@ -1,8 +1,7 @@
-use std::hash::Hash;
-
-use rapidhash::RapidHashSet;
+use fixedbitset::FixedBitSet;
 
 use super::RunCrossover;
+use crate::gene::Gene;
 
 /// Order crossover (OX): copies a segment from parent1, fills remaining positions
 /// with elements from parent2 in order, skipping those already in the segment.
@@ -16,27 +15,31 @@ impl Order {
     }
 
     #[allow(clippy::unused_self)]
-    fn crossover_internal<T: Clone + Eq + Hash>(
+    fn crossover_internal(
         self,
-        parent1: &[T],
-        parent2: &[T],
+        parent1: &[Gene],
+        parent2: &[Gene],
         rng: &mut fastrand::Rng,
-    ) -> (Vec<T>, (usize, usize)) {
+    ) -> (Vec<Gene>, (usize, usize)) {
         let size = parent1.len();
 
         let a = rng.usize(..size);
         let b = rng.usize(..size);
         let (start, end) = if a <= b { (a, b) } else { (b, a) };
 
-        let segment: RapidHashSet<_> = parent1[start..=end].iter().collect();
-        let mut remaining = parent2.iter().filter(|x| !segment.contains(x));
+        let mut segment = FixedBitSet::with_capacity(size);
+        for &gene in &parent1[start..=end] {
+            segment.insert(gene.index());
+        }
 
-        let child: Vec<T> = (0..size)
+        let mut remaining = parent2.iter().filter(|g| !segment.contains(g.index()));
+
+        let child: Vec<Gene> = (0..size)
             .map(|i| {
                 if i >= start && i <= end {
-                    parent1[i].clone()
+                    parent1[i]
                 } else {
-                    remaining.next().expect("parent2 missing elements").clone()
+                    *remaining.next().expect("parent2 missing elements")
                 }
             })
             .collect();
@@ -46,12 +49,7 @@ impl Order {
 }
 
 impl RunCrossover for Order {
-    fn crossover<T: Clone + Eq + Hash>(
-        &self,
-        parent1: &[T],
-        parent2: &[T],
-        rng: &mut fastrand::Rng,
-    ) -> Vec<T> {
+    fn crossover(&self, parent1: &[Gene], parent2: &[Gene], rng: &mut fastrand::Rng) -> Vec<Gene> {
         self.crossover_internal(parent1, parent2, rng).0
     }
 }
@@ -62,10 +60,14 @@ mod tests {
 
     use super::*;
 
+    fn genes(values: &[usize]) -> Vec<Gene> {
+        values.iter().copied().map(Gene::new).collect()
+    }
+
     #[test]
     fn crossover_returns_child_from_internal() {
-        let parent1 = vec![1, 2, 3, 4, 5, 6, 7, 8];
-        let parent2 = vec![8, 7, 6, 5, 4, 3, 2, 1];
+        let parent1 = genes(&[0, 1, 2, 3, 4, 5, 6, 7]);
+        let parent2 = genes(&[7, 6, 5, 4, 3, 2, 1, 0]);
 
         let (child, _) =
             Order.crossover_internal(&parent1, &parent2, &mut fastrand::Rng::with_seed(42));
@@ -76,8 +78,8 @@ mod tests {
 
     #[test]
     fn child_has_same_size() {
-        let parent1 = vec![1, 2, 3, 4, 5, 6, 7, 8];
-        let parent2 = vec![8, 7, 6, 5, 4, 3, 2, 1];
+        let parent1 = genes(&[0, 1, 2, 3, 4, 5, 6, 7]);
+        let parent2 = genes(&[7, 6, 5, 4, 3, 2, 1, 0]);
         let mut rng = fastrand::Rng::with_seed(42);
 
         let (child, _) = Order.crossover_internal(&parent1, &parent2, &mut rng);
@@ -87,21 +89,21 @@ mod tests {
 
     #[test]
     fn child_is_valid_permutation() {
-        let parent1 = vec![1, 2, 3, 4, 5, 6, 7, 8];
-        let parent2 = vec![8, 7, 6, 5, 4, 3, 2, 1];
+        let parent1 = genes(&[0, 1, 2, 3, 4, 5, 6, 7]);
+        let parent2 = genes(&[7, 6, 5, 4, 3, 2, 1, 0]);
         // Seed 13 produces segment (1, 5) - 5 elements
         let mut rng = fastrand::Rng::with_seed(13);
 
         let (mut child, _) = Order.crossover_internal(&parent1, &parent2, &mut rng);
         child.sort();
 
-        assert_eq!(child, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(child, genes(&[0, 1, 2, 3, 4, 5, 6, 7]));
     }
 
     #[test]
     fn segment_from_parent1_preserved() {
-        let parent1 = vec![1, 2, 3, 4, 5, 6, 7, 8];
-        let parent2 = vec![8, 7, 6, 5, 4, 3, 2, 1];
+        let parent1 = genes(&[0, 1, 2, 3, 4, 5, 6, 7]);
+        let parent2 = genes(&[7, 6, 5, 4, 3, 2, 1, 0]);
         // Seed 13 produces segment (1, 5) - 5 elements
         let mut rng = fastrand::Rng::with_seed(13);
 
@@ -113,8 +115,8 @@ mod tests {
 
     #[test]
     fn maintains_parent2_order_outside_segment() {
-        let parent1 = vec![1, 2, 3, 4, 5, 6, 7, 8];
-        let parent2 = vec![8, 7, 6, 5, 4, 3, 2, 1];
+        let parent1 = genes(&[0, 1, 2, 3, 4, 5, 6, 7]);
+        let parent2 = genes(&[7, 6, 5, 4, 3, 2, 1, 0]);
         // Seed 13 produces segment (1, 5) - leaves positions 0, 6, 7 outside
         let mut rng = fastrand::Rng::with_seed(13);
 
@@ -141,8 +143,8 @@ mod tests {
 
     #[test]
     fn start_less_than_or_equal_to_end() {
-        let parent1 = vec![1, 2, 3, 4, 5, 6, 7, 8];
-        let parent2 = vec![8, 7, 6, 5, 4, 3, 2, 1];
+        let parent1 = genes(&[0, 1, 2, 3, 4, 5, 6, 7]);
+        let parent2 = genes(&[7, 6, 5, 4, 3, 2, 1, 0]);
         let mut rng = fastrand::Rng::with_seed(42);
 
         for _ in 0..100 {
@@ -153,20 +155,20 @@ mod tests {
 
     #[test]
     fn works_with_size_one() {
-        let parent1 = vec![1];
-        let parent2 = vec![1];
+        let parent1 = genes(&[0]);
+        let parent2 = genes(&[0]);
         let mut rng = fastrand::Rng::with_seed(42);
 
         let (child, segment) = Order.crossover_internal(&parent1, &parent2, &mut rng);
 
-        assert_eq!(child, vec![1]);
+        assert_eq!(child, genes(&[0]));
         assert_eq!(segment, (0, 0));
     }
 
     #[test]
     fn deterministic_with_same_seed() {
-        let parent1 = vec![1, 2, 3, 4, 5, 6, 7, 8];
-        let parent2 = vec![8, 7, 6, 5, 4, 3, 2, 1];
+        let parent1 = genes(&[0, 1, 2, 3, 4, 5, 6, 7]);
+        let parent2 = genes(&[7, 6, 5, 4, 3, 2, 1, 0]);
 
         let (child1, _) =
             Order.crossover_internal(&parent1, &parent2, &mut fastrand::Rng::with_seed(42));
@@ -178,8 +180,8 @@ mod tests {
 
     #[test]
     fn different_seeds_produce_different_results() {
-        let parent1 = vec![1, 2, 3, 4, 5, 6, 7, 8];
-        let parent2 = vec![8, 7, 6, 5, 4, 3, 2, 1];
+        let parent1 = genes(&[0, 1, 2, 3, 4, 5, 6, 7]);
+        let parent2 = genes(&[7, 6, 5, 4, 3, 2, 1, 0]);
 
         let results: Vec<_> = (0..20)
             .map(|seed| {

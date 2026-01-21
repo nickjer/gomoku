@@ -9,6 +9,7 @@ use crate::evolution::selection::HasFitness;
 use crate::position::Position;
 use crate::position_id::PositionId;
 use crate::stone::Stone;
+use crate::gene::Gene;
 use crate::strategy::{EvolvableStrategy, Strategy};
 
 /// A test individual with a fitness value for selection tests.
@@ -178,7 +179,7 @@ impl Strategy for StubStrategy {
 /// A fake evolvable strategy for evolution tests.
 pub struct FakeEvolvableStrategy {
     label: String,
-    genes: Vec<u8>,
+    genes: Vec<Gene>,
 }
 
 impl Strategy for FakeEvolvableStrategy {
@@ -202,22 +203,20 @@ impl Strategy for FakeEvolvableStrategy {
 }
 
 impl EvolvableStrategy for FakeEvolvableStrategy {
-    type Gene = u8;
-
-    fn random_genes(rng: &mut fastrand::Rng) -> Vec<Self::Gene> {
-        let mut genes = vec![1, 2, 3, 4, 5];
+    fn random_genes(rng: &mut fastrand::Rng) -> Vec<Gene> {
+        let mut genes: Vec<Gene> = (0..5).map(Gene::new).collect();
         rng.shuffle(&mut genes);
         genes
     }
 
-    fn from_genes(label: impl Into<String>, genes: Vec<Self::Gene>) -> Self {
+    fn from_genes(label: impl Into<String>, genes: Vec<Gene>) -> Self {
         Self {
             label: label.into(),
             genes,
         }
     }
 
-    fn genes(&self) -> &[Self::Gene] {
+    fn genes(&self) -> &[Gene] {
         &self.genes
     }
 }
