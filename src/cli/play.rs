@@ -41,25 +41,16 @@ pub fn run_play(args: &PlayArgs) -> Result<()> {
 
     let result = Freestyle.play(black.as_ref(), white.as_ref(), &mut rng);
 
+    println!("Black (X): {}", result.black_label());
+    println!("White (O): {}", result.white_label());
+    println!();
     println!("{}", result.board_state());
     println!();
 
     match result.outcome() {
-        Outcome::BlackWins => {
-            println!("Black wins in {} turns", result.turn_count());
-            println!("Winner: {}", result.black_label());
-            println!("Loser:  {}", result.white_label());
-        }
-        Outcome::WhiteWins => {
-            println!("White wins in {} turns", result.turn_count());
-            println!("Winner: {}", result.white_label());
-            println!("Loser:  {}", result.black_label());
-        }
-        Outcome::Draw => {
-            println!("Draw after {} turns", result.turn_count());
-            println!("Black: {}", result.black_label());
-            println!("White: {}", result.white_label());
-        }
+        Outcome::BlackWins => println!("Result: Black (X) wins in {} turns", result.turn_count()),
+        Outcome::WhiteWins => println!("Result: White (O) wins in {} turns", result.turn_count()),
+        Outcome::Draw => println!("Result: Draw after {} turns", result.turn_count()),
     }
 
     Ok(())

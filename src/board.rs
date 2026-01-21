@@ -123,7 +123,7 @@ impl Board {
         match stone {
             Stone::Black => 'X',
             Stone::White => 'O',
-            Stone::Empty => '.',
+            Stone::Empty => '·',
         }
     }
 }
@@ -205,7 +205,7 @@ mod tests {
     #[test]
     fn display_for_empty_board() {
         let board = Board::new();
-        let expected_row = vec!["."; 15].join(" ");
+        let expected_row = vec!["·"; 15].join(" ");
         let expected = vec![expected_row; 15].join("\n");
 
         assert_eq!(board.to_string(), expected);
