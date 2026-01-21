@@ -49,6 +49,14 @@ impl NeighborCountsCache {
         }
     }
 
+    /// Returns the positions affected when a stone is placed at `position_id`.
+    ///
+    /// These are the positions that have `position_id` as a neighbor.
+    #[must_use]
+    pub fn affected_positions(&self, position_id: PositionId) -> &[PositionId] {
+        self.neighbor_cache.neighbors_for(position_id)
+    }
+
     pub fn place(&mut self, position_id: PositionId, stone: Stone) {
         for &affected_pos in self.neighbor_cache.neighbors_for(position_id) {
             let black = self.black_counts[affected_pos];

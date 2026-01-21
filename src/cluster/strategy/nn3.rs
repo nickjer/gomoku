@@ -10,6 +10,8 @@ use crate::position_id::PositionId;
 use crate::stone::Stone;
 use crate::strategy::{EvolvableStrategy, Strategy};
 
+const CACHE_DEPENDENCIES: &[CacheId] = &[CacheId::FingerprintNN3Index];
+
 /// A strategy based on NN3 fingerprints with evolvable gene priority.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(from = "NN3Raw", into = "NN3Raw")]
@@ -78,11 +80,7 @@ impl EvolvableStrategy for NN3 {
 
 impl Strategy for NN3 {
     fn cache_dependencies(&self) -> &[CacheId] {
-        &[
-            CacheId::NeighborNN1,
-            CacheId::NeighborNN2,
-            CacheId::NeighborNN3,
-        ]
+        CACHE_DEPENDENCIES
     }
 
     fn choose_move(
@@ -92,10 +90,14 @@ impl Strategy for NN3 {
         cache_repo: &CacheRepository,
         rng: &mut fastrand::Rng,
     ) -> PositionId {
+        let index_cache = cache_repo
+            .fingerprint_nn3_index()
+            .expect("NN3 requires fingerprint_nn3_index cache");
+
         select_best_position(
             board.empty_position_ids(),
             &self.fingerprint_positions,
-            |pos| FingerprintNN3::calculate(pos, current_stone, cache_repo).index(),
+            |pos| index_cache.get(pos, current_stone),
             rng,
         )
     }
@@ -148,9 +150,7 @@ mod tests {
     impl TestContext {
         fn new() -> Self {
             let mut cache_repo = CacheRepository::new();
-            cache_repo.activate(CacheId::NeighborNN1);
-            cache_repo.activate(CacheId::NeighborNN2);
-            cache_repo.activate(CacheId::NeighborNN3);
+            cache_repo.activate(CacheId::FingerprintNN3Index);
             Self {
                 cache_repo,
                 rng: fastrand::Rng::new(),
@@ -209,10 +209,8 @@ mod tests {
         ctx.place(&mut board, pos(8, 8), Stone::White); // down-right
 
         let result = strategy.choose_move(Stone::Black, &board, &ctx.cache_repo, &mut ctx.rng);
-        let fingerprint = FingerprintNN3::calculate(result, Stone::Black, &ctx.cache_repo);
 
         assert_eq!(result, pos(7, 7)); // center
-        assert_eq!(fingerprint, specific_fp);
     }
 
     #[test]

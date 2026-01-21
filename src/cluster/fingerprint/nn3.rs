@@ -4,12 +4,10 @@ use std::sync::LazyLock;
 use rapidhash::RapidHashMap;
 use serde::{Deserialize, Serialize};
 
-use crate::cache_repository::CacheRepository;
 use crate::cluster::NeighborCounts;
 use crate::cluster::fingerprint::combinations_for_total;
 use crate::cluster::offsets;
 use crate::position_id::PositionId;
-use crate::stone::Stone;
 
 type Nn3Tuple = (NeighborCounts, NeighborCounts, NeighborCounts);
 
@@ -78,34 +76,6 @@ impl FingerprintNN3 {
         &ALL
     }
 
-    /// Calculates the fingerprint for a position given the current cache state.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the NN1, NN2, or NN3 caches have not been activated.
-    #[must_use]
-    pub fn calculate(
-        position_id: PositionId,
-        current_stone: Stone,
-        cache_repo: &CacheRepository,
-    ) -> Self {
-        let nn1_cache = cache_repo
-            .neighbor_nn1()
-            .expect("FingerprintNN3 requires neighbor_nn1 cache");
-        let nn2_cache = cache_repo
-            .neighbor_nn2()
-            .expect("FingerprintNN3 requires neighbor_nn2 cache");
-        let nn3_cache = cache_repo
-            .neighbor_nn3()
-            .expect("FingerprintNN3 requires neighbor_nn3 cache");
-
-        Self::new(
-            nn1_cache.counts_for(position_id, current_stone),
-            nn2_cache.counts_for(position_id, current_stone),
-            nn3_cache.counts_for(position_id, current_stone),
-        )
-    }
-
     #[must_use]
     pub fn nn1(&self) -> NeighborCounts {
         self.nn1
@@ -142,28 +112,12 @@ impl FingerprintNN3 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cache_id::CacheId;
 
     #[test]
     fn all_returns_fingerprints() {
         let all = FingerprintNN3::all();
 
         assert!(!all.is_empty());
-    }
-
-    #[test]
-    fn calculate_returns_fingerprint_for_position() {
-        let mut cache_repo = CacheRepository::new();
-        cache_repo.activate(CacheId::NeighborNN1);
-        cache_repo.activate(CacheId::NeighborNN2);
-        cache_repo.activate(CacheId::NeighborNN3);
-        let center = PositionId::center();
-
-        let fingerprint = FingerprintNN3::calculate(center, Stone::Black, &cache_repo);
-
-        assert_eq!(fingerprint.nn1().empty(), 4);
-        assert_eq!(fingerprint.nn2().empty(), 4);
-        assert_eq!(fingerprint.nn3().empty(), 4);
     }
 
     #[test]

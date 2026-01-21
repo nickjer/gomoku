@@ -10,6 +10,8 @@ use crate::position_id::PositionId;
 use crate::stone::Stone;
 use crate::strategy::{EvolvableStrategy, Strategy};
 
+const CACHE_DEPENDENCIES: &[CacheId] = &[CacheId::FingerprintNN2Index];
+
 /// A strategy based on NN2 fingerprints with evolvable gene priority.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(from = "NN2Raw", into = "NN2Raw")]
@@ -78,7 +80,7 @@ impl EvolvableStrategy for NN2 {
 
 impl Strategy for NN2 {
     fn cache_dependencies(&self) -> &[CacheId] {
-        &[CacheId::NeighborNN1, CacheId::NeighborNN2]
+        CACHE_DEPENDENCIES
     }
 
     fn choose_move(
@@ -88,10 +90,14 @@ impl Strategy for NN2 {
         cache_repo: &CacheRepository,
         rng: &mut fastrand::Rng,
     ) -> PositionId {
+        let index_cache = cache_repo
+            .fingerprint_nn2_index()
+            .expect("NN2 requires fingerprint_nn2_index cache");
+
         select_best_position(
             board.empty_position_ids(),
             &self.fingerprint_positions,
-            |pos| FingerprintNN2::calculate(pos, current_stone, cache_repo).index(),
+            |pos| index_cache.get(pos, current_stone),
             rng,
         )
     }
@@ -144,8 +150,7 @@ mod tests {
     impl TestContext {
         fn new() -> Self {
             let mut cache_repo = CacheRepository::new();
-            cache_repo.activate(CacheId::NeighborNN1);
-            cache_repo.activate(CacheId::NeighborNN2);
+            cache_repo.activate(CacheId::FingerprintNN2Index);
             Self {
                 cache_repo,
                 rng: fastrand::Rng::new(),
@@ -196,10 +201,8 @@ mod tests {
         ctx.place(&mut board, pos(2, 1), Stone::White);
 
         let result = strategy.choose_move(Stone::Black, &board, &ctx.cache_repo, &mut ctx.rng);
-        let fingerprint = FingerprintNN2::calculate(result, Stone::Black, &ctx.cache_repo);
 
         assert_eq!(result, pos(1, 0));
-        assert_eq!(fingerprint, edge_mixed);
     }
 
     #[test]

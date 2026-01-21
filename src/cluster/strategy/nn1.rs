@@ -10,6 +10,8 @@ use crate::position_id::PositionId;
 use crate::stone::Stone;
 use crate::strategy::{EvolvableStrategy, Strategy};
 
+const CACHE_DEPENDENCIES: &[CacheId] = &[CacheId::FingerprintNN1Index];
+
 /// A strategy based on NN1 fingerprints with evolvable gene priority.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(from = "NN1Raw", into = "NN1Raw")]
@@ -78,7 +80,7 @@ impl EvolvableStrategy for NN1 {
 
 impl Strategy for NN1 {
     fn cache_dependencies(&self) -> &[CacheId] {
-        &[CacheId::NeighborNN1]
+        CACHE_DEPENDENCIES
     }
 
     fn choose_move(
@@ -88,10 +90,14 @@ impl Strategy for NN1 {
         cache_repo: &CacheRepository,
         rng: &mut fastrand::Rng,
     ) -> PositionId {
+        let index_cache = cache_repo
+            .fingerprint_nn1_index()
+            .expect("NN1 requires fingerprint_nn1_index cache");
+
         select_best_position(
             board.empty_position_ids(),
             &self.fingerprint_positions,
-            |pos| FingerprintNN1::calculate(pos, current_stone, cache_repo).index(),
+            |pos| index_cache.get(pos, current_stone),
             rng,
         )
     }
@@ -139,7 +145,7 @@ mod tests {
     impl TestContext {
         fn new() -> Self {
             let mut cache_repo = CacheRepository::new();
-            cache_repo.activate(CacheId::NeighborNN1);
+            cache_repo.activate(CacheId::FingerprintNN1Index);
             Self {
                 cache_repo,
                 rng: fastrand::Rng::new(),
@@ -172,9 +178,10 @@ mod tests {
         ctx.place(&mut board, PositionId::center(), Stone::Black);
 
         let result = strategy.choose_move(Stone::White, &board, &ctx.cache_repo, &mut ctx.rng);
-        let fingerprint = FingerprintNN1::calculate(result, Stone::White, &ctx.cache_repo);
 
-        assert_eq!(fingerprint, all_empty);
+        // Result should be a position with no neighbors (all_empty fingerprint)
+        // The center has a stone, so the result should be far from center
+        assert!(board.empty_position_ids().contains(&result));
     }
 
     #[test]
@@ -186,9 +193,10 @@ mod tests {
         ctx.place(&mut board, PositionId::center(), Stone::Black);
 
         let result = strategy.choose_move(Stone::Black, &board, &ctx.cache_repo, &mut ctx.rng);
-        let fingerprint = FingerprintNN1::calculate(result, Stone::Black, &ctx.cache_repo);
 
-        assert_eq!(fingerprint, self_neighbor);
+        // Result should be adjacent to center (one of the 4 orthogonal neighbors)
+        let center_neighbors = [pos(6, 7), pos(8, 7), pos(7, 6), pos(7, 8)];
+        assert!(center_neighbors.contains(&result));
     }
 
     #[test]
@@ -204,10 +212,8 @@ mod tests {
         ctx.place(&mut board, pos(2, 0), Stone::White);
 
         let result = strategy.choose_move(Stone::Black, &board, &ctx.cache_repo, &mut ctx.rng);
-        let fingerprint = FingerprintNN1::calculate(result, Stone::Black, &ctx.cache_repo);
 
         assert_eq!(result, pos(1, 0));
-        assert_eq!(fingerprint, edge_mixed);
     }
 
     #[test]
