@@ -8,6 +8,7 @@ pub mod cluster;
 pub mod evolution;
 pub mod game;
 pub mod gene;
+pub mod interactive_strategy;
 pub mod match_result;
 pub mod neighbor_cache;
 pub mod neighbor_counts_cache;

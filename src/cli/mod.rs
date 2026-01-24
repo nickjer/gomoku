@@ -1,9 +1,11 @@
 mod evolvable_strategies;
 mod evolve;
+mod interactive;
 mod play;
 
 pub use evolvable_strategies::EvolvableStrategies;
 pub use evolve::{EvolveArgs, run_evolve};
+pub use interactive::{InteractiveArgs, run_interactive};
 pub use play::{PlayArgs, run_play};
 
 use anyhow::{Context, Result};
