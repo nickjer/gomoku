@@ -35,6 +35,9 @@ Fingerprints encode local board patterns as `NeighborCounts` tuples of (player, 
 ### Strategy
 Strategies implement the `Strategy` trait. Evolvable strategies additionally implement `EvolvableStrategy` with gene manipulation methods.
 
+- **Fingerprint strategies (NN1-NN4)**: Select moves based on priority ordering of local patterns
+- **InteractiveStrategy**: TUI-based human input, generic over `Backend` for testability
+
 Move selection for fingerprint-based strategies (NN1-NN4):
 1. Calculate fingerprint for each empty position
 2. Find fingerprint's index in the gene list (priority)
@@ -67,17 +70,28 @@ The `Evolver` orchestrates the genetic algorithm. Call `evolve(strategies, rng)`
 
 ### CLI
 
+**Subcommands:** `evolve`, `play`, `interactive`
+
 ```bash
 # Generate and evolve random strategies (saves to directory)
 cargo run --release -- evolve -o tmp/output nn4 16
 
 # Continue from saved strategies
 cargo run --release -- evolve -i tmp/output -o tmp/output2 -g 50
+
+# Play a game between two strategies
+cargo run --release -- play tmp/output/01_*.bin tmp/output/02_*.bin
+
+# Play interactively against a strategy (TUI)
+cargo run --release -- interactive tmp/output/01_*.bin
+cargo run --release -- interactive tmp/output/01_*.bin --play-as white
 ```
+
+**Interactive controls:** Arrow keys/hjkl to move cursor, Enter/Space to place stone, q/Esc to quit.
 
 **Output format:** Each strategy is saved as an individual binary file `{rank}_{label}.bin` using postcard serialization.
 
-**Options:** `-o/--output` (required, directory), `-i/--input` (directory), `-g/--generations` [10], `-e/--elitism` [2], `-c/--crossover` (order/pmx) [order], `--crossover-rate` [0.8], `-m/--mutation` (swap/insert/inversion) [swap], `--mutation-rate` [0.1], `--seed`, `-l/--log-level` (error/warn/info/debug/trace).
+**Evolve options:** `-o/--output` (required, directory), `-i/--input` (directory), `-g/--generations` [10], `-e/--elitism` [2], `-c/--crossover` (order/pmx) [order], `--crossover-rate` [0.8], `-m/--mutation` (swap/insert/inversion) [swap], `--mutation-rate` [0.1], `--seed`, `-l/--log-level` (error/warn/info/debug/trace).
 
 ## Code Style
 
