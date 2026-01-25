@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::sync::LazyLock;
 
+use itertools::iproduct;
 use rapidhash::RapidHashMap;
 use serde::{Deserialize, Serialize};
 
@@ -71,15 +72,11 @@ impl super::Fingerprint for FingerprintNN2 {
             topology_pairs
                 .into_iter()
                 .flat_map(|(nn1_total, nn2_total)| {
-                    let nn1_combos = combinations_for_total(nn1_total);
-                    let nn2_combos = combinations_for_total(nn2_total);
-
-                    nn1_combos.into_iter().flat_map(move |nn1| {
-                        nn2_combos
-                            .clone()
-                            .into_iter()
-                            .map(move |nn2| FingerprintNN2::new(nn1, nn2))
-                    })
+                    iproduct!(
+                        combinations_for_total(nn1_total),
+                        combinations_for_total(nn2_total)
+                    )
+                    .map(|(nn1, nn2)| FingerprintNN2::new(nn1, nn2))
                 })
                 .collect()
         });

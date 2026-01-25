@@ -551,6 +551,7 @@ dependencies = [
  "enum_dispatch",
  "fastrand",
  "fixedbitset 0.5.7",
+ "itertools",
  "postcard",
  "rapidhash",
  "ratatui",

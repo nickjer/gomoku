@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::sync::LazyLock;
 
+use itertools::iproduct;
 use rapidhash::RapidHashMap;
 use serde::{Deserialize, Serialize};
 
@@ -78,20 +79,12 @@ impl super::Fingerprint for FingerprintNN3 {
             topology_triples
                 .into_iter()
                 .flat_map(|(nn1_total, nn2_total, nn3_total)| {
-                    let nn1_combos = combinations_for_total(nn1_total);
-                    let nn2_combos = combinations_for_total(nn2_total);
-                    let nn3_combos = combinations_for_total(nn3_total);
-
-                    nn1_combos.into_iter().flat_map(move |nn1| {
-                        let nn2_combos = nn2_combos.clone();
-                        let nn3_combos = nn3_combos.clone();
-                        nn2_combos.into_iter().flat_map(move |nn2| {
-                            nn3_combos
-                                .clone()
-                                .into_iter()
-                                .map(move |nn3| FingerprintNN3::new(nn1, nn2, nn3))
-                        })
-                    })
+                    iproduct!(
+                        combinations_for_total(nn1_total),
+                        combinations_for_total(nn2_total),
+                        combinations_for_total(nn3_total)
+                    )
+                    .map(|(nn1, nn2, nn3)| FingerprintNN3::new(nn1, nn2, nn3))
                 })
                 .collect()
         });
