@@ -37,19 +37,21 @@ impl NN1 {
 }
 
 impl EvolvableStrategy for NN1 {
-    fn random_genes(rng: &mut fastrand::Rng) -> Vec<Gene> {
+    type Genes = Vec<Gene>;
+
+    fn random(label: impl Into<String>, rng: &mut fastrand::Rng) -> Self {
         let len = FingerprintNN1::all().len();
         let mut genes: Vec<Gene> = (0..len).map(Gene::new).collect();
         rng.shuffle(&mut genes);
-        genes
-    }
-
-    fn from_genes(label: impl Into<String>, genes: Vec<Gene>) -> Self {
         Self::new(label, genes)
     }
 
-    fn genes(&self) -> &[Gene] {
+    fn genes(&self) -> &Self::Genes {
         &self.ranked_fingerprints
+    }
+
+    fn from_genes(label: impl Into<String>, genes: Self::Genes) -> Self {
+        Self::new(label, genes)
     }
 }
 
@@ -219,8 +221,8 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(42);
         let strategy = NN1::random("test", &mut rng);
 
-        let genes_set: HashSet<_> = strategy.genes().iter().map(|g| g.index()).collect();
-        let all_set: HashSet<_> = (0..FingerprintNN1::all().len()).collect();
+        let genes_set: HashSet<usize> = strategy.genes().iter().map(|g| g.index()).collect();
+        let all_set: HashSet<usize> = (0..FingerprintNN1::all().len()).collect();
 
         assert_eq!(genes_set, all_set);
     }

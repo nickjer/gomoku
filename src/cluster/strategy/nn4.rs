@@ -37,19 +37,21 @@ impl NN4 {
 }
 
 impl EvolvableStrategy for NN4 {
-    fn random_genes(rng: &mut fastrand::Rng) -> Vec<Gene> {
+    type Genes = Vec<Gene>;
+
+    fn random(label: impl Into<String>, rng: &mut fastrand::Rng) -> Self {
         let len = FingerprintNN4::all().len();
         let mut genes: Vec<Gene> = (0..len).map(Gene::new).collect();
         rng.shuffle(&mut genes);
-        genes
-    }
-
-    fn from_genes(label: impl Into<String>, genes: Vec<Gene>) -> Self {
         Self::new(label, genes)
     }
 
-    fn genes(&self) -> &[Gene] {
+    fn genes(&self) -> &Self::Genes {
         &self.ranked_fingerprints
+    }
+
+    fn from_genes(label: impl Into<String>, genes: Self::Genes) -> Self {
+        Self::new(label, genes)
     }
 }
 

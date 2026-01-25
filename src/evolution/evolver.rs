@@ -4,8 +4,9 @@ use crate::game::Game;
 use crate::strategy::EvolvableStrategy;
 use crate::tournament::Tournament;
 
-use super::crossover::{Crossover, RunCrossover};
-use super::mutation::{Mutation, RunMutation};
+use super::crossover::Crossover;
+use super::genes::EvolvableGenes;
+use super::mutation::Mutation;
 use super::selection::{RunSelection, Selection};
 use super::{Individual, Population, evaluate};
 
@@ -131,7 +132,7 @@ impl Evolver {
 
         // Elitism: keep top performers
         for (i, individual) in individuals.iter().take(self.elitism).enumerate() {
-            let genes = individual.strategy().genes().to_vec();
+            let genes = individual.strategy().genes().clone();
             new_strategies.push(S::from_genes(format!("gen{generation}_elite{i}"), genes));
         }
 
@@ -158,21 +159,23 @@ impl Evolver {
             (p1, p2)
         });
 
-        let mut child_genes = debug_span!("crossover").in_scope(|| {
+        let child_genes = debug_span!("crossover").in_scope(|| {
             if rng.f64() < self.crossover_rate {
-                self.crossover.crossover(
-                    parent1.strategy().genes(),
+                parent1.strategy().genes().crossover(
                     parent2.strategy().genes(),
+                    self.crossover,
                     rng,
                 )
             } else {
-                parent1.strategy().genes().to_vec()
+                parent1.strategy().genes().clone()
             }
         });
 
-        debug_span!("mutation").in_scope(|| {
+        let child_genes = debug_span!("mutation").in_scope(|| {
             if rng.f64() < self.mutation_rate {
-                child_genes = self.mutation.mutate(&child_genes, rng);
+                child_genes.mutate(self.mutation, rng)
+            } else {
+                child_genes
             }
         });
 
@@ -327,7 +330,7 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(42);
         let strategies = make_strategies(&mut rng, 4);
 
-        let parent_genes: Vec<Vec<Gene>> = strategies.iter().map(|s| s.genes().to_vec()).collect();
+        let parent_genes: Vec<Vec<Gene>> = strategies.iter().map(|s| s.genes().clone()).collect();
 
         // Run one generation with no crossover, no mutation
         let gen1 = Evolver::new()
@@ -341,7 +344,7 @@ mod tests {
         for individual in gen1.individuals() {
             let genes = individual.strategy().genes();
             assert!(
-                parent_genes.iter().any(|p| p.as_slice() == genes),
+                parent_genes.iter().any(|p| p == genes),
                 "offspring genes {:?} should match a parent",
                 genes
             );
@@ -353,7 +356,7 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(42);
         let strategies = make_strategies(&mut rng, 4);
 
-        let parent_genes: Vec<Vec<Gene>> = strategies.iter().map(|s| s.genes().to_vec()).collect();
+        let parent_genes: Vec<Vec<Gene>> = strategies.iter().map(|s| s.genes().clone()).collect();
 
         // Run one generation with no crossover but 100% mutation
         let gen1 = Evolver::new()
@@ -366,7 +369,7 @@ mod tests {
         // At least one offspring should have different genes than all parents
         let any_mutated = gen1.individuals().iter().any(|individual| {
             let genes = individual.strategy().genes();
-            !parent_genes.iter().any(|p| p.as_slice() == genes)
+            !parent_genes.iter().any(|p| p == genes)
         });
 
         assert!(any_mutated, "some offspring should have mutated genes");
@@ -388,7 +391,7 @@ mod tests {
         // With crossover, offspring genes should still be valid permutations
         for individual in gen1.individuals() {
             let genes = individual.strategy().genes();
-            let mut sorted: Vec<Gene> = genes.to_vec();
+            let mut sorted: Vec<Gene> = genes.clone();
             sorted.sort();
             let expected: Vec<Gene> = (0..5).map(Gene::new).collect();
             assert_eq!(sorted, expected, "genes should be valid permutation");

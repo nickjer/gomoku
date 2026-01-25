@@ -1,7 +1,7 @@
 use crate::board::Board;
 use crate::cache_id::CacheId;
 use crate::cache_repository::CacheRepository;
-use crate::gene::Gene;
+use crate::evolution::EvolvableGenes;
 use crate::position_id::PositionId;
 use crate::stone::Stone;
 
@@ -25,17 +25,15 @@ pub trait Strategy {
 
 /// A strategy that can be evolved through genetic algorithms.
 pub trait EvolvableStrategy: Strategy + Sized {
-    /// Generates random genes for a new strategy.
-    fn random_genes(rng: &mut fastrand::Rng) -> Vec<Gene>;
-
-    /// Creates a strategy from the given genes.
-    fn from_genes(label: impl Into<String>, genes: Vec<Gene>) -> Self;
-
-    /// Returns the genes of this strategy.
-    fn genes(&self) -> &[Gene];
+    /// The type of genes used by this strategy.
+    type Genes: EvolvableGenes;
 
     /// Creates a strategy with random genes.
-    fn random(label: impl Into<String>, rng: &mut fastrand::Rng) -> Self {
-        Self::from_genes(label, Self::random_genes(rng))
-    }
+    fn random(label: impl Into<String>, rng: &mut fastrand::Rng) -> Self;
+
+    /// Returns the genes of this strategy.
+    fn genes(&self) -> &Self::Genes;
+
+    /// Creates a strategy from the given genes.
+    fn from_genes(label: impl Into<String>, genes: Self::Genes) -> Self;
 }

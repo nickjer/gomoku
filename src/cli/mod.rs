@@ -48,8 +48,8 @@ pub fn create_rng(seed: Option<u64>) -> fastrand::Rng {
     }
 }
 
-use crate::evolution::crossover::{Crossover, Order, Pmx};
-use crate::evolution::mutation::{Insert, Inversion, Mutation, Swap};
+use crate::evolution::crossover::Crossover;
+use crate::evolution::mutation::Mutation;
 use crate::evolution::selection::{Selection, Tournament, TournamentMode};
 use crate::game::{Freestyle, Game};
 use crate::tournament::{Swiss, Tournament as CompetitionTournament};
@@ -118,8 +118,8 @@ pub enum CliCrossover {
 impl From<CliCrossover> for Crossover {
     fn from(cli: CliCrossover) -> Self {
         match cli {
-            CliCrossover::Order => Order.into(),
-            CliCrossover::Pmx => Pmx.into(),
+            CliCrossover::Order => Crossover::Order,
+            CliCrossover::Pmx => Crossover::Pmx,
         }
     }
 }
@@ -135,9 +135,9 @@ pub enum CliMutation {
 impl From<CliMutation> for Mutation {
     fn from(cli: CliMutation) -> Self {
         match cli {
-            CliMutation::Swap => Swap.into(),
-            CliMutation::Insert => Insert.into(),
-            CliMutation::Inversion => Inversion.into(),
+            CliMutation::Swap => Mutation::Swap,
+            CliMutation::Insert => Mutation::Insert,
+            CliMutation::Inversion => Mutation::Inversion,
         }
     }
 }

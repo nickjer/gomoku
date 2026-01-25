@@ -57,11 +57,14 @@ fn save_each<S: EvolvableStrategy>(
     dir: &Path,
     strategies: &[S],
     wrap: fn(Vec<Gene>) -> StrategyData,
-) -> Result<()> {
+) -> Result<()>
+where
+    S::Genes: Into<Vec<Gene>>,
+{
     let width = strategies.len().to_string().len();
 
     for (i, strategy) in strategies.iter().enumerate() {
-        let data = wrap(strategy.genes().to_vec());
+        let data = wrap(strategy.genes().clone().into());
         let bytes = postcard::to_allocvec(&data).context("Failed to serialize strategy")?;
 
         let rank = i + 1;
@@ -194,7 +197,7 @@ mod tests {
         let dir = temp_dir();
         let mut rng = fastrand::Rng::with_seed(42);
         let strategies = vec![NN1::random("s0", &mut rng), NN1::random("s1", &mut rng)];
-        let original_genes: Vec<_> = strategies.iter().map(|s| s.genes().to_vec()).collect();
+        let original_genes: Vec<_> = strategies.iter().map(|s| s.genes().clone()).collect();
         let original = EvolvableStrategies::Nn1 { strategies };
 
         save_strategies_to_directory(dir.path(), &original).unwrap();
@@ -203,8 +206,8 @@ mod tests {
         match loaded {
             EvolvableStrategies::Nn1 { strategies } => {
                 assert_eq!(strategies.len(), 2);
-                assert_eq!(strategies[0].genes(), original_genes[0].as_slice());
-                assert_eq!(strategies[1].genes(), original_genes[1].as_slice());
+                assert_eq!(strategies[0].genes(), &original_genes[0]);
+                assert_eq!(strategies[1].genes(), &original_genes[1]);
             }
             _ => panic!("Expected Nn1"),
         }
@@ -215,7 +218,7 @@ mod tests {
         let dir = temp_dir();
         let mut rng = fastrand::Rng::with_seed(42);
         let strategy = NN4::random("test", &mut rng);
-        let original_genes = strategy.genes().to_vec();
+        let original_genes = strategy.genes().clone();
         let original = EvolvableStrategies::Nn4 {
             strategies: vec![strategy],
         };
@@ -225,7 +228,7 @@ mod tests {
 
         match loaded {
             EvolvableStrategies::Nn4 { strategies } => {
-                assert_eq!(strategies[0].genes(), original_genes.as_slice());
+                assert_eq!(strategies[0].genes(), &original_genes);
             }
             _ => panic!("Expected Nn4"),
         }

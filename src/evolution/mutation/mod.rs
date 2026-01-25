@@ -2,50 +2,37 @@ mod insert;
 mod inversion;
 mod swap;
 
-use enum_dispatch::enum_dispatch;
+pub use insert::insert_mutate;
+pub use inversion::inversion_mutate;
+pub use swap::swap_mutate;
 
-use crate::gene::Gene;
-
-pub use insert::Insert;
-pub use inversion::Inversion;
-pub use swap::Swap;
-
-/// Trait for mutation operations.
-#[enum_dispatch]
-pub trait RunMutation {
-    fn mutate(&self, genes: &[Gene], rng: &mut fastrand::Rng) -> Vec<Gene>;
-}
-
-/// Enum for polymorphic mutation dispatch.
-#[enum_dispatch(RunMutation)]
-#[derive(Debug, Clone, Copy)]
+/// Mutation method for genetic algorithms.
+#[derive(Debug, Default, Clone, Copy)]
 pub enum Mutation {
+    /// Swap mutation: exchanges two random elements.
+    #[default]
     Swap,
+    /// Insert mutation: removes an element and reinserts it at a different position.
     Insert,
+    /// Inversion mutation: reverses a random segment of the sequence.
     Inversion,
-}
-
-impl Default for Mutation {
-    fn default() -> Self {
-        Swap.into()
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gene::Gene;
 
     fn genes(values: &[usize]) -> Vec<Gene> {
         values.iter().copied().map(Gene::new).collect()
     }
 
     #[test]
-    fn swap_variant_produces_valid_mutation() {
+    fn swap_mutate_produces_valid_mutation() {
         let g = genes(&[0, 1, 2, 3, 4]);
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let mutation: Mutation = Swap.into();
-        let result = mutation.mutate(&g, &mut rng);
+        let result = swap_mutate(&g, &mut rng);
 
         let mut sorted: Vec<_> = result.iter().map(|g| g.index()).collect();
         sorted.sort();
@@ -53,12 +40,11 @@ mod tests {
     }
 
     #[test]
-    fn insert_variant_produces_valid_mutation() {
+    fn insert_mutate_produces_valid_mutation() {
         let g = genes(&[0, 1, 2, 3, 4]);
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let mutation: Mutation = Insert.into();
-        let result = mutation.mutate(&g, &mut rng);
+        let result = insert_mutate(&g, &mut rng);
 
         let mut sorted: Vec<_> = result.iter().map(|g| g.index()).collect();
         sorted.sort();
@@ -66,12 +52,11 @@ mod tests {
     }
 
     #[test]
-    fn inversion_variant_produces_valid_mutation() {
+    fn inversion_mutate_produces_valid_mutation() {
         let g = genes(&[0, 1, 2, 3, 4]);
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let mutation: Mutation = Inversion.into();
-        let result = mutation.mutate(&g, &mut rng);
+        let result = inversion_mutate(&g, &mut rng);
 
         let mut sorted: Vec<_> = result.iter().map(|g| g.index()).collect();
         sorted.sort();

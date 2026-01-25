@@ -203,20 +203,25 @@ impl Strategy for FakeEvolvableStrategy {
 }
 
 impl EvolvableStrategy for FakeEvolvableStrategy {
-    fn random_genes(rng: &mut fastrand::Rng) -> Vec<Gene> {
+    type Genes = Vec<Gene>;
+
+    fn random(label: impl Into<String>, rng: &mut fastrand::Rng) -> Self {
         let mut genes: Vec<Gene> = (0..5).map(Gene::new).collect();
         rng.shuffle(&mut genes);
-        genes
-    }
-
-    fn from_genes(label: impl Into<String>, genes: Vec<Gene>) -> Self {
         Self {
             label: label.into(),
             genes,
         }
     }
 
-    fn genes(&self) -> &[Gene] {
+    fn genes(&self) -> &Self::Genes {
         &self.genes
+    }
+
+    fn from_genes(label: impl Into<String>, genes: Self::Genes) -> Self {
+        Self {
+            label: label.into(),
+            genes,
+        }
     }
 }
