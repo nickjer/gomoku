@@ -87,8 +87,8 @@ impl Default for CacheRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cluster::NeighborCounts;
-    use crate::cluster::fingerprint::FingerprintNN1;
+    use crate::cluster::fingerprint::{Fingerprint, FingerprintNN1};
+    use crate::cluster::{FingerprintIndexCache, NeighborCounts};
     use crate::offset::Offset;
 
     #[test]

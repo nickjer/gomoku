@@ -8,7 +8,31 @@ pub use nn2::FingerprintNN2;
 pub use nn3::FingerprintNN3;
 pub use nn4::FingerprintNN4;
 
+use crate::cache_id::CacheId;
+use crate::cache_repository::CacheRepository;
+use crate::cluster::FingerprintIndexCache;
 use crate::cluster::NeighborCounts;
+
+/// Trait for fingerprint types that encode local board patterns.
+pub trait Fingerprint: Sized + Copy + Eq + std::hash::Hash + 'static {
+    /// The index cache type for this fingerprint.
+    type IndexCache: FingerprintIndexCache;
+
+    /// The cache ID for this fingerprint level.
+    const CACHE_ID: CacheId;
+
+    /// Cache dependencies as a static slice (for `Strategy::cache_dependencies`).
+    const CACHE_DEPENDENCIES: &'static [CacheId];
+
+    /// Returns all valid fingerprints for this level.
+    fn all() -> &'static [Self];
+
+    /// Returns the index of this fingerprint in the `all()` array.
+    fn index(self) -> usize;
+
+    /// Gets the index cache for this fingerprint type from the repository.
+    fn get_cache(repo: &CacheRepository) -> Option<&Self::IndexCache>;
+}
 
 /// Generates all possible `NeighborCounts` combinations for a given total neighbor count.
 #[must_use]

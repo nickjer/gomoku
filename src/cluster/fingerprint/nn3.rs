@@ -4,9 +4,11 @@ use std::sync::LazyLock;
 use rapidhash::RapidHashMap;
 use serde::{Deserialize, Serialize};
 
-use crate::cluster::NeighborCounts;
+use crate::cache_id::CacheId;
+use crate::cache_repository::CacheRepository;
 use crate::cluster::fingerprint::combinations_for_total;
 use crate::cluster::offsets;
+use crate::cluster::{FingerprintNN3IndexCache, NeighborCounts};
 use crate::position_id::PositionId;
 
 type Nn3Tuple = (NeighborCounts, NeighborCounts, NeighborCounts);
@@ -41,7 +43,27 @@ impl FingerprintNN3 {
     }
 
     #[must_use]
-    pub fn all() -> &'static [Self] {
+    pub fn nn1(&self) -> NeighborCounts {
+        self.nn1
+    }
+
+    #[must_use]
+    pub fn nn2(&self) -> NeighborCounts {
+        self.nn2
+    }
+
+    #[must_use]
+    pub fn nn3(&self) -> NeighborCounts {
+        self.nn3
+    }
+}
+
+impl super::Fingerprint for FingerprintNN3 {
+    type IndexCache = FingerprintNN3IndexCache;
+    const CACHE_ID: CacheId = CacheId::FingerprintNN3Index;
+    const CACHE_DEPENDENCIES: &'static [CacheId] = &[CacheId::FingerprintNN3Index];
+
+    fn all() -> &'static [Self] {
         static ALL: LazyLock<Vec<FingerprintNN3>> = LazyLock::new(|| {
             let topology_triples: BTreeSet<(u8, u8, u8)> = PositionId::iter()
                 .map(|pos| {
@@ -76,28 +98,12 @@ impl FingerprintNN3 {
         &ALL
     }
 
-    #[must_use]
-    pub fn nn1(&self) -> NeighborCounts {
-        self.nn1
-    }
-
-    #[must_use]
-    pub fn nn2(&self) -> NeighborCounts {
-        self.nn2
-    }
-
-    #[must_use]
-    pub fn nn3(&self) -> NeighborCounts {
-        self.nn3
-    }
-
     /// Returns the index of this fingerprint in the `all()` array.
     ///
     /// # Panics
     ///
     /// Panics if the fingerprint is not in the `all()` array (invalid fingerprint).
-    #[must_use]
-    pub fn index(self) -> usize {
+    fn index(self) -> usize {
         static INDEX_MAP: LazyLock<RapidHashMap<FingerprintNN3, usize>> = LazyLock::new(|| {
             FingerprintNN3::all()
                 .iter()
@@ -107,11 +113,16 @@ impl FingerprintNN3 {
         });
         *INDEX_MAP.get(&self).expect("Invalid fingerprint")
     }
+
+    fn get_cache(repo: &CacheRepository) -> Option<&Self::IndexCache> {
+        repo.fingerprint_nn3_index()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cluster::fingerprint::Fingerprint;
 
     #[test]
     fn all_returns_fingerprints() {

@@ -4,9 +4,11 @@ use std::sync::LazyLock;
 use rapidhash::RapidHashMap;
 use serde::{Deserialize, Serialize};
 
-use crate::cluster::NeighborCounts;
+use crate::cache_id::CacheId;
+use crate::cache_repository::CacheRepository;
 use crate::cluster::fingerprint::combinations_for_total;
 use crate::cluster::offsets;
+use crate::cluster::{FingerprintNN4IndexCache, NeighborCounts};
 use crate::position_id::PositionId;
 
 type Nn4Tuple = (
@@ -52,7 +54,32 @@ impl FingerprintNN4 {
     }
 
     #[must_use]
-    pub fn all() -> &'static [Self] {
+    pub fn nn1(&self) -> NeighborCounts {
+        self.nn1
+    }
+
+    #[must_use]
+    pub fn nn2(&self) -> NeighborCounts {
+        self.nn2
+    }
+
+    #[must_use]
+    pub fn nn3(&self) -> NeighborCounts {
+        self.nn3
+    }
+
+    #[must_use]
+    pub fn nn4(&self) -> NeighborCounts {
+        self.nn4
+    }
+}
+
+impl super::Fingerprint for FingerprintNN4 {
+    type IndexCache = FingerprintNN4IndexCache;
+    const CACHE_ID: CacheId = CacheId::FingerprintNN4Index;
+    const CACHE_DEPENDENCIES: &'static [CacheId] = &[CacheId::FingerprintNN4Index];
+
+    fn all() -> &'static [Self] {
         static ALL: LazyLock<Vec<FingerprintNN4>> = LazyLock::new(|| {
             let topology_quads: BTreeSet<(u8, u8, u8, u8)> = PositionId::iter()
                 .map(|pos| {
@@ -102,8 +129,7 @@ impl FingerprintNN4 {
     ///
     /// Panics if the fingerprint is not found in `all()` (should never happen
     /// for valid fingerprints).
-    #[must_use]
-    pub fn index(self) -> usize {
+    fn index(self) -> usize {
         static INDEX_MAP: LazyLock<RapidHashMap<FingerprintNN4, usize>> = LazyLock::new(|| {
             FingerprintNN4::all()
                 .iter()
@@ -114,30 +140,15 @@ impl FingerprintNN4 {
         *INDEX_MAP.get(&self).expect("Invalid fingerprint")
     }
 
-    #[must_use]
-    pub fn nn1(&self) -> NeighborCounts {
-        self.nn1
-    }
-
-    #[must_use]
-    pub fn nn2(&self) -> NeighborCounts {
-        self.nn2
-    }
-
-    #[must_use]
-    pub fn nn3(&self) -> NeighborCounts {
-        self.nn3
-    }
-
-    #[must_use]
-    pub fn nn4(&self) -> NeighborCounts {
-        self.nn4
+    fn get_cache(repo: &CacheRepository) -> Option<&Self::IndexCache> {
+        repo.fingerprint_nn4_index()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cluster::fingerprint::Fingerprint;
 
     #[test]
     fn all_returns_fingerprints() {

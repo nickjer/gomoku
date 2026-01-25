@@ -4,9 +4,11 @@ use std::sync::LazyLock;
 use rapidhash::RapidHashMap;
 use serde::{Deserialize, Serialize};
 
-use crate::cluster::NeighborCounts;
+use crate::cache_id::CacheId;
+use crate::cache_repository::CacheRepository;
 use crate::cluster::fingerprint::combinations_for_total;
 use crate::cluster::offsets;
+use crate::cluster::{FingerprintNN2IndexCache, NeighborCounts};
 use crate::position_id::PositionId;
 
 type Nn2Tuple = (NeighborCounts, NeighborCounts);
@@ -40,7 +42,22 @@ impl FingerprintNN2 {
     }
 
     #[must_use]
-    pub fn all() -> &'static [Self] {
+    pub fn nn1(&self) -> NeighborCounts {
+        self.nn1
+    }
+
+    #[must_use]
+    pub fn nn2(&self) -> NeighborCounts {
+        self.nn2
+    }
+}
+
+impl super::Fingerprint for FingerprintNN2 {
+    type IndexCache = FingerprintNN2IndexCache;
+    const CACHE_ID: CacheId = CacheId::FingerprintNN2Index;
+    const CACHE_DEPENDENCIES: &'static [CacheId] = &[CacheId::FingerprintNN2Index];
+
+    fn all() -> &'static [Self] {
         static ALL: LazyLock<Vec<FingerprintNN2>> = LazyLock::new(|| {
             let topology_pairs: BTreeSet<(u8, u8)> = PositionId::iter()
                 .map(|pos| {
@@ -69,23 +86,12 @@ impl FingerprintNN2 {
         &ALL
     }
 
-    #[must_use]
-    pub fn nn1(&self) -> NeighborCounts {
-        self.nn1
-    }
-
-    #[must_use]
-    pub fn nn2(&self) -> NeighborCounts {
-        self.nn2
-    }
-
     /// Returns the index of this fingerprint in the `all()` array.
     ///
     /// # Panics
     ///
     /// Panics if the fingerprint is not in the `all()` array (invalid fingerprint).
-    #[must_use]
-    pub fn index(self) -> usize {
+    fn index(self) -> usize {
         static INDEX_MAP: LazyLock<RapidHashMap<FingerprintNN2, usize>> = LazyLock::new(|| {
             FingerprintNN2::all()
                 .iter()
@@ -95,11 +101,16 @@ impl FingerprintNN2 {
         });
         *INDEX_MAP.get(&self).expect("Invalid fingerprint")
     }
+
+    fn get_cache(repo: &CacheRepository) -> Option<&Self::IndexCache> {
+        repo.fingerprint_nn2_index()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cluster::fingerprint::Fingerprint;
 
     #[test]
     fn all_returns_fingerprints() {

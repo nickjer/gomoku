@@ -4,9 +4,11 @@ use std::sync::LazyLock;
 use rapidhash::RapidHashMap;
 use serde::{Deserialize, Serialize};
 
-use crate::cluster::NeighborCounts;
+use crate::cache_id::CacheId;
+use crate::cache_repository::CacheRepository;
 use crate::cluster::fingerprint::combinations_for_total;
 use crate::cluster::offsets;
+use crate::cluster::{FingerprintNN1IndexCache, NeighborCounts};
 use crate::position_id::PositionId;
 
 type Nn1Tuple = (NeighborCounts,);
@@ -39,7 +41,17 @@ impl FingerprintNN1 {
     }
 
     #[must_use]
-    pub fn all() -> &'static [Self] {
+    pub fn counts(&self) -> NeighborCounts {
+        self.counts
+    }
+}
+
+impl super::Fingerprint for FingerprintNN1 {
+    type IndexCache = FingerprintNN1IndexCache;
+    const CACHE_ID: CacheId = CacheId::FingerprintNN1Index;
+    const CACHE_DEPENDENCIES: &'static [CacheId] = &[CacheId::FingerprintNN1Index];
+
+    fn all() -> &'static [Self] {
         static ALL: LazyLock<Vec<FingerprintNN1>> = LazyLock::new(|| {
             let totals: BTreeSet<u8> = PositionId::iter()
                 .map(|pos| u8::try_from(pos.neighbor_count(&offsets::NN1)).unwrap())
@@ -57,18 +69,12 @@ impl FingerprintNN1 {
         &ALL
     }
 
-    #[must_use]
-    pub fn counts(&self) -> NeighborCounts {
-        self.counts
-    }
-
     /// Returns the index of this fingerprint in the `all()` array.
     ///
     /// # Panics
     ///
     /// Panics if the fingerprint is not in the `all()` array (invalid fingerprint).
-    #[must_use]
-    pub fn index(self) -> usize {
+    fn index(self) -> usize {
         static INDEX_MAP: LazyLock<RapidHashMap<FingerprintNN1, usize>> = LazyLock::new(|| {
             FingerprintNN1::all()
                 .iter()
@@ -78,11 +84,16 @@ impl FingerprintNN1 {
         });
         *INDEX_MAP.get(&self).expect("Invalid fingerprint")
     }
+
+    fn get_cache(repo: &CacheRepository) -> Option<&Self::IndexCache> {
+        repo.fingerprint_nn1_index()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cluster::fingerprint::Fingerprint;
 
     #[test]
     fn all_returns_fingerprints() {

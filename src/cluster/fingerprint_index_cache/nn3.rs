@@ -1,4 +1,4 @@
-use crate::cluster::fingerprint::FingerprintNN3;
+use crate::cluster::fingerprint::{Fingerprint, FingerprintNN3};
 use crate::neighbor_cache::NeighborCache;
 use crate::neighbor_counts_cache::NeighborCountsCache;
 use crate::position_id::PositionId;
@@ -43,20 +43,6 @@ impl FingerprintNN3IndexCache {
         }
     }
 
-    /// Returns the fingerprint index for the given position and stone color.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `current_stone` is `Stone::Empty`.
-    #[must_use]
-    pub fn get(&self, position_id: PositionId, current_stone: Stone) -> usize {
-        match current_stone {
-            Stone::Black => self.black_indices[position_id],
-            Stone::White => self.white_indices[position_id],
-            Stone::Empty => panic!("Invalid stone"),
-        }
-    }
-
     pub fn place(&mut self, position_id: PositionId, stone: Stone) {
         self.neighbor_nn1.place(position_id, stone);
         self.neighbor_nn2.place(position_id, stone);
@@ -91,9 +77,25 @@ impl Default for FingerprintNN3IndexCache {
     }
 }
 
+impl super::FingerprintIndexCache for FingerprintNN3IndexCache {
+    /// Returns the fingerprint index for the given position and stone color.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `current_stone` is `Stone::Empty`.
+    fn get(&self, position_id: PositionId, current_stone: Stone) -> usize {
+        match current_stone {
+            Stone::Black => self.black_indices[position_id],
+            Stone::White => self.white_indices[position_id],
+            Stone::Empty => panic!("Invalid stone"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cluster::FingerprintIndexCache;
     use crate::cluster::NeighborCounts;
     use crate::offset::Offset;
 

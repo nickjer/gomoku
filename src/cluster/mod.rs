@@ -7,7 +7,7 @@ pub mod strategy;
 
 pub use best_position_selector::select_best_position;
 pub use fingerprint_index_cache::{
-    FingerprintNN1IndexCache, FingerprintNN2IndexCache, FingerprintNN3IndexCache,
-    FingerprintNN4IndexCache,
+    FingerprintIndexCache, FingerprintNN1IndexCache, FingerprintNN2IndexCache,
+    FingerprintNN3IndexCache, FingerprintNN4IndexCache,
 };
 pub use neighbor_counts::NeighborCounts;
