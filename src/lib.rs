@@ -5,6 +5,7 @@ pub mod cache_id;
 pub mod cache_repository;
 pub mod cli;
 pub mod cluster;
+pub mod conv;
 pub mod evolution;
 pub mod game;
 pub mod gene;

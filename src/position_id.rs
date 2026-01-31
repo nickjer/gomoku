@@ -101,6 +101,75 @@ impl PositionId {
                 .collect()
         })
     }
+
+    // ---- Grid transformation primitives ----
+
+    /// Precomputed base for vertical flip: COUNT - WIDTH.
+    const FLIP_V_BASE: usize = Self::COUNT - Self::WIDTH;
+
+    /// Mirrors vertically (top ↔ bottom, reflects across horizontal axis).
+    ///
+    /// # Panics
+    ///
+    /// Panics on arithmetic overflow.
+    #[must_use]
+    pub const fn flip_vertical(self) -> Self {
+        let col = self.index % Self::WIDTH;
+        let twice_col = col.checked_mul(2).expect("flip_vertical: overflow");
+        let sum = Self::FLIP_V_BASE
+            .checked_add(twice_col)
+            .expect("flip_vertical: overflow");
+        let result = sum
+            .checked_sub(self.index)
+            .expect("flip_vertical: underflow");
+        Self::new(result)
+    }
+
+    /// Mirrors horizontally (left ↔ right, reflects across vertical axis).
+    ///
+    /// # Panics
+    ///
+    /// Panics on arithmetic overflow.
+    #[must_use]
+    pub const fn flip_horizontal(self) -> Self {
+        let col = self.index % Self::WIDTH;
+        let sum = self
+            .index
+            .checked_add(Self::WIDTH - 1)
+            .expect("flip_horizontal: overflow");
+        let twice_col = col.checked_mul(2).expect("flip_horizontal: overflow");
+        let result = sum
+            .checked_sub(twice_col)
+            .expect("flip_horizontal: underflow");
+        Self::new(result)
+    }
+
+    /// Swaps row and column (reflects across main diagonal).
+    ///
+    /// # Panics
+    ///
+    /// Panics on arithmetic overflow.
+    #[must_use]
+    pub const fn transpose(self) -> Self {
+        let col = self.index % Self::WIDTH;
+        let row = self.index / Self::WIDTH;
+        let product = col.checked_mul(Self::WIDTH).expect("transpose: overflow");
+        let result = product.checked_add(row).expect("transpose: overflow");
+        Self::new(result)
+    }
+
+    /// Reflects through the center point (180° rotation).
+    ///
+    /// # Panics
+    ///
+    /// Panics on arithmetic overflow.
+    #[must_use]
+    pub const fn invert(self) -> Self {
+        let result = (Self::COUNT - 1)
+            .checked_sub(self.index)
+            .expect("invert: underflow");
+        Self::new(result)
+    }
 }
 
 impl From<PositionId> for usize {
@@ -186,5 +255,75 @@ mod tests {
 
         assert_eq!(usize::from(corner), 0);
         assert_eq!(usize::from(center), 112);
+    }
+
+    // ---- Grid transformation primitive tests ----
+
+    #[test]
+    fn flip_vertical_mirrors_top_to_bottom() {
+        assert_eq!(pos(0, 0).flip_vertical(), pos(14, 0));
+        assert_eq!(pos(0, 14).flip_vertical(), pos(14, 14));
+        assert_eq!(pos(14, 0).flip_vertical(), pos(0, 0));
+        assert_eq!(pos(2, 5).flip_vertical(), pos(12, 5));
+    }
+
+    #[test]
+    fn flip_vertical_is_self_inverse() {
+        for p in PositionId::iter() {
+            assert_eq!(p.flip_vertical().flip_vertical(), p);
+        }
+    }
+
+    #[test]
+    fn flip_horizontal_mirrors_left_to_right() {
+        assert_eq!(pos(0, 0).flip_horizontal(), pos(0, 14));
+        assert_eq!(pos(0, 14).flip_horizontal(), pos(0, 0));
+        assert_eq!(pos(14, 0).flip_horizontal(), pos(14, 14));
+        assert_eq!(pos(5, 2).flip_horizontal(), pos(5, 12));
+    }
+
+    #[test]
+    fn flip_horizontal_is_self_inverse() {
+        for p in PositionId::iter() {
+            assert_eq!(p.flip_horizontal().flip_horizontal(), p);
+        }
+    }
+
+    #[test]
+    fn transpose_swaps_row_and_col() {
+        assert_eq!(pos(0, 5).transpose(), pos(5, 0));
+        assert_eq!(pos(2, 3).transpose(), pos(3, 2));
+        assert_eq!(pos(14, 0).transpose(), pos(0, 14));
+    }
+
+    #[test]
+    fn transpose_is_self_inverse() {
+        for p in PositionId::iter() {
+            assert_eq!(p.transpose().transpose(), p);
+        }
+    }
+
+    #[test]
+    fn invert_reflects_through_center() {
+        assert_eq!(pos(0, 0).invert(), pos(14, 14));
+        assert_eq!(pos(0, 14).invert(), pos(14, 0));
+        assert_eq!(pos(14, 0).invert(), pos(0, 14));
+        assert_eq!(pos(14, 14).invert(), pos(0, 0));
+    }
+
+    #[test]
+    fn invert_is_self_inverse() {
+        for p in PositionId::iter() {
+            assert_eq!(p.invert().invert(), p);
+        }
+    }
+
+    #[test]
+    fn center_is_fixed_by_all_transforms() {
+        let center = PositionId::center();
+        assert_eq!(center.flip_vertical(), center);
+        assert_eq!(center.flip_horizontal(), center);
+        assert_eq!(center.transpose(), center);
+        assert_eq!(center.invert(), center);
     }
 }
