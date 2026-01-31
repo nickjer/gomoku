@@ -6,7 +6,7 @@ use crate::position_map::{PositionMap, PositionSlice, PositionSliceMut};
 use crate::stone::Stone;
 use crate::strategy::{EvolvableStrategy, Strategy};
 
-use super::encoding::{encode_board, INPUT_CHANNELS};
+use super::encoding::{INPUT_CHANNELS, encode_board};
 use super::layer::{conv2d, relu_inplace};
 use super::select::select_best_position;
 use super::symmetry::D8Transform;
@@ -96,7 +96,11 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> Strategy
         }
 
         // Select best position from averaged policy
-        select_best_position(board.empty_position_ids(), policy_sum.as_position_slice(), rng)
+        select_best_position(
+            board.empty_position_ids(),
+            policy_sum.as_position_slice(),
+            rng,
+        )
     }
 
     fn label(&self) -> &str {
