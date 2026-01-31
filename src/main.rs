@@ -1,7 +1,9 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use gomoku::cli::{EvolveArgs, InteractiveArgs, PlayArgs, run_evolve, run_interactive, run_play};
+use gomoku::cli::{
+    EvolveCommand, InteractiveArgs, PlayArgs, run_evolve, run_interactive, run_play,
+};
 
 #[derive(Parser)]
 #[command(name = "gomoku")]
@@ -14,7 +16,8 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Evolve strategies using a genetic algorithm
-    Evolve(EvolveArgs),
+    #[command(subcommand)]
+    Evolve(EvolveCommand),
     /// Play interactively against a strategy
     Interactive(InteractiveArgs),
     /// Play a game between two strategies

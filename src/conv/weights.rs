@@ -180,6 +180,19 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> From<ConvWe
     }
 }
 
+impl<const K: usize, const C: usize, const L: usize, const R: usize> From<Vec<f32>>
+    for ConvWeights<K, C, L, R>
+{
+    /// Creates weights from a vector.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `data.len() != Self::TOTAL`, `L < 1`, or `R > 0`.
+    fn from(data: Vec<f32>) -> Self {
+        Self::from_vec(data)
+    }
+}
+
 impl<const K: usize, const C: usize, const L: usize, const R: usize> EvolvableGenes
     for ConvWeights<K, C, L, R>
 {
