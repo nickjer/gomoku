@@ -97,7 +97,7 @@ mod tests {
     use crate::position::Position;
     use std::collections::HashSet;
 
-    fn pos(row: u8, col: u8) -> PositionId {
+    fn pos(row: usize, col: usize) -> PositionId {
         PositionId::from_position(Position::new(row, col))
     }
 

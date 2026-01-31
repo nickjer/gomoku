@@ -3,13 +3,13 @@ use std::ops::Neg;
 /// A direction vector representing a change in row and column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Offset {
-    row_delta: i8,
-    col_delta: i8,
+    row_delta: isize,
+    col_delta: isize,
 }
 
 impl Offset {
     #[must_use]
-    pub const fn new(row_delta: i8, col_delta: i8) -> Self {
+    pub const fn new(row_delta: isize, col_delta: isize) -> Self {
         Self {
             row_delta,
             col_delta,
@@ -17,12 +17,12 @@ impl Offset {
     }
 
     #[must_use]
-    pub const fn row_delta(&self) -> i8 {
+    pub const fn row_delta(&self) -> isize {
         self.row_delta
     }
 
     #[must_use]
-    pub const fn col_delta(&self) -> i8 {
+    pub const fn col_delta(&self) -> isize {
         self.col_delta
     }
 }

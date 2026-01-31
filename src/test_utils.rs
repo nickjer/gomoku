@@ -39,7 +39,7 @@ impl ScriptedStrategy {
         }
     }
 
-    pub fn with_positions(label: impl Into<String>, positions: &[(u8, u8)]) -> Self {
+    pub fn with_positions(label: impl Into<String>, positions: &[(usize, usize)]) -> Self {
         let moves = positions
             .iter()
             .map(|&(row, col)| PositionId::from_position(Position::new(row, col)))

@@ -1,7 +1,5 @@
 use crate::position_id::PositionId;
 
-const BOARD_SIZE: usize = 225;
-
 /// A map from board positions to values, indexed by `PositionId`.
 #[derive(Debug, Clone)]
 pub struct PositionMap<T> {
@@ -11,7 +9,7 @@ pub struct PositionMap<T> {
 impl<T: Clone> PositionMap<T> {
     pub fn new(value: T) -> Self {
         Self {
-            data: vec![value; BOARD_SIZE],
+            data: vec![value; PositionId::COUNT],
         }
     }
 }

@@ -1,33 +1,36 @@
 use crate::offset::Offset;
 use crate::position::Position;
 
-const BOARD_WIDTH: u8 = 15;
-const BOARD_SIZE: u8 = BOARD_WIDTH * BOARD_WIDTH;
-
 /// A board position represented as a single index (0-224).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PositionId {
-    index: u8,
+    index: usize,
 }
 
 impl PositionId {
-    const fn new(index: u8) -> Self {
+    /// Board width (15).
+    pub const WIDTH: usize = 15;
+
+    /// Total number of board positions (15 × 15 = 225).
+    pub const COUNT: usize = Self::WIDTH.checked_mul(Self::WIDTH).unwrap();
+
+    const fn new(index: usize) -> Self {
         Self { index }
     }
 
     #[must_use]
     pub const fn from_position(position: Position) -> Self {
-        Self::new(position.row() * BOARD_WIDTH + position.col())
+        Self::new(position.row() * Self::WIDTH + position.col())
     }
 
     #[must_use]
-    pub const fn row(self) -> u8 {
-        self.index / BOARD_WIDTH
+    pub const fn row(self) -> usize {
+        self.index / Self::WIDTH
     }
 
     #[must_use]
-    pub const fn col(self) -> u8 {
-        self.index % BOARD_WIDTH
+    pub const fn col(self) -> usize {
+        self.index % Self::WIDTH
     }
 
     #[must_use]
@@ -37,7 +40,7 @@ impl PositionId {
 
     #[must_use]
     pub const fn center() -> Self {
-        Self::new(BOARD_SIZE / 2)
+        Self::new(Self::COUNT / 2)
     }
 
     /// Returns a new position offset by the given delta, or `None` if out of bounds.
@@ -50,12 +53,12 @@ impl PositionId {
         let new_row = self.row().checked_add_signed(offset.row_delta())?;
         let new_col = self.col().checked_add_signed(offset.col_delta())?;
 
-        if new_row >= BOARD_WIDTH || new_col >= BOARD_WIDTH {
+        if new_row >= Self::WIDTH || new_col >= Self::WIDTH {
             return None;
         }
 
         let new_index = new_row
-            .checked_mul(BOARD_WIDTH)
+            .checked_mul(Self::WIDTH)
             .and_then(|i| i.checked_add(new_col))
             .expect("position index overflow");
         Some(Self::new(new_index))
@@ -70,7 +73,7 @@ impl PositionId {
     }
 
     pub fn iter() -> impl Iterator<Item = Self> {
-        (0..BOARD_SIZE).map(Self::new)
+        (0..Self::COUNT).map(Self::new)
     }
 
     pub fn map<T, F>(f: F) -> Vec<T>
@@ -86,11 +89,11 @@ impl PositionId {
     ///
     /// Panics if the position index overflows.
     pub fn rows() -> impl Iterator<Item = Vec<Self>> {
-        (0..BOARD_WIDTH).map(|row| {
-            (0..BOARD_WIDTH)
+        (0..Self::WIDTH).map(|row| {
+            (0..Self::WIDTH)
                 .map(move |col| {
                     let index = row
-                        .checked_mul(BOARD_WIDTH)
+                        .checked_mul(Self::WIDTH)
                         .and_then(|i| i.checked_add(col))
                         .expect("position index overflow");
                     Self::new(index)
@@ -102,7 +105,7 @@ impl PositionId {
 
 impl From<PositionId> for usize {
     fn from(position_id: PositionId) -> Self {
-        usize::from(position_id.index)
+        position_id.index
     }
 }
 
@@ -110,7 +113,7 @@ impl From<PositionId> for usize {
 mod tests {
     use super::*;
 
-    fn pos(row: u8, col: u8) -> PositionId {
+    fn pos(row: usize, col: usize) -> PositionId {
         PositionId::from_position(Position::new(row, col))
     }
 
