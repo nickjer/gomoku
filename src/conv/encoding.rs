@@ -3,6 +3,9 @@ use crate::position_id::PositionId;
 use crate::position_map::PositionSliceMut;
 use crate::stone::Stone;
 
+/// Number of input channels for board encoding (own stones, opponent stones).
+pub const INPUT_CHANNELS: usize = 2;
+
 /// Encodes the board from the perspective of the current player.
 ///
 /// Returns a flat array of length `2 * PositionId::COUNT` containing:
@@ -10,10 +13,10 @@ use crate::stone::Stone;
 /// - Channel 1: Opponent's stones (1.0 where present, 0.0 elsewhere)
 ///
 /// Layout: `[own_channel..., opponent_channel...]`
-fn encode_board(board: &Board, current_stone: Stone) -> Vec<f32> {
+pub fn encode_board(board: &Board, current_stone: Stone) -> Vec<f32> {
     debug_assert_ne!(current_stone, Stone::Empty, "current_stone cannot be Empty");
 
-    let mut encoding = vec![0.0f32; 2 * PositionId::COUNT];
+    let mut encoding = vec![0.0f32; INPUT_CHANNELS * PositionId::COUNT];
     let (own_data, opponent_data) = encoding.split_at_mut(PositionId::COUNT);
     let mut own_channel = PositionSliceMut::new(own_data);
     let mut opponent_channel = PositionSliceMut::new(opponent_data);
@@ -57,7 +60,7 @@ mod tests {
 
         let encoding = encode_board(&board, Stone::Black);
 
-        assert_eq!(encoding.len(), 2 * PositionId::COUNT);
+        assert_eq!(encoding.len(), INPUT_CHANNELS * PositionId::COUNT);
         assert!(encoding.iter().all(|&v| v == 0.0));
     }
 

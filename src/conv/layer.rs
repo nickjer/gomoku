@@ -66,7 +66,7 @@ pub fn conv2d<const IN_C: usize, const OUT_C: usize, const K: usize>(
 }
 
 /// Applies `ReLU` activation in-place: `x = max(0, x)`.
-fn relu_inplace(data: &mut [f32]) {
+pub fn relu_inplace(data: &mut [f32]) {
     for val in data.iter_mut() {
         *val = val.max(0.0);
     }

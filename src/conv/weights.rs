@@ -4,6 +4,8 @@ use crate::evolution::crossover::{Crossover, uniform_crossover};
 use crate::evolution::genes::EvolvableGenes;
 use crate::evolution::mutation::{Mutation, gaussian_mutate};
 
+use super::encoding::INPUT_CHANNELS;
+
 /// Weights for a convolutional neural network with const-generic architecture.
 ///
 /// # Type Parameters
@@ -22,11 +24,8 @@ pub struct ConvWeights<const K: usize, const C: usize, const L: usize, const R: 
 }
 
 impl<const K: usize, const C: usize, const L: usize, const R: usize> ConvWeights<K, C, L, R> {
-    /// Number of input channels (own stones, opponent stones).
-    pub const INPUT_CHANNELS: usize = 2;
-
     // First conv layer: INPUT_CHANNELS -> C, K×K kernel
-    const FIRST_CONV_WEIGHTS: usize = Self::INPUT_CHANNELS * C * K * K;
+    const FIRST_CONV_WEIGHTS: usize = INPUT_CHANNELS * C * K * K;
     const FIRST_CONV_BIAS: usize = C;
     const FIRST_CONV_TOTAL: usize = Self::FIRST_CONV_WEIGHTS + Self::FIRST_CONV_BIAS;
 
@@ -66,7 +65,7 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> ConvWeights
         let mut data = Vec::with_capacity(Self::TOTAL);
 
         // First conv: He init with n_in = INPUT_CHANNELS * K * K
-        let first_std = he_std(Self::INPUT_CHANNELS * K * K);
+        let first_std = he_std(INPUT_CHANNELS * K * K);
         data.extend((0..Self::FIRST_CONV_WEIGHTS).map(|_| rng.f32_normal(0.0, first_std)));
         data.resize(data.len() + Self::FIRST_CONV_BIAS, 0.0); // Biases initialized to zero
 

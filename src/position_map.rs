@@ -39,6 +39,14 @@ impl<T> std::ops::IndexMut<PositionId> for PositionMap<T> {
     }
 }
 
+impl<T> PositionMap<T> {
+    /// Returns a borrowed view of this map as a `PositionSlice`.
+    #[must_use]
+    pub fn as_position_slice(&self) -> PositionSlice<'_, T> {
+        PositionSlice::new(&self.data)
+    }
+}
+
 impl<T: Copy + Default> PositionMap<T> {
     /// Returns a new map with positions transformed.
     ///
