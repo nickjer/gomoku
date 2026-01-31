@@ -30,7 +30,7 @@ pub fn conv2d<const IN_C: usize, const OUT_C: usize, const K: usize>(
     );
     assert_eq!(bias.len(), OUT_C, "bias length mismatch");
 
-    let pad = (K / 2) as isize;
+    let pad = isize::try_from(K / 2).expect("kernel size too large");
     let mut output = vec![0.0f32; OUT_C * PositionId::COUNT];
 
     for out_ch in 0..OUT_C {
@@ -46,7 +46,9 @@ pub fn conv2d<const IN_C: usize, const OUT_C: usize, const K: usize>(
 
                 for kr in 0..K {
                     for kc in 0..K {
-                        let offset = Offset::new((kr as isize) - pad, (kc as isize) - pad);
+                        let row_offset = isize::try_from(kr).expect("kernel size too large") - pad;
+                        let col_offset = isize::try_from(kc).expect("kernel size too large") - pad;
+                        let offset = Offset::new(row_offset, col_offset);
 
                         if let Some(in_pos) = pos.from_offset(offset) {
                             let w_idx = out_ch * IN_C * K * K + in_ch * K * K + kr * K + kc;
@@ -63,7 +65,7 @@ pub fn conv2d<const IN_C: usize, const OUT_C: usize, const K: usize>(
     output
 }
 
-/// Applies ReLU activation in-place: `x = max(0, x)`.
+/// Applies `ReLU` activation in-place: `x = max(0, x)`.
 fn relu_inplace(data: &mut [f32]) {
     for val in data.iter_mut() {
         *val = val.max(0.0);

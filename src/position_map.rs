@@ -61,7 +61,7 @@ impl<T: Copy + std::ops::AddAssign> PositionMap<T> {
 }
 
 /// A borrowed view of position-indexed data.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct PositionSlice<'a, T> {
     data: &'a [T],
 }

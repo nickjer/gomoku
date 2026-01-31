@@ -47,6 +47,10 @@ impl PositionId {
     ///
     /// Uses delta arithmetic to avoid division: `new_index = index + row_delta * WIDTH + col_delta`.
     /// Only requires modulo to check column bounds (detects wraparound).
+    ///
+    /// # Panics
+    ///
+    /// Panics if board width exceeds `isize::MAX` or if delta arithmetic overflows.
     #[must_use]
     pub fn from_offset(self, offset: Offset) -> Option<Self> {
         // Check column bounds to detect wraparound (requires modulo, but no division)
@@ -57,9 +61,10 @@ impl PositionId {
         }
 
         // Compute new index using delta formula (avoids row division)
+        let width_signed = isize::try_from(Self::WIDTH).expect("board width too large");
         let row_delta_scaled = offset
             .row_delta()
-            .checked_mul(Self::WIDTH as isize)
+            .checked_mul(width_signed)
             .expect("from_offset: row delta overflow");
         let delta = row_delta_scaled
             .checked_add(offset.col_delta())
