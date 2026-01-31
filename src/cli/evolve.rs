@@ -81,9 +81,9 @@ pub fn run_evolve(args: &EvolveArgs) -> Result<()> {
     let evolver = Evolver::new()
         .generations(args.generations)
         .elitism(args.elitism)
-        .crossover(args.crossover.into())
+        .crossover(args.crossover.clone().into_crossover())
         .crossover_rate(args.crossover_rate)
-        .mutation(args.mutation.into())
+        .mutation(args.mutation.clone().into_mutation())
         .mutation_rate(args.mutation_rate)
         .tournament(Swiss.into())
         .game(Freestyle.into());

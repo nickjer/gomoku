@@ -13,6 +13,7 @@ postcard = { version = "1", features = ["alloc"] }
 clap = { version = "4", features = ["derive"] }
 enum_dispatch = "0.3"
 fastrand = "2"
+fastrand-contrib = "0.1"
 itertools = "0.14"
 ratatui = "0.30"
 fixedbitset = "0.5"

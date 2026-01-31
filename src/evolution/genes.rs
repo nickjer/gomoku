@@ -19,6 +19,9 @@ impl EvolvableGenes for Vec<Gene> {
         match crossover {
             Crossover::Order => order_crossover(self, other, rng),
             Crossover::Pmx => pmx_crossover(self, other, rng),
+            Crossover::Uniform => {
+                panic!("Uniform crossover is not supported for permutation genes")
+            }
         }
     }
 
@@ -27,6 +30,9 @@ impl EvolvableGenes for Vec<Gene> {
             Mutation::Swap => swap_mutate(self, rng),
             Mutation::Insert => insert_mutate(self, rng),
             Mutation::Inversion => inversion_mutate(self, rng),
+            Mutation::Gaussian { .. } => {
+                panic!("Gaussian mutation is not supported for permutation genes")
+            }
         }
     }
 }

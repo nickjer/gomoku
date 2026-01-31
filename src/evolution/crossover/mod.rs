@@ -1,17 +1,21 @@
 mod order;
 mod pmx;
+mod uniform;
 
 pub use order::order_crossover;
 pub use pmx::pmx_crossover;
+pub use uniform::uniform_crossover;
 
 /// Crossover method for genetic algorithms.
 #[derive(Debug, Default, Clone, Copy)]
 pub enum Crossover {
-    /// Order crossover (OX).
+    /// Order crossover (OX) for permutation genes.
     #[default]
     Order,
-    /// Partially Mapped Crossover (PMX).
+    /// Partially Mapped Crossover (PMX) for permutation genes.
     Pmx,
+    /// Uniform crossover for continuous genes.
+    Uniform,
 }
 
 #[cfg(test)]
