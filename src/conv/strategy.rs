@@ -27,8 +27,13 @@ pub struct ConvStrategy<const K: usize, const C: usize, const L: usize, const R:
     weights: ConvWeights<K, C, L, R>,
 }
 
-/// A small convolutional strategy: 3×3 kernels, 32 channels, 2 layers, no residual blocks.
+/// A tiny convolutional strategy: 3×3 kernels, 32 channels, 2 layers, no residual blocks.
+/// ~10K parameters.
 pub type ConvTiny = ConvStrategy<3, 32, 2, 0>;
+
+/// A small convolutional strategy: 3×3 kernels, 64 channels, 4 layers, no residual blocks.
+/// ~112K parameters.
+pub type ConvSmall = ConvStrategy<3, 64, 4, 0>;
 
 impl<const K: usize, const C: usize, const L: usize, const R: usize> ConvStrategy<K, C, L, R> {
     /// Forward pass through the network.

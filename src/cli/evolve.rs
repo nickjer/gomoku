@@ -9,7 +9,7 @@ use super::evolvable_strategies::{
 };
 use super::{PermutationCrossover, PermutationMutation, create_rng, setup_logging};
 use crate::cluster::strategy::{NN1, NN2, NN3, NN4};
-use crate::conv::ConvTiny;
+use crate::conv::{ConvSmall, ConvTiny};
 use crate::evolution::crossover::Crossover;
 use crate::evolution::mutation::Mutation;
 use crate::evolution::{Evolver, Population};
@@ -28,8 +28,10 @@ pub enum EvolveCommand {
     Nn3(PermutationArgs),
     /// Evolve NN4 strategies (~100,000 fingerprints)
     Nn4(PermutationArgs),
-    /// Evolve `ConvTiny` strategies (CNN with 3x3 kernels, 32 channels)
-    ConvTiny(ConvTinyArgs),
+    /// Evolve `ConvTiny` strategies (CNN with 3x3 kernels, 32 channels, ~10K params)
+    ConvTiny(ConvArgs),
+    /// Evolve `ConvSmall` strategies (CNN with 3x3 kernels, 64 channels, ~112K params)
+    ConvSmall(ConvArgs),
 }
 
 /// Common evolution parameters shared by all strategies.
@@ -87,9 +89,9 @@ pub struct PermutationArgs {
     pub mutation: PermutationMutation,
 }
 
-/// Arguments for evolving `ConvTiny` strategies.
+/// Arguments for evolving convolutional strategies (`ConvTiny`, `ConvSmall`, etc.).
 #[derive(Debug, Args)]
-pub struct ConvTinyArgs {
+pub struct ConvArgs {
     #[command(flatten)]
     pub common: CommonArgs,
 
@@ -110,7 +112,12 @@ pub fn run_evolve(cmd: &EvolveCommand) -> Result<()> {
         EvolveCommand::Nn2(args) => run_permutation::<NN2>(args, "Nn2", extract_nn2, wrap_nn2),
         EvolveCommand::Nn3(args) => run_permutation::<NN3>(args, "Nn3", extract_nn3, wrap_nn3),
         EvolveCommand::Nn4(args) => run_permutation::<NN4>(args, "Nn4", extract_nn4, wrap_nn4),
-        EvolveCommand::ConvTiny(args) => run_conv_tiny(args),
+        EvolveCommand::ConvTiny(args) => {
+            run_conv::<ConvTiny>(args, "ConvTiny", extract_conv_tiny, wrap_conv_tiny)
+        }
+        EvolveCommand::ConvSmall(args) => {
+            run_conv::<ConvSmall>(args, "ConvSmall", extract_conv_small, wrap_conv_small)
+        }
     }
 }
 
@@ -140,13 +147,18 @@ fn run_permutation<S: EvolvableStrategy>(
     Ok(())
 }
 
-fn run_conv_tiny(args: &ConvTinyArgs) -> Result<()> {
+fn run_conv<S: EvolvableStrategy>(
+    args: &ConvArgs,
+    type_name: &str,
+    extract: fn(EvolvableStrategies) -> Result<Vec<S>>,
+    wrap: fn(Vec<S>) -> EvolvableStrategies,
+) -> Result<()> {
     setup_logging(args.common.log_level.as_deref())?;
     let mut rng = create_rng(args.common.seed);
 
-    let strategies = load_or_generate(&args.common, extract_conv_tiny, &mut rng)?;
+    let strategies = load_or_generate(&args.common, extract, &mut rng)?;
     info!(
-        strategy_type = "ConvTiny",
+        strategy_type = type_name,
         population = strategies.len(),
         "Starting evolution"
     );
@@ -156,15 +168,10 @@ fn run_conv_tiny(args: &ConvTinyArgs) -> Result<()> {
         Crossover::Uniform,
         Mutation::Gaussian { sigma: args.sigma },
     );
-    let population: Population<ConvTiny> = evolver.evolve(strategies, &mut rng);
+    let population: Population<S> = evolver.evolve(strategies, &mut rng);
     info!(generation = population.generation(), "Evolution complete");
 
-    save_strategies_to_directory(
-        &args.common.output,
-        &EvolvableStrategies::ConvTiny {
-            strategies: population.into_strategies(),
-        },
-    )?;
+    save_strategies_to_directory(&args.common.output, &wrap(population.into_strategies()))?;
     info!(path = %args.common.output.display(), "Saved strategies");
 
     Ok(())
@@ -242,6 +249,13 @@ fn extract_conv_tiny(strategies: EvolvableStrategies) -> Result<Vec<ConvTiny>> {
     }
 }
 
+fn extract_conv_small(strategies: EvolvableStrategies) -> Result<Vec<ConvSmall>> {
+    match strategies {
+        EvolvableStrategies::ConvSmall { strategies } => Ok(strategies),
+        _ => bail!("Expected ConvSmall strategies, found different type"),
+    }
+}
+
 // Wrap functions for each NN strategy type
 fn wrap_nn1(strategies: Vec<NN1>) -> EvolvableStrategies {
     EvolvableStrategies::Nn1 { strategies }
@@ -257,4 +271,12 @@ fn wrap_nn3(strategies: Vec<NN3>) -> EvolvableStrategies {
 
 fn wrap_nn4(strategies: Vec<NN4>) -> EvolvableStrategies {
     EvolvableStrategies::Nn4 { strategies }
+}
+
+fn wrap_conv_tiny(strategies: Vec<ConvTiny>) -> EvolvableStrategies {
+    EvolvableStrategies::ConvTiny { strategies }
+}
+
+fn wrap_conv_small(strategies: Vec<ConvSmall>) -> EvolvableStrategies {
+    EvolvableStrategies::ConvSmall { strategies }
 }

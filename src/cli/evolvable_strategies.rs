@@ -5,7 +5,7 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::cluster::strategy::{NN1, NN2, NN3, NN4};
-use crate::conv::ConvTiny;
+use crate::conv::{ConvSmall, ConvTiny};
 use crate::gene::Gene;
 use crate::strategy::{EvolvableStrategy, Strategy};
 
@@ -17,6 +17,7 @@ pub enum StrategyData {
     Nn3 { genes: Vec<Gene> },
     Nn4 { genes: Vec<Gene> },
     ConvTiny { genes: Vec<f32> },
+    ConvSmall { genes: Vec<f32> },
 }
 
 /// A homogeneous collection of strategies that can be evolved together.
@@ -27,6 +28,7 @@ pub enum EvolvableStrategies {
     Nn3 { strategies: Vec<NN3> },
     Nn4 { strategies: Vec<NN4> },
     ConvTiny { strategies: Vec<ConvTiny> },
+    ConvSmall { strategies: Vec<ConvSmall> },
 }
 
 /// Saves strategies to a directory as individual binary files.
@@ -55,6 +57,9 @@ pub fn save_strategies_to_directory(dir: &Path, strategies: &EvolvableStrategies
         }
         EvolvableStrategies::ConvTiny { strategies } => {
             save_each(dir, strategies, |genes| StrategyData::ConvTiny { genes })
+        }
+        EvolvableStrategies::ConvSmall { strategies } => {
+            save_each(dir, strategies, |genes| StrategyData::ConvSmall { genes })
         }
     }
 }
@@ -95,6 +100,7 @@ pub fn load_strategy_from_file(path: &Path) -> Result<Box<dyn Strategy>> {
         StrategyData::Nn3 { genes } => Box::new(NN3::from_genes(label, genes)),
         StrategyData::Nn4 { genes } => Box::new(NN4::from_genes(label, genes)),
         StrategyData::ConvTiny { genes } => Box::new(ConvTiny::from_genes(label, genes.into())),
+        StrategyData::ConvSmall { genes } => Box::new(ConvSmall::from_genes(label, genes.into())),
     })
 }
 
@@ -193,6 +199,15 @@ fn build_strategies(loaded: Vec<(String, StrategyData)>) -> Result<EvolvableStra
                 .into_iter()
                 .map(|(label, data)| match data {
                     StrategyData::ConvTiny { genes } => ConvTiny::from_genes(label, genes.into()),
+                    _ => unreachable!(),
+                })
+                .collect(),
+        }),
+        StrategyData::ConvSmall { .. } => Ok(EvolvableStrategies::ConvSmall {
+            strategies: loaded
+                .into_iter()
+                .map(|(label, data)| match data {
+                    StrategyData::ConvSmall { genes } => ConvSmall::from_genes(label, genes.into()),
                     _ => unreachable!(),
                 })
                 .collect(),
