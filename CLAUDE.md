@@ -36,6 +36,7 @@ Fingerprints encode local board patterns as `NeighborCounts` tuples of (player, 
 Strategies implement the `Strategy` trait. Evolvable strategies additionally implement `EvolvableStrategy` with gene manipulation methods.
 
 - **Fingerprint strategies (NN1-NN4)**: Select moves based on priority ordering of local patterns
+- **Conv strategies (ConvTiny, ConvSmall)**: CNN-based policy networks with 3×3 kernels
 - **InteractiveStrategy**: TUI-based human input, generic over `Backend` for testability
 
 Move selection for fingerprint-based strategies (NN1-NN4):
@@ -43,6 +44,13 @@ Move selection for fingerprint-based strategies (NN1-NN4):
 2. Find fingerprint's index in the gene list (priority)
 3. Select position with highest priority (lowest index)
 4. Break ties randomly
+
+Move selection for conv strategies:
+1. Encode board as 2-channel tensor (own stones, opponent stones)
+2. Apply random D8 transform for data augmentation
+3. Forward pass through CNN layers
+4. Select position with highest policy output (reservoir sampling for ties)
+5. Apply inverse transform to get original coordinates
 
 ### Game
 The `Game` enum represents Gomoku rule variants using `enum_dispatch`:
@@ -72,26 +80,43 @@ The `Evolver` orchestrates the genetic algorithm. Call `evolve(strategies, rng)`
 
 **Subcommands:** `evolve`, `play`, `interactive`
 
-```bash
-# Generate and evolve random strategies (saves to directory)
-cargo run --release -- evolve -o tmp/output nn4 16
+The `evolve` command has strategy-type subcommands: `nn1`, `nn2`, `nn3`, `nn4`, `conv-tiny`, `conv-small`.
 
-# Continue from saved strategies
-cargo run --release -- evolve -i tmp/output -o tmp/output2 -g 50
+```bash
+# Generate and evolve 16 random NN4 strategies for 10 generations
+cargo run --release -- evolve nn4 -p 16 -o tmp/output -g 10
+
+# Evolve ConvSmall CNN strategies
+cargo run --release -- evolve conv-small -p 8 -o tmp/output -g 20 --seed 42
+
+# Continue evolving from saved strategies
+cargo run --release -- evolve nn4 -i tmp/output -o tmp/output2 -g 50
 
 # Play a game between two strategies
-cargo run --release -- play tmp/output/01_*.bin tmp/output/02_*.bin
+cargo run --release -- play tmp/output/1_*.bin tmp/output/2_*.bin
 
 # Play interactively against a strategy (TUI)
-cargo run --release -- interactive tmp/output/01_*.bin
-cargo run --release -- interactive tmp/output/01_*.bin --play-as white
+cargo run --release -- interactive tmp/output/1_*.bin
+cargo run --release -- interactive tmp/output/1_*.bin --play-as white
 ```
 
 **Interactive controls:** Arrow keys/hjkl to move cursor, Enter/Space to place stone, q/Esc to quit.
 
 **Output format:** Each strategy is saved as an individual binary file `{rank}_{label}.bin` using postcard serialization.
 
-**Evolve options:** `-o/--output` (required, directory), `-i/--input` (directory), `-g/--generations` [10], `-e/--elitism` [2], `-c/--crossover` (order/pmx) [order], `--crossover-rate` [0.8], `-m/--mutation` (swap/insert/inversion) [swap], `--mutation-rate` [0.1], `--seed`, `-l/--log-level` (error/warn/info/debug/trace).
+**Evolve options:**
+- `-p/--population` (required without `-i`): Number of random strategies to generate
+- `-o/--output` (required): Output directory for evolved strategies
+- `-i/--input`: Load strategies from directory (skips random generation)
+- `-g/--generations` [10]: Number of generations to evolve
+- `-e/--elitism` [2]: Number of top performers preserved each generation
+- `-c/--crossover` (order/pmx) [order]: Crossover operator (fingerprint strategies only)
+- `--crossover-rate` [0.8]: Crossover probability
+- `-m/--mutation` (swap/insert/inversion) [swap]: Mutation operator (fingerprint strategies only)
+- `--mutation-rate` [0.1]: Mutation probability
+- `--sigma` [0.01]: Gaussian mutation sigma (conv strategies only)
+- `--seed`: RNG seed for reproducibility
+- `-l/--log-level`: Log level (error/warn/info/debug/trace)
 
 ## Code Style
 
@@ -130,3 +155,29 @@ Struct implementations must follow this order:
 - Behavior-based test names describing what is verified
 - Deterministic RNG seeding for reproducible tests
 - Use `cargo llvm-cov` for test coverage
+
+## Profiling
+
+Use `perf` for CPU profiling on Linux. The release profile includes debug symbols (`debug = true`).
+
+```bash
+# Record profile data (use tmp/ directory for output)
+perf record -o tmp/perf.data -F 1000 -- ./target/release/gomoku evolve conv-small -p 4 -o tmp/profile -g 1 --seed 42
+
+# View function-level breakdown
+perf report -i tmp/perf.data --stdio -g none --percent-limit=0.5
+
+# View instruction-level hotspots
+perf annotate -i tmp/perf.data --stdio -s 'function_name' | grep -E '^\s+[0-9]+\.[0-9]+' | sort -rn | head -25
+
+# Check for SIMD instructions (look for vaddps, vmulps, vfma*, ymm/zmm registers)
+perf annotate -i tmp/perf.data --stdio | grep -E 'vaddps|vmulps|vfma|ymm|zmm'
+```
+
+For flamegraphs, install and use `cargo-flamegraph`:
+```bash
+cargo install flamegraph
+cargo flamegraph --release -o tmp/flamegraph.svg -- evolve conv-small -p 4 -o tmp/profile -g 1
+```
+
+**Key optimization insight:** The conv layers use im2col with a manually unrolled dot product to enable SIMD vectorization. The unrolled accumulator pattern (`sum0`, `sum1`, ..., `sum7`) allows LLVM to generate parallel multiply-add instructions.
