@@ -1,3 +1,5 @@
+use tracing::instrument;
+
 use crate::board::Board;
 use crate::cache_id::CacheId;
 use crate::cache_repository::CacheRepository;
@@ -69,6 +71,7 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> Strategy
         &[]
     }
 
+    #[instrument(level = "trace", skip_all)]
     fn choose_move(
         &self,
         current_stone: Stone,

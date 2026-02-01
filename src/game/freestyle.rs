@@ -1,3 +1,5 @@
+use tracing::instrument;
+
 use crate::board::Board;
 use crate::cache_repository::CacheRepository;
 use crate::match_result::MatchResult;
@@ -17,6 +19,7 @@ impl Freestyle {
     }
 
     #[allow(clippy::unused_self)]
+    #[instrument(level = "debug", skip_all, fields(black = black_strategy.label(), white = white_strategy.label()))]
     fn run_internal(
         self,
         black_strategy: &dyn Strategy,

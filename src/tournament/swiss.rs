@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 
+use tracing::{debug_span, instrument};
+
 use crate::game::{Game, Play};
 use crate::outcome::Outcome;
 use crate::strategy::Strategy;
@@ -85,6 +87,7 @@ impl RunTournament for Swiss {
     /// Runs a Swiss tournament with the given strategies.
     ///
     /// Returns standings sorted by ranking (best first).
+    #[instrument(level = "debug", skip_all, fields(strategies = strategies.len(), rounds = total_rounds(strategies.len())))]
     fn run<S: Strategy>(
         &self,
         strategies: &[S],
@@ -93,7 +96,8 @@ impl RunTournament for Swiss {
     ) -> Vec<Standing> {
         let mut state = State::new(strategies.len());
 
-        for _ in 0..total_rounds(strategies.len()) {
+        for round in 1..=total_rounds(strategies.len()) {
+            let _span = debug_span!("round", number = round).entered();
             Self::play_round(&mut state, strategies, game, rng);
         }
 
