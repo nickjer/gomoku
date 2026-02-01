@@ -180,4 +180,4 @@ cargo install flamegraph
 cargo flamegraph --release -o tmp/flamegraph.svg -- evolve conv-small -p 4 -o tmp/profile -g 1
 ```
 
-**Key optimization insight:** The conv layers use im2col with a manually unrolled dot product to enable SIMD vectorization. The unrolled accumulator pattern (`sum0`, `sum1`, ..., `sum7`) allows LLVM to generate parallel multiply-add instructions.
+**Key optimization insight:** The conv layers use im2col with rank-1 updates for cache efficiency. Patches are gathered into `[patch_size][225]` layout, then accumulated via outer products with loop order `k -> out_ch -> pos` to keep each patch slice in cache across all output channels. Weights are stored in transposed `[patch_size][OUT_C]` layout to avoid runtime transposition.

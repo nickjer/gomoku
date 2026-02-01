@@ -18,6 +18,10 @@ use super::encoding::INPUT_CHANNELS;
 /// - First conv: 2 input channels → C channels, K×K kernel
 /// - L-1 hidden convs: C → C channels, K×K kernel
 /// - Final conv: C → 1 channel, 1×1 kernel (position scoring)
+///
+/// # Weight Layout
+/// Weights are stored in im2col-friendly `[patch_size][OUT_C]` layout, not standard
+/// `[OUT_C][patch_size]`. This avoids runtime transposition during convolution.
 #[derive(Debug, Clone)]
 pub struct ConvWeights<const K: usize, const C: usize, const L: usize, const R: usize> {
     data: Vec<f32>,
@@ -106,19 +110,19 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> ConvWeights
 
     // ===== Layer accessors =====
 
-    /// First conv layer weights: `[INPUT_CHANNELS * C * K * K]`
+    /// First conv layer weights in im2col layout: `[INPUT_CHANNELS * K * K][C]`.
     #[must_use]
     pub fn first_conv_weights(&self) -> &[f32] {
         &self.data[Self::FIRST_WEIGHTS_START..][..Self::FIRST_CONV_WEIGHTS]
     }
 
-    /// First conv layer biases: `[C]`
+    /// First conv layer biases: `[C]`.
     #[must_use]
     pub fn first_conv_bias(&self) -> &[f32] {
         &self.data[Self::FIRST_BIAS_START..][..Self::FIRST_CONV_BIAS]
     }
 
-    /// Hidden conv layer weights for layer `index` (0-indexed): `[C * C * K * K]`
+    /// Hidden conv layer weights in im2col layout: `[C * K * K][C]`.
     ///
     /// # Panics
     ///
@@ -130,7 +134,7 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> ConvWeights
         &self.data[start..][..Self::HIDDEN_CONV_WEIGHTS]
     }
 
-    /// Hidden conv layer biases for layer `index` (0-indexed): `[C]`
+    /// Hidden conv layer biases for layer `index` (0-indexed): `[C]`.
     ///
     /// # Panics
     ///
@@ -143,7 +147,7 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> ConvWeights
         &self.data[start..][..Self::HIDDEN_CONV_BIAS]
     }
 
-    /// Final conv layer weights: `[C]` (1×1 kernel, C -> 1)
+    /// Final conv layer weights in im2col layout: `[C][1]` (1×1 kernel, C -> 1).
     #[must_use]
     pub fn final_conv_weights(&self) -> &[f32] {
         &self.data[Self::FINAL_START..][..Self::FINAL_CONV_WEIGHTS]

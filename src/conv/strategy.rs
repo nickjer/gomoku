@@ -9,7 +9,7 @@ use crate::stone::Stone;
 use crate::strategy::{EvolvableStrategy, Strategy};
 
 use super::encoding::{INPUT_CHANNELS, encode_board};
-use super::layer::{conv2d, relu_inplace};
+use super::layer::{conv2d_im2col, relu_inplace};
 use super::select::select_best_position;
 use super::symmetry::D8Transform;
 use super::weights::ConvWeights;
@@ -41,29 +41,40 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> ConvStrateg
     /// Input: `[2 * PositionId::COUNT]` (two-channel board encoding)
     /// Output: `[PositionId::COUNT]` (policy logits for each position)
     fn forward(&self, input: &[f32]) -> Vec<f32> {
+        // Allocate patch buffer for im2col (reused across all layers)
+        // First layer needs INPUT_CHANNELS * K * K, hidden layers need C * K * K
+        const fn max(a: usize, b: usize) -> usize {
+            if a > b { a } else { b }
+        }
+        let patch_buffer_size = PositionId::COUNT * max(INPUT_CHANNELS, C) * K * K;
+        let mut patch_buffer = vec![0.0f32; patch_buffer_size];
+
         // First conv: INPUT_CHANNELS -> C channels
-        let mut x = conv2d::<INPUT_CHANNELS, C, K>(
+        let mut x = conv2d_im2col::<INPUT_CHANNELS, C, K>(
             input,
             self.weights.first_conv_weights(),
             self.weights.first_conv_bias(),
+            &mut patch_buffer,
         );
         relu_inplace(&mut x);
 
         // Hidden convs: C -> C channels
         for i in 0..(L - 1) {
-            x = conv2d::<C, C, K>(
+            x = conv2d_im2col::<C, C, K>(
                 &x,
                 self.weights.hidden_conv_weights(i),
                 self.weights.hidden_conv_bias(i),
+                &mut patch_buffer,
             );
             relu_inplace(&mut x);
         }
 
         // Final conv: C -> 1 channel (1×1 kernel)
-        conv2d::<C, 1, 1>(
+        conv2d_im2col::<C, 1, 1>(
             &x,
             self.weights.final_conv_weights(),
             &[self.weights.final_conv_bias()],
+            &mut patch_buffer,
         )
     }
 }
