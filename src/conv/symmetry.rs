@@ -3,7 +3,7 @@ use crate::position_id::PositionId;
 /// D8 symmetry group transformations for the board.
 ///
 /// The D8 group has 8 elements: 4 rotations and 4 reflections.
-/// These are used to average CNN outputs for equivariant move selection.
+/// Used for data augmentation during move selection (`AlphaGo` Zero style).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum D8Transform {
     Identity,
@@ -29,6 +29,12 @@ impl D8Transform {
         Self::FlipAntiDiagonal,
     ];
 
+    /// Returns a random D8 transformation.
+    #[must_use]
+    pub fn random(rng: &mut fastrand::Rng) -> Self {
+        Self::ALL[rng.usize(0..8)]
+    }
+
     /// Applies this transformation to a position.
     #[must_use]
     pub fn apply(self, pos: PositionId) -> PositionId {
@@ -44,25 +50,21 @@ impl D8Transform {
         }
     }
 
-    /// Returns the inverse transformation.
-    #[must_use]
-    pub const fn inverse(self) -> Self {
-        match self {
-            Self::Identity => Self::Identity,
-            Self::Rotate90 => Self::Rotate270,
-            Self::Rotate180 => Self::Rotate180,
-            Self::Rotate270 => Self::Rotate90,
-            Self::FlipH => Self::FlipH,
-            Self::FlipV => Self::FlipV,
-            Self::FlipDiagonal => Self::FlipDiagonal,
-            Self::FlipAntiDiagonal => Self::FlipAntiDiagonal,
-        }
-    }
-
-    /// Applies the inverse transformation to a position.
+    /// Applies the inverse transformation to a position directly.
+    ///
+    /// Flattened to avoid double dispatch through `inverse()` then `apply()`.
     #[must_use]
     pub fn apply_inverse(self, pos: PositionId) -> PositionId {
-        self.inverse().apply(pos)
+        match self {
+            Self::Identity => pos,
+            Self::Rotate90 => pos.transpose().flip_vertical(),
+            Self::Rotate180 => pos.invert(),
+            Self::Rotate270 => pos.transpose().flip_horizontal(),
+            Self::FlipH => pos.flip_horizontal(),
+            Self::FlipV => pos.flip_vertical(),
+            Self::FlipDiagonal => pos.transpose(),
+            Self::FlipAntiDiagonal => pos.transpose().invert(),
+        }
     }
 }
 
@@ -133,21 +135,6 @@ mod tests {
     }
 
     #[test]
-    fn flips_are_self_inverse() {
-        let self_inverse = [
-            D8Transform::Identity,
-            D8Transform::Rotate180,
-            D8Transform::FlipH,
-            D8Transform::FlipV,
-            D8Transform::FlipDiagonal,
-            D8Transform::FlipAntiDiagonal,
-        ];
-        for t in self_inverse {
-            assert_eq!(t.inverse(), t, "{:?} should be self-inverse", t);
-        }
-    }
-
-    #[test]
     fn center_is_fixed_by_all_transforms() {
         let center = PositionId::center();
         for t in D8Transform::ALL {
@@ -181,5 +168,26 @@ mod tests {
                 p.transpose().invert()
             );
         }
+    }
+
+    #[test]
+    fn random_returns_valid_transform() {
+        let mut rng = fastrand::Rng::with_seed(42);
+        for _ in 0..100 {
+            let t = D8Transform::random(&mut rng);
+            assert!(D8Transform::ALL.contains(&t));
+        }
+    }
+
+    #[test]
+    fn random_produces_variety() {
+        let mut rng = fastrand::Rng::with_seed(42);
+        let mut seen = [false; 8];
+        for _ in 0..1000 {
+            let t = D8Transform::random(&mut rng);
+            let idx = D8Transform::ALL.iter().position(|&x| x == t).unwrap();
+            seen[idx] = true;
+        }
+        assert!(seen.iter().all(|&x| x), "Should see all transforms");
     }
 }

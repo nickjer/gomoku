@@ -4,7 +4,7 @@ use crate::board::Board;
 use crate::cache_id::CacheId;
 use crate::cache_repository::CacheRepository;
 use crate::position_id::PositionId;
-use crate::position_map::{PositionMap, PositionSlice, PositionSliceMut};
+use crate::position_map::{PositionSlice, PositionSliceMut};
 use crate::stone::Stone;
 use crate::strategy::{EvolvableStrategy, Strategy};
 
@@ -81,29 +81,28 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> Strategy
     ) -> PositionId {
         let encoding = encode_board(board, current_stone);
 
-        // D8 symmetry averaging: run all 8 transforms and average the outputs
-        let mut policy_sum = PositionMap::new(0.0f32);
+        // Random D8 transform for data augmentation (AlphaGo Zero style)
+        let transform = D8Transform::random(rng);
 
-        for transform in D8Transform::ALL {
-            // Transform input encoding
-            let transformed_encoding = transform_encoding(&encoding, |pos| transform.apply(pos));
+        // Transform input encoding
+        let transformed_encoding = transform_encoding(&encoding, |pos| transform.apply(pos));
 
-            // Forward pass
-            let policy_vec = self.forward(&transformed_encoding);
-            let policy = PositionSlice::new(&policy_vec);
+        // Forward pass
+        let policy_vec = self.forward(&transformed_encoding);
 
-            // Accumulate with inverse transform (map output positions back to original)
-            for pos in PositionId::iter() {
-                policy_sum[transform.apply_inverse(pos)] += policy[pos];
-            }
-        }
+        // Transform empty positions to transformed space
+        let transformed_empty: Vec<PositionId> = board
+            .empty_position_ids()
+            .iter()
+            .map(|&pos| transform.apply(pos))
+            .collect();
 
-        // Select best position from averaged policy
-        select_best_position(
-            board.empty_position_ids(),
-            policy_sum.as_position_slice(),
-            rng,
-        )
+        // Select best position in transformed space
+        let transformed_pos =
+            select_best_position(&transformed_empty, PositionSlice::new(&policy_vec), rng);
+
+        // Map selected position back to original orientation
+        transform.apply_inverse(transformed_pos)
     }
 
     fn label(&self) -> &str {
@@ -268,5 +267,97 @@ mod tests {
         // After invert, first_pos maps to last_pos
         assert_eq!(result[PositionId::COUNT * 0 + usize::from(last_pos)], 1.0);
         assert_eq!(result[PositionId::COUNT * 1 + usize::from(last_pos)], 2.0);
+    }
+
+    mod transform_pipeline_tests {
+        use super::*;
+        use crate::position::Position;
+
+        fn pos(row: usize, col: usize) -> PositionId {
+            PositionId::from_position(Position::new(row, col))
+        }
+
+        #[test]
+        fn transform_then_inverse_returns_original_position() {
+            for transform in D8Transform::ALL {
+                for original_pos in PositionId::iter() {
+                    let transformed = transform.apply(original_pos);
+                    let back = transform.apply_inverse(transformed);
+                    assert_eq!(
+                        back, original_pos,
+                        "{transform:?}: {original_pos:?} -> {transformed:?} -> {back:?}"
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn selected_position_maps_back_to_valid_empty() {
+            let mut board = Board::new();
+            board.place(pos(7, 7), Stone::Black).unwrap();
+
+            let empty_positions = board.empty_position_ids();
+
+            for transform in D8Transform::ALL {
+                // Transform empty positions
+                let transformed_empty: Vec<PositionId> = empty_positions
+                    .iter()
+                    .map(|&p| transform.apply(p))
+                    .collect();
+
+                // Pick any transformed position
+                let transformed_pos = transformed_empty[0];
+
+                // Map back to original
+                let original_pos = transform.apply_inverse(transformed_pos);
+
+                assert!(
+                    empty_positions.contains(&original_pos),
+                    "{transform:?}: inverse of {transformed_pos:?} = {original_pos:?} not in empty"
+                );
+            }
+        }
+
+        #[test]
+        fn all_transforms_produce_valid_moves() {
+            let mut rng = fastrand::Rng::with_seed(42);
+            let strategy = TestStrategy::random("test", &mut rng);
+            let cache_repo = CacheRepository::new();
+            let board = Board::new();
+
+            // Test with many different seeds to cover different random transforms
+            for seed in 0..100 {
+                let mut rng = fastrand::Rng::with_seed(seed);
+                let chosen = strategy.choose_move(Stone::Black, &board, &cache_repo, &mut rng);
+
+                assert!(
+                    board.empty_position_ids().contains(&chosen),
+                    "seed {seed}: chosen {chosen:?} not in empty positions"
+                );
+            }
+        }
+
+        #[test]
+        fn transform_pipeline_preserves_best_position_semantics() {
+            // Create a board with a specific pattern
+            let mut board = Board::new();
+            board.place(pos(7, 7), Stone::Black).unwrap();
+
+            let mut rng = fastrand::Rng::with_seed(42);
+            let strategy = TestStrategy::random("test", &mut rng);
+            let cache_repo = CacheRepository::new();
+
+            // Run many times with different transforms
+            for seed in 0..50 {
+                let mut rng = fastrand::Rng::with_seed(seed);
+                let chosen = strategy.choose_move(Stone::Black, &board, &cache_repo, &mut rng);
+
+                // The chosen position must be empty
+                assert!(
+                    board.empty_position_ids().contains(&chosen),
+                    "seed {seed}: position {chosen:?} is not empty"
+                );
+            }
+        }
     }
 }
