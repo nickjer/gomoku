@@ -5,6 +5,7 @@ use crate::position_map::PositionMap;
 use crate::stone::Stone;
 
 /// Tracks neighbor counts for each position, updated as stones are placed.
+#[derive(Debug, Clone)]
 pub struct NeighborCountsCache {
     neighbor_cache: &'static NeighborCache,
     black_counts: PositionMap<NeighborCounts>,

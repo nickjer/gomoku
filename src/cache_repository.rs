@@ -7,6 +7,7 @@ use crate::position_id::PositionId;
 use crate::stone::Stone;
 
 /// Repository for lazily-activated fingerprint index caches.
+#[derive(Debug, Clone)]
 pub struct CacheRepository {
     nn1: Option<FingerprintNN1IndexCache>,
     nn2: Option<FingerprintNN2IndexCache>,

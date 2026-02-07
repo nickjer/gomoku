@@ -92,6 +92,6 @@ mod tests {
         let parent2 = vec![4.0, 5.0];
         let mut rng = fastrand::Rng::with_seed(42);
 
-        uniform_crossover(&parent1, &parent2, &mut rng);
+        let _ = uniform_crossover(&parent1, &parent2, &mut rng);
     }
 }

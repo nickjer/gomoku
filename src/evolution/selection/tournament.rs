@@ -86,12 +86,15 @@ impl RunSelection for Tournament {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::evolution::fitness_score::FitnessScore;
     use crate::test_utils::TestIndividual;
 
-    fn population(fitnesses: &[u32]) -> Vec<TestIndividual> {
+    fn population(fitnesses: &[f32]) -> Vec<TestIndividual> {
         fitnesses
             .iter()
-            .map(|&f| TestIndividual { fitness: f })
+            .map(|&fit| TestIndividual {
+                fitness: FitnessScore::new(fit),
+            })
             .collect()
     }
 
@@ -104,7 +107,7 @@ mod tests {
 
         #[test]
         fn returns_individual_from_population() {
-            let pop = population(&[10, 20, 30, 40, 50]);
+            let pop = population(&[10.0, 20.0, 30.0, 40.0, 50.0]);
             let mut rng = fastrand::Rng::with_seed(42);
 
             let result = selector(3).select(&pop, &mut rng);
@@ -114,17 +117,17 @@ mod tests {
 
         #[test]
         fn full_tournament_returns_best() {
-            let pop = population(&[100, 1, 2, 3, 4]);
+            let pop = population(&[100.0, 1.0, 2.0, 3.0, 4.0]);
             let mut rng = fastrand::Rng::with_seed(42);
 
             let result = selector(5).select(&pop, &mut rng);
 
-            assert_eq!(result.fitness(), 100);
+            assert_eq!(result.fitness(), FitnessScore::new(100.0));
         }
 
         #[test]
         fn deterministic_with_same_seed() {
-            let pop = population(&[10, 20, 30, 40, 50, 60, 70, 80]);
+            let pop = population(&[10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0]);
             let sel = selector(3);
 
             let results1: Vec<_> = {
@@ -145,7 +148,7 @@ mod tests {
 
         #[test]
         fn different_seeds_produce_different_results() {
-            let pop = population(&[10, 20, 30, 40, 50, 60, 70, 80]);
+            let pop = population(&[10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0]);
             let sel = selector(2);
 
             let results1: Vec<_> = {
@@ -166,21 +169,21 @@ mod tests {
 
         #[test]
         fn larger_tournament_increases_selection_pressure() {
-            let pop = population(&[10, 20, 30, 40, 50, 60, 70, 80, 90, 100]);
+            let pop = population(&[10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0]);
 
-            let small_avg: f64 = {
+            let small_avg: f32 = {
                 let mut rng = fastrand::Rng::with_seed(42);
-                let sum: u32 = (0..50)
-                    .map(|_| selector(2).select(&pop, &mut rng).fitness())
+                let sum: f32 = (0..50)
+                    .map(|_| selector(2).select(&pop, &mut rng).fitness().value())
                     .sum();
-                f64::from(sum) / 50.0
+                sum / 50.0
             };
-            let large_avg: f64 = {
+            let large_avg: f32 = {
                 let mut rng = fastrand::Rng::with_seed(42);
-                let sum: u32 = (0..50)
-                    .map(|_| selector(8).select(&pop, &mut rng).fitness())
+                let sum: f32 = (0..50)
+                    .map(|_| selector(8).select(&pop, &mut rng).fitness().value())
                     .sum();
-                f64::from(sum) / 50.0
+                sum / 50.0
             };
 
             assert!(large_avg > small_avg);
@@ -188,13 +191,13 @@ mod tests {
 
         #[test]
         fn may_miss_best_when_tournament_equals_population() {
-            let pop = population(&[100, 1, 1, 1, 1]);
+            let pop = population(&[100.0, 1.0, 1.0, 1.0, 1.0]);
             let sel = selector(5);
 
             let mut found_non_best = false;
             for seed in 0..1000 {
                 let mut rng = fastrand::Rng::with_seed(seed);
-                if sel.select(&pop, &mut rng).fitness() != 100 {
+                if sel.select(&pop, &mut rng).fitness() != FitnessScore::new(100.0) {
                     found_non_best = true;
                     break;
                 }
@@ -215,7 +218,7 @@ mod tests {
 
         #[test]
         fn returns_individual_from_population() {
-            let pop = population(&[10, 20, 30, 40, 50]);
+            let pop = population(&[10.0, 20.0, 30.0, 40.0, 50.0]);
             let mut rng = fastrand::Rng::with_seed(42);
 
             let result = selector(3).select(&pop, &mut rng);
@@ -225,17 +228,17 @@ mod tests {
 
         #[test]
         fn full_tournament_returns_best() {
-            let pop = population(&[100, 1, 2, 3, 4]);
+            let pop = population(&[100.0, 1.0, 2.0, 3.0, 4.0]);
             let mut rng = fastrand::Rng::with_seed(42);
 
             let result = selector(5).select(&pop, &mut rng);
 
-            assert_eq!(result.fitness(), 100);
+            assert_eq!(result.fitness(), FitnessScore::new(100.0));
         }
 
         #[test]
         fn deterministic_with_same_seed() {
-            let pop = population(&[10, 20, 30, 40, 50, 60, 70, 80]);
+            let pop = population(&[10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0]);
             let sel = selector(3);
 
             let results1: Vec<_> = {
@@ -256,7 +259,7 @@ mod tests {
 
         #[test]
         fn different_seeds_produce_different_results() {
-            let pop = population(&[10, 20, 30, 40, 50, 60, 70, 80]);
+            let pop = population(&[10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0]);
             let sel = selector(2);
 
             let results1: Vec<_> = {
@@ -277,21 +280,21 @@ mod tests {
 
         #[test]
         fn larger_tournament_increases_selection_pressure() {
-            let pop = population(&[10, 20, 30, 40, 50, 60, 70, 80, 90, 100]);
+            let pop = population(&[10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0]);
 
-            let small_avg: f64 = {
+            let small_avg: f32 = {
                 let mut rng = fastrand::Rng::with_seed(42);
-                let sum: u32 = (0..50)
-                    .map(|_| selector(2).select(&pop, &mut rng).fitness())
+                let sum: f32 = (0..50)
+                    .map(|_| selector(2).select(&pop, &mut rng).fitness().value())
                     .sum();
-                f64::from(sum) / 50.0
+                sum / 50.0
             };
-            let large_avg: f64 = {
+            let large_avg: f32 = {
                 let mut rng = fastrand::Rng::with_seed(42);
-                let sum: u32 = (0..50)
-                    .map(|_| selector(8).select(&pop, &mut rng).fitness())
+                let sum: f32 = (0..50)
+                    .map(|_| selector(8).select(&pop, &mut rng).fitness().value())
                     .sum();
-                f64::from(sum) / 50.0
+                sum / 50.0
             };
 
             assert!(large_avg > small_avg);
@@ -299,25 +302,28 @@ mod tests {
 
         #[test]
         fn always_finds_best_when_tournament_equals_population() {
-            let pop = population(&[100, 1, 1, 1, 1]);
+            let pop = population(&[100.0, 1.0, 1.0, 1.0, 1.0]);
             let sel = selector(5);
 
             for seed in 0..100 {
                 let mut rng = fastrand::Rng::with_seed(seed);
-                assert_eq!(sel.select(&pop, &mut rng).fitness(), 100);
+                assert_eq!(
+                    sel.select(&pop, &mut rng).fitness(),
+                    FitnessScore::new(100.0)
+                );
             }
         }
     }
 
     #[test]
     fn tournament_size_one_returns_random() {
-        let pop = population(&[10, 20, 30, 40, 50]);
+        let pop = population(&[10.0, 20.0, 30.0, 40.0, 50.0]);
         let sel = Tournament::new(1, TournamentMode::WithReplacement);
 
         let results: Vec<_> = (0..100)
             .map(|seed| {
                 let mut rng = fastrand::Rng::with_seed(seed);
-                sel.select(&pop, &mut rng).fitness()
+                sel.select(&pop, &mut rng).fitness().value().to_bits()
             })
             .collect();
 
@@ -338,7 +344,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "population size 2 is smaller than tournament size 5")]
     fn panics_when_population_smaller_than_tournament() {
-        let pop = population(&[10, 20]);
+        let pop = population(&[10.0, 20.0]);
         let sel = Tournament::new(5, TournamentMode::WithReplacement);
         let mut rng = fastrand::Rng::with_seed(42);
 

@@ -4,9 +4,11 @@ use enum_dispatch::enum_dispatch;
 
 pub use tournament::{Tournament, TournamentMode};
 
+use super::fitness_score::FitnessScore;
+
 /// Trait for items that can be selected based on fitness.
 pub trait HasFitness {
-    fn fitness(&self) -> u32;
+    fn fitness(&self) -> FitnessScore;
 }
 
 /// Trait for selection operations.

@@ -8,6 +8,7 @@ pub mod cluster;
 pub mod conv;
 pub mod evolution;
 pub mod game;
+pub mod game_state;
 pub mod gene;
 pub mod interactive_strategy;
 pub mod match_result;
@@ -21,6 +22,7 @@ pub mod position_map;
 pub mod simple;
 pub mod stone;
 pub mod strategy;
+pub mod threat;
 pub mod tournament;
 
 #[cfg(test)]

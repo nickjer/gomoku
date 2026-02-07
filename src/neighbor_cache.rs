@@ -6,6 +6,7 @@ use crate::position_id::PositionId;
 use crate::position_map::PositionMap;
 
 /// Pre-computed cache of valid neighbor positions for each board position.
+#[derive(Debug, Clone)]
 pub struct NeighborCache {
     data: PositionMap<Vec<PositionId>>,
 }

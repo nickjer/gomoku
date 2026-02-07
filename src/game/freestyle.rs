@@ -1,7 +1,6 @@
 use tracing::instrument;
 
-use crate::board::Board;
-use crate::cache_repository::CacheRepository;
+use crate::game_state::GameState;
 use crate::match_result::MatchResult;
 use crate::stone::Stone;
 use crate::strategy::Strategy;
@@ -26,42 +25,34 @@ impl Freestyle {
         white_strategy: &dyn Strategy,
         rng: &mut fastrand::Rng,
     ) -> MatchResult {
-        let mut cache_repo = CacheRepository::new();
+        let mut state = GameState::new();
+        state.activate_for(black_strategy);
+        state.activate_for(white_strategy);
 
-        // Activate cache dependencies for both strategies
-        for &dep in black_strategy.cache_dependencies() {
-            cache_repo.activate(dep);
-        }
-        for &dep in white_strategy.cache_dependencies() {
-            cache_repo.activate(dep);
-        }
-
-        let mut board = Board::new();
         let mut turn_count: u32 = 0;
 
-        while !board.is_finished() {
+        while !state.is_finished() {
             let (strategy, stone): (&dyn Strategy, Stone) = if turn_count.is_multiple_of(2) {
                 (black_strategy, Stone::Black)
             } else {
                 (white_strategy, Stone::White)
             };
 
-            let position_id = strategy.choose_move(stone, &board, &cache_repo, rng);
-            board
+            let position_id = strategy.choose_move(stone, &state, rng);
+            state
                 .place(position_id, stone)
                 .expect("strategy returned invalid move");
-            cache_repo.place(position_id, stone);
             turn_count += 1;
         }
 
-        let outcome = board.outcome().expect("game finished without outcome");
+        let outcome = state.outcome().expect("game finished without outcome");
 
         MatchResult::new(
             outcome,
             black_strategy.label().to_string(),
             white_strategy.label().to_string(),
             turn_count,
-            board.to_string(),
+            state.to_string(),
         )
     }
 }

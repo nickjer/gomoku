@@ -1,7 +1,6 @@
-use crate::board::Board;
 use crate::cache_id::CacheId;
-use crate::cache_repository::CacheRepository;
 use crate::evolution::EvolvableGenes;
+use crate::game_state::GameState;
 use crate::position_id::PositionId;
 use crate::stone::Stone;
 
@@ -14,8 +13,7 @@ pub trait Strategy {
     fn choose_move(
         &self,
         current_stone: Stone,
-        board: &Board,
-        cache_repo: &CacheRepository,
+        state: &GameState,
         rng: &mut fastrand::Rng,
     ) -> PositionId;
 

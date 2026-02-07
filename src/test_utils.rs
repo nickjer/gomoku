@@ -2,10 +2,10 @@
 
 use std::cell::Cell;
 
-use crate::board::Board;
 use crate::cache_id::CacheId;
-use crate::cache_repository::CacheRepository;
+use crate::evolution::fitness_score::FitnessScore;
 use crate::evolution::selection::HasFitness;
+use crate::game_state::GameState;
 use crate::gene::Gene;
 use crate::position::Position;
 use crate::position_id::PositionId;
@@ -14,11 +14,11 @@ use crate::strategy::{EvolvableStrategy, Strategy};
 
 /// A test individual with a fitness value for selection tests.
 pub struct TestIndividual {
-    pub fitness: u32,
+    pub fitness: FitnessScore,
 }
 
 impl HasFitness for TestIndividual {
-    fn fitness(&self) -> u32 {
+    fn fitness(&self) -> FitnessScore {
         self.fitness
     }
 }
@@ -92,8 +92,7 @@ impl Strategy for ScriptedStrategy {
     fn choose_move(
         &self,
         _current_stone: Stone,
-        _board: &Board,
-        _cache_repo: &CacheRepository,
+        _state: &GameState,
         _rng: &mut fastrand::Rng,
     ) -> PositionId {
         let idx = self.index.get();
@@ -164,8 +163,7 @@ impl Strategy for StubStrategy {
     fn choose_move(
         &self,
         _current_stone: Stone,
-        _board: &Board,
-        _cache_repo: &CacheRepository,
+        _state: &GameState,
         _rng: &mut fastrand::Rng,
     ) -> PositionId {
         panic!("StubStrategy::choose_move should not be called in tournament tests")
@@ -190,8 +188,7 @@ impl Strategy for FakeEvolvableStrategy {
     fn choose_move(
         &self,
         _current_stone: Stone,
-        _board: &Board,
-        _cache_repo: &CacheRepository,
+        _state: &GameState,
         _rng: &mut fastrand::Rng,
     ) -> PositionId {
         panic!("FakeEvolvableStrategy::choose_move should not be called")

@@ -1,13 +1,12 @@
 use std::marker::PhantomData;
 
-use crate::board::Board;
 use crate::cache_id::CacheId;
-use crate::cache_repository::CacheRepository;
 use crate::cluster::FingerprintIndexCache;
 use crate::cluster::fingerprint::{
     Fingerprint, FingerprintNN1, FingerprintNN2, FingerprintNN3, FingerprintNN4,
 };
 use crate::cluster::select_best_position;
+use crate::game_state::GameState;
 use crate::gene::Gene;
 use crate::position_id::PositionId;
 use crate::stone::Stone;
@@ -65,15 +64,14 @@ impl<F: Fingerprint> Strategy for FingerprintStrategy<F> {
     fn choose_move(
         &self,
         current_stone: Stone,
-        board: &Board,
-        cache_repo: &CacheRepository,
+        state: &GameState,
         rng: &mut fastrand::Rng,
     ) -> PositionId {
         let index_cache =
-            F::get_cache(cache_repo).expect("Strategy requires its fingerprint index cache");
+            F::get_cache(state.cache()).expect("Strategy requires its fingerprint index cache");
 
         select_best_position(
-            board.empty_position_ids(),
+            state.empty_position_ids(),
             &self.fingerprint_positions,
             |pos| index_cache.get(pos, current_stone),
             rng,
@@ -119,25 +117,10 @@ mod tests {
         priority
     }
 
-    struct TestContext {
-        cache_repo: CacheRepository,
-        rng: fastrand::Rng,
-    }
-
-    impl TestContext {
-        fn new<F: Fingerprint>() -> Self {
-            let mut cache_repo = CacheRepository::new();
-            cache_repo.activate(F::CACHE_ID);
-            Self {
-                cache_repo,
-                rng: fastrand::Rng::new(),
-            }
-        }
-
-        fn place(&mut self, board: &mut Board, position_id: PositionId, stone: Stone) {
-            board.place(position_id, stone).unwrap();
-            self.cache_repo.place(position_id, stone);
-        }
+    fn state_for(strategy: &dyn Strategy) -> GameState {
+        let mut state = GameState::new();
+        state.activate_for(strategy);
+        state
     }
 
     mod nn1_tests {
@@ -149,43 +132,43 @@ mod tests {
 
         #[test]
         fn choose_move_returns_empty_position() {
-            let mut ctx = TestContext::new::<FingerprintNN1>();
             let strategy = NN1::new("test", all_genes::<FingerprintNN1>());
-            let board = Board::new();
+            let state = state_for(&strategy);
+            let mut rng = fastrand::Rng::new();
 
-            let result = strategy.choose_move(Stone::Black, &board, &ctx.cache_repo, &mut ctx.rng);
+            let result = strategy.choose_move(Stone::Black, &state, &mut rng);
 
-            assert!(board.empty_position_ids().contains(&result));
+            assert!(state.empty_position_ids().contains(&result));
         }
 
         #[test]
         fn choose_move_prefers_higher_priority_fingerprint() {
-            let mut ctx = TestContext::new::<FingerprintNN1>();
             let all_empty = fp(0, 0, 4);
             let strategy = NN1::new(
                 "test",
                 genes_with_first::<FingerprintNN1>(all_empty.index()),
             );
-            let mut board = Board::new();
-            ctx.place(&mut board, PositionId::center(), Stone::Black);
+            let mut state = state_for(&strategy);
+            let mut rng = fastrand::Rng::new();
+            state.place(PositionId::center(), Stone::Black).unwrap();
 
-            let result = strategy.choose_move(Stone::White, &board, &ctx.cache_repo, &mut ctx.rng);
+            let result = strategy.choose_move(Stone::White, &state, &mut rng);
 
-            assert!(board.empty_position_ids().contains(&result));
+            assert!(state.empty_position_ids().contains(&result));
         }
 
         #[test]
         fn choose_move_prefers_self_neighbors_when_prioritized() {
-            let mut ctx = TestContext::new::<FingerprintNN1>();
             let self_neighbor = fp(1, 0, 3);
             let strategy = NN1::new(
                 "test",
                 genes_with_first::<FingerprintNN1>(self_neighbor.index()),
             );
-            let mut board = Board::new();
-            ctx.place(&mut board, PositionId::center(), Stone::Black);
+            let mut state = state_for(&strategy);
+            let mut rng = fastrand::Rng::new();
+            state.place(PositionId::center(), Stone::Black).unwrap();
 
-            let result = strategy.choose_move(Stone::Black, &board, &ctx.cache_repo, &mut ctx.rng);
+            let result = strategy.choose_move(Stone::Black, &state, &mut rng);
 
             let center_neighbors = [pos(6, 7), pos(8, 7), pos(7, 6), pos(7, 8)];
             assert!(center_neighbors.contains(&result));
@@ -193,18 +176,18 @@ mod tests {
 
         #[test]
         fn choose_move_prefers_edge_mixed_when_prioritized() {
-            let mut ctx = TestContext::new::<FingerprintNN1>();
             let edge_mixed = fp(1, 1, 1);
             let strategy = NN1::new(
                 "test",
                 genes_with_first::<FingerprintNN1>(edge_mixed.index()),
             );
-            let mut board = Board::new();
+            let mut state = state_for(&strategy);
+            let mut rng = fastrand::Rng::new();
 
-            ctx.place(&mut board, pos(0, 0), Stone::Black);
-            ctx.place(&mut board, pos(2, 0), Stone::White);
+            state.place(pos(0, 0), Stone::Black).unwrap();
+            state.place(pos(2, 0), Stone::White).unwrap();
 
-            let result = strategy.choose_move(Stone::Black, &board, &ctx.cache_repo, &mut ctx.rng);
+            let result = strategy.choose_move(Stone::Black, &state, &mut rng);
 
             assert_eq!(result, pos(1, 0));
         }
@@ -272,31 +255,31 @@ mod tests {
 
         #[test]
         fn choose_move_returns_empty_position() {
-            let mut ctx = TestContext::new::<FingerprintNN2>();
             let strategy = NN2::new("test", all_genes::<FingerprintNN2>());
-            let board = Board::new();
+            let state = state_for(&strategy);
+            let mut rng = fastrand::Rng::new();
 
-            let result = strategy.choose_move(Stone::Black, &board, &ctx.cache_repo, &mut ctx.rng);
+            let result = strategy.choose_move(Stone::Black, &state, &mut rng);
 
-            assert!(board.empty_position_ids().contains(&result));
+            assert!(state.empty_position_ids().contains(&result));
         }
 
         #[test]
         fn choose_move_prefers_edge_mixed_when_prioritized() {
-            let mut ctx = TestContext::new::<FingerprintNN2>();
             let edge_mixed = fp2(counts(1, 1, 1), counts(1, 1, 0));
             let strategy = NN2::new(
                 "test",
                 genes_with_first::<FingerprintNN2>(edge_mixed.index()),
             );
-            let mut board = Board::new();
+            let mut state = state_for(&strategy);
+            let mut rng = fastrand::Rng::new();
 
-            ctx.place(&mut board, pos(0, 0), Stone::Black);
-            ctx.place(&mut board, pos(2, 0), Stone::White);
-            ctx.place(&mut board, pos(0, 1), Stone::Black);
-            ctx.place(&mut board, pos(2, 1), Stone::White);
+            state.place(pos(0, 0), Stone::Black).unwrap();
+            state.place(pos(2, 0), Stone::White).unwrap();
+            state.place(pos(0, 1), Stone::Black).unwrap();
+            state.place(pos(2, 1), Stone::White).unwrap();
 
-            let result = strategy.choose_move(Stone::Black, &board, &ctx.cache_repo, &mut ctx.rng);
+            let result = strategy.choose_move(Stone::Black, &state, &mut rng);
 
             assert_eq!(result, pos(1, 0));
         }
@@ -362,33 +345,33 @@ mod tests {
 
         #[test]
         fn choose_move_returns_empty_position() {
-            let mut ctx = TestContext::new::<FingerprintNN3>();
             let strategy = NN3::new("test", all_genes::<FingerprintNN3>());
-            let board = Board::new();
+            let state = state_for(&strategy);
+            let mut rng = fastrand::Rng::new();
 
-            let result = strategy.choose_move(Stone::Black, &board, &ctx.cache_repo, &mut ctx.rng);
+            let result = strategy.choose_move(Stone::Black, &state, &mut rng);
 
-            assert!(board.empty_position_ids().contains(&result));
+            assert!(state.empty_position_ids().contains(&result));
         }
 
         #[test]
         fn choose_move_prefers_nn3_pattern_when_prioritized() {
-            let mut ctx = TestContext::new::<FingerprintNN3>();
             let specific_fp = fp3(counts(2, 2, 0), counts(1, 1, 2), counts(0, 0, 4));
             let strategy = NN3::new(
                 "test",
                 genes_with_first::<FingerprintNN3>(specific_fp.index()),
             );
-            let mut board = Board::new();
+            let mut state = state_for(&strategy);
+            let mut rng = fastrand::Rng::new();
 
-            ctx.place(&mut board, pos(6, 7), Stone::White);
-            ctx.place(&mut board, pos(8, 7), Stone::White);
-            ctx.place(&mut board, pos(7, 6), Stone::Black);
-            ctx.place(&mut board, pos(7, 8), Stone::Black);
-            ctx.place(&mut board, pos(6, 6), Stone::Black);
-            ctx.place(&mut board, pos(8, 8), Stone::White);
+            state.place(pos(6, 7), Stone::White).unwrap();
+            state.place(pos(8, 7), Stone::White).unwrap();
+            state.place(pos(7, 6), Stone::Black).unwrap();
+            state.place(pos(7, 8), Stone::Black).unwrap();
+            state.place(pos(6, 6), Stone::Black).unwrap();
+            state.place(pos(8, 8), Stone::White).unwrap();
 
-            let result = strategy.choose_move(Stone::Black, &board, &ctx.cache_repo, &mut ctx.rng);
+            let result = strategy.choose_move(Stone::Black, &state, &mut rng);
 
             assert_eq!(result, pos(7, 7));
         }
@@ -459,18 +442,17 @@ mod tests {
 
         #[test]
         fn choose_move_returns_empty_position() {
-            let mut ctx = TestContext::new::<FingerprintNN4>();
             let strategy = NN4::new("test", all_genes::<FingerprintNN4>());
-            let board = Board::new();
+            let state = state_for(&strategy);
+            let mut rng = fastrand::Rng::new();
 
-            let result = strategy.choose_move(Stone::Black, &board, &ctx.cache_repo, &mut ctx.rng);
+            let result = strategy.choose_move(Stone::Black, &state, &mut rng);
 
-            assert!(board.empty_position_ids().contains(&result));
+            assert!(state.empty_position_ids().contains(&result));
         }
 
         #[test]
         fn choose_move_prefers_nn4_pattern_when_prioritized() {
-            let mut ctx = TestContext::new::<FingerprintNN4>();
             let specific_fp = fp4(
                 counts(3, 1, 0),
                 counts(1, 1, 2),
@@ -481,22 +463,23 @@ mod tests {
                 "test",
                 genes_with_first::<FingerprintNN4>(specific_fp.index()),
             );
-            let mut board = Board::new();
+            let mut state = state_for(&strategy);
+            let mut rng = fastrand::Rng::new();
 
-            ctx.place(&mut board, pos(6, 7), Stone::White);
-            ctx.place(&mut board, pos(8, 7), Stone::Black);
-            ctx.place(&mut board, pos(7, 6), Stone::Black);
-            ctx.place(&mut board, pos(7, 8), Stone::Black);
-            ctx.place(&mut board, pos(6, 6), Stone::Black);
-            ctx.place(&mut board, pos(8, 6), Stone::White);
-            ctx.place(&mut board, pos(5, 7), Stone::White);
-            ctx.place(&mut board, pos(7, 5), Stone::White);
-            ctx.place(&mut board, pos(5, 6), Stone::Black);
-            ctx.place(&mut board, pos(5, 8), Stone::Black);
-            ctx.place(&mut board, pos(6, 5), Stone::Black);
-            ctx.place(&mut board, pos(9, 6), Stone::White);
+            state.place(pos(6, 7), Stone::White).unwrap();
+            state.place(pos(8, 7), Stone::Black).unwrap();
+            state.place(pos(7, 6), Stone::Black).unwrap();
+            state.place(pos(7, 8), Stone::Black).unwrap();
+            state.place(pos(6, 6), Stone::Black).unwrap();
+            state.place(pos(8, 6), Stone::White).unwrap();
+            state.place(pos(5, 7), Stone::White).unwrap();
+            state.place(pos(7, 5), Stone::White).unwrap();
+            state.place(pos(5, 6), Stone::Black).unwrap();
+            state.place(pos(5, 8), Stone::Black).unwrap();
+            state.place(pos(6, 5), Stone::Black).unwrap();
+            state.place(pos(9, 6), Stone::White).unwrap();
 
-            let result = strategy.choose_move(Stone::Black, &board, &ctx.cache_repo, &mut ctx.rng);
+            let result = strategy.choose_move(Stone::Black, &state, &mut rng);
 
             assert_eq!(result, pos(7, 7));
         }

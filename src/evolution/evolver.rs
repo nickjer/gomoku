@@ -1,14 +1,15 @@
 use tracing::{debug_span, info_span, instrument};
 
-use crate::game::Game;
-use crate::strategy::EvolvableStrategy;
-use crate::tournament::Tournament;
+use crate::strategy::{EvolvableStrategy, Strategy};
 
 use super::crossover::Crossover;
+use super::fitness_evaluator::{EvaluateFitness, FitnessEvaluator, TournamentFitness};
+use super::fitness_score::FitnessScore;
+use super::fitness_weight::FitnessWeight;
 use super::genes::EvolvableGenes;
 use super::mutation::Mutation;
-use super::selection::{RunSelection, Selection};
-use super::{Individual, Population, evaluate};
+use super::selection::{HasFitness, RunSelection, Selection};
+use super::{Individual, Population};
 
 /// Configuration and execution of the evolutionary algorithm.
 pub struct Evolver {
@@ -19,8 +20,7 @@ pub struct Evolver {
     mutation: Mutation,
     mutation_rate: f64,
     selection: Selection,
-    tournament: Tournament,
-    game: Game,
+    evaluators: Vec<(FitnessEvaluator, FitnessWeight)>,
 }
 
 impl Default for Evolver {
@@ -40,8 +40,7 @@ impl Evolver {
             mutation: Mutation::default(),
             mutation_rate: 0.1,
             selection: Selection::default(),
-            tournament: Tournament::default(),
-            game: Game::default(),
+            evaluators: vec![(TournamentFitness::default().into(), FitnessWeight::new(1.0))],
         }
     }
 
@@ -88,14 +87,8 @@ impl Evolver {
     }
 
     #[must_use]
-    pub fn tournament(mut self, tournament: Tournament) -> Self {
-        self.tournament = tournament;
-        self
-    }
-
-    #[must_use]
-    pub fn game(mut self, game: Game) -> Self {
-        self.game = game;
+    pub fn evaluators(mut self, evaluators: Vec<(FitnessEvaluator, FitnessWeight)>) -> Self {
+        self.evaluators = evaluators;
         self
     }
 
@@ -105,18 +98,48 @@ impl Evolver {
         strategies: Vec<S>,
         rng: &mut fastrand::Rng,
     ) -> Population<S> {
-        let individuals = evaluate(strategies, &self.tournament, &self.game, rng);
+        let individuals = self.evaluate_and_sort(strategies, rng);
         let mut population = Population::new(individuals);
 
         for generation in 1..=self.generations {
             let span = info_span!("generation", number = generation);
             let _guard = span.enter();
             let new_strategies = self.create_next_generation(&population, rng);
-            let new_individuals = evaluate(new_strategies, &self.tournament, &self.game, rng);
+            let new_individuals = self.evaluate_and_sort(new_strategies, rng);
             population = population.next_generation(new_individuals);
         }
 
         population
+    }
+
+    fn compute_fitness<S: Strategy>(
+        &self,
+        strategies: &[S],
+        rng: &mut fastrand::Rng,
+    ) -> Vec<FitnessScore> {
+        let mut totals = vec![0.0_f32; strategies.len()];
+        for (evaluator, weight) in &self.evaluators {
+            let scores = evaluator.evaluate(strategies, rng);
+            for (total, score) in totals.iter_mut().zip(&scores) {
+                *total += score.value() * weight.value();
+            }
+        }
+        totals.into_iter().map(FitnessScore::new).collect()
+    }
+
+    fn evaluate_and_sort<S: Strategy>(
+        &self,
+        strategies: Vec<S>,
+        rng: &mut fastrand::Rng,
+    ) -> Vec<Individual<S>> {
+        let scores = self.compute_fitness(&strategies, rng);
+        let mut individuals: Vec<_> = strategies
+            .into_iter()
+            .zip(scores)
+            .map(|(strategy, fitness)| Individual::new(strategy, fitness))
+            .collect();
+        individuals.sort_by_key(|ind| std::cmp::Reverse(ind.fitness()));
+        individuals
     }
 
     #[instrument(skip_all, fields(population_size = population.individuals().len()))]
@@ -154,9 +177,9 @@ impl Evolver {
         rng: &mut fastrand::Rng,
     ) -> S {
         let (parent1, parent2) = debug_span!("selection").in_scope(|| {
-            let p1 = self.selection.select(individuals, rng);
-            let p2 = self.selection.select(individuals, rng);
-            (p1, p2)
+            let first = self.selection.select(individuals, rng);
+            let second = self.selection.select(individuals, rng);
+            (first, second)
         });
 
         let child_genes = debug_span!("crossover").in_scope(|| {
@@ -246,12 +269,12 @@ mod tests {
         let labels1: Vec<_> = pop1
             .individuals()
             .iter()
-            .map(|i| i.strategy().label())
+            .map(|ind| ind.strategy().label())
             .collect();
         let labels2: Vec<_> = pop2
             .individuals()
             .iter()
-            .map(|i| i.strategy().label())
+            .map(|ind| ind.strategy().label())
             .collect();
         assert_eq!(labels1, labels2);
     }
@@ -273,9 +296,9 @@ mod tests {
         let labels: Vec<_> = population
             .individuals()
             .iter()
-            .map(|i| i.strategy().label())
+            .map(|ind| ind.strategy().label())
             .collect();
-        assert!(labels.iter().any(|l| l.contains("elite")));
+        assert!(labels.iter().any(|label| label.contains("elite")));
     }
 
     #[test]
@@ -316,21 +339,14 @@ mod tests {
     }
 
     #[test]
-    fn tournament_builder_sets_tournament() {
-        let _evolver = Evolver::new().tournament(Tournament::default());
-    }
-
-    #[test]
-    fn game_builder_sets_game() {
-        let _evolver = Evolver::new().game(Game::default());
-    }
-
-    #[test]
     fn no_crossover_no_mutation_preserves_parent_genes() {
         let mut rng = fastrand::Rng::with_seed(42);
         let strategies = make_strategies(&mut rng, 4);
 
-        let parent_genes: Vec<Vec<Gene>> = strategies.iter().map(|s| s.genes().clone()).collect();
+        let parent_genes: Vec<Vec<Gene>> = strategies
+            .iter()
+            .map(|strat| strat.genes().clone())
+            .collect();
 
         // Run one generation with no crossover, no mutation
         let gen1 = Evolver::new()
@@ -344,7 +360,7 @@ mod tests {
         for individual in gen1.individuals() {
             let genes = individual.strategy().genes();
             assert!(
-                parent_genes.iter().any(|p| p == genes),
+                parent_genes.iter().any(|parent| parent == genes),
                 "offspring genes {:?} should match a parent",
                 genes
             );
@@ -356,7 +372,10 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(42);
         let strategies = make_strategies(&mut rng, 4);
 
-        let parent_genes: Vec<Vec<Gene>> = strategies.iter().map(|s| s.genes().clone()).collect();
+        let parent_genes: Vec<Vec<Gene>> = strategies
+            .iter()
+            .map(|strat| strat.genes().clone())
+            .collect();
 
         // Run one generation with no crossover but 100% mutation
         let gen1 = Evolver::new()
@@ -369,7 +388,7 @@ mod tests {
         // At least one offspring should have different genes than all parents
         let any_mutated = gen1.individuals().iter().any(|individual| {
             let genes = individual.strategy().genes();
-            !parent_genes.iter().any(|p| p == genes)
+            !parent_genes.iter().any(|parent| parent == genes)
         });
 
         assert!(any_mutated, "some offspring should have mutated genes");

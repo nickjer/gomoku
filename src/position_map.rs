@@ -238,7 +238,7 @@ mod tests {
     #[should_panic(expected = "PositionSlice requires exactly")]
     fn position_slice_panics_on_wrong_length() {
         let data = vec![0i32; 100];
-        PositionSlice::new(&data);
+        let _ = PositionSlice::new(&data);
     }
 
     #[test]
@@ -255,6 +255,6 @@ mod tests {
     #[should_panic(expected = "PositionSliceMut requires exactly")]
     fn position_slice_mut_panics_on_wrong_length() {
         let mut data = vec![0i32; 100];
-        PositionSliceMut::new(&mut data);
+        let _ = PositionSliceMut::new(&mut data);
     }
 }

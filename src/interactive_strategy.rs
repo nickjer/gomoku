@@ -8,9 +8,8 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use crate::board::Board;
 use crate::cache_id::CacheId;
-use crate::cache_repository::CacheRepository;
+use crate::game_state::GameState;
 use crate::offset::Offset;
 use crate::position_id::PositionId;
 use crate::stone::Stone;
@@ -31,7 +30,7 @@ impl<B: Backend> InteractiveStrategy<B> {
         }
     }
 
-    fn render(&self, board: &Board, current_stone: Stone) {
+    fn render(&self, state: &GameState, current_stone: Stone) {
         let cursor = self.cursor.get();
 
         self.terminal
@@ -44,14 +43,14 @@ impl<B: Backend> InteractiveStrategy<B> {
                 ])
                 .areas(frame.area());
 
-                render_board(frame, board_area, board, cursor);
+                render_board(frame, board_area, state, cursor);
                 render_status(frame, status_area, current_stone);
                 render_help(frame, help_area);
             })
             .expect("render failed");
     }
 
-    fn handle_input(&self, board: &Board) -> Option<PositionId> {
+    fn handle_input(&self, state: &GameState) -> Option<PositionId> {
         loop {
             if let Ok(Event::Key(key)) = event::read() {
                 if key.kind != KeyEventKind::Press {
@@ -78,7 +77,7 @@ impl<B: Backend> InteractiveStrategy<B> {
                         return None;
                     }
                     KeyCode::Enter | KeyCode::Char(' ') => {
-                        if board.stone(cursor) == Stone::Empty {
+                        if state.stone(cursor) == Stone::Empty {
                             return Some(cursor);
                         }
                     }
@@ -110,10 +109,10 @@ mod tests {
     fn render_board_shows_empty_cells() {
         let backend = TestBackend::new(29, 15);
         let mut terminal = Terminal::new(backend).unwrap();
-        let board = Board::new();
+        let state = GameState::new();
 
         terminal
-            .draw(|frame| render_board(frame, frame.area(), &board, PositionId::center()))
+            .draw(|frame| render_board(frame, frame.area(), &state, PositionId::center()))
             .unwrap();
 
         let buffer = terminal.backend().buffer();
@@ -124,11 +123,11 @@ mod tests {
     fn render_board_shows_black_stone() {
         let backend = TestBackend::new(29, 15);
         let mut terminal = Terminal::new(backend).unwrap();
-        let mut board = Board::new();
-        board.place(pos(0, 0), Stone::Black).unwrap();
+        let mut state = GameState::new();
+        state.place(pos(0, 0), Stone::Black).unwrap();
 
         terminal
-            .draw(|frame| render_board(frame, frame.area(), &board, PositionId::center()))
+            .draw(|frame| render_board(frame, frame.area(), &state, PositionId::center()))
             .unwrap();
 
         let buffer = terminal.backend().buffer();
@@ -139,11 +138,11 @@ mod tests {
     fn render_board_shows_white_stone() {
         let backend = TestBackend::new(29, 15);
         let mut terminal = Terminal::new(backend).unwrap();
-        let mut board = Board::new();
-        board.place(pos(0, 0), Stone::White).unwrap();
+        let mut state = GameState::new();
+        state.place(pos(0, 0), Stone::White).unwrap();
 
         terminal
-            .draw(|frame| render_board(frame, frame.area(), &board, PositionId::center()))
+            .draw(|frame| render_board(frame, frame.area(), &state, PositionId::center()))
             .unwrap();
 
         let buffer = terminal.backend().buffer();
@@ -253,13 +252,12 @@ impl<B: Backend> Strategy for InteractiveStrategy<B> {
     fn choose_move(
         &self,
         current_stone: Stone,
-        board: &Board,
-        _cache_repo: &CacheRepository,
+        state: &GameState,
         _rng: &mut fastrand::Rng,
     ) -> PositionId {
         loop {
-            self.render(board, current_stone);
-            if let Some(position_id) = self.handle_input(board) {
+            self.render(state, current_stone);
+            if let Some(position_id) = self.handle_input(state) {
                 return position_id;
             }
         }
@@ -270,14 +268,14 @@ impl<B: Backend> Strategy for InteractiveStrategy<B> {
     }
 }
 
-fn render_board(frame: &mut ratatui::Frame, area: Rect, board: &Board, cursor: PositionId) {
+fn render_board(frame: &mut ratatui::Frame, area: Rect, state: &GameState, cursor: PositionId) {
     let lines: Vec<Line> = PositionId::rows()
         .map(|row| {
             let spans: Vec<Span> = row
                 .into_iter()
                 .enumerate()
                 .flat_map(|(col_idx, position_id)| {
-                    let stone = board.stone(position_id);
+                    let stone = state.stone(position_id);
                     let is_cursor = position_id == cursor;
 
                     let ch = match stone {

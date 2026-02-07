@@ -20,7 +20,7 @@ cargo fmt                # Format code
 ## Architecture
 
 ### Core Game
-- **Board**: 15×15 grid, stones are `Black`/`White`/`Empty`
+- **Board**: 15×15 grid (but can be easily changed in the code), stones are `Black`/`White`/`Empty`
 - **Win condition**: 5 consecutive stones (horizontal, vertical, diagonal)
 - **PositionId**: Encapsulates board positions (0-224), supports neighbor navigation
 - **Offset**: Direction vectors for neighbor calculations
@@ -124,6 +124,7 @@ Prefer static dispatch and zero-cost abstractions over dynamic dispatch. Use `en
 
 - `#[must_use]` on constructors and getters returning owned/computed values
 - `const fn` where possible
+- Avoid single-letter variable names unless they are incrementing loop indexes (e.g., `i`, `j`)
 
 ### Test-Only Enum Variants
 Use `#[cfg(test)]` for test-only enum variants. The enum's `Default` impl can return different variants based on `#[cfg(test)]` vs `#[cfg(not(test))]`:

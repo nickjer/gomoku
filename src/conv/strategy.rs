@@ -1,8 +1,7 @@
 use tracing::instrument;
 
-use crate::board::Board;
 use crate::cache_id::CacheId;
-use crate::cache_repository::CacheRepository;
+use crate::game_state::GameState;
 use crate::position_id::PositionId;
 use crate::position_map::{PositionSlice, PositionSliceMut};
 use crate::stone::Stone;
@@ -91,11 +90,10 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> Strategy
     fn choose_move(
         &self,
         current_stone: Stone,
-        board: &Board,
-        _cache_repo: &CacheRepository,
+        state: &GameState,
         rng: &mut fastrand::Rng,
     ) -> PositionId {
-        let encoding = encode_board(board, current_stone);
+        let encoding = encode_board(state, current_stone);
 
         // Random D8 transform for data augmentation (AlphaGo Zero style)
         let transform = D8Transform::random(rng);
@@ -107,7 +105,7 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> Strategy
         let policy_vec = self.forward(&transformed_encoding);
 
         // Transform empty positions to transformed space
-        let transformed_empty: Vec<PositionId> = board
+        let transformed_empty: Vec<PositionId> = state
             .empty_position_ids()
             .iter()
             .map(|&pos| transform.apply(pos))
@@ -194,26 +192,24 @@ mod tests {
     fn choose_move_returns_empty_position() {
         let mut rng = fastrand::Rng::with_seed(42);
         let strategy = TestStrategy::random("test", &mut rng);
-        let board = Board::new();
-        let cache_repo = CacheRepository::new();
+        let state = GameState::new();
 
-        let chosen = strategy.choose_move(Stone::Black, &board, &cache_repo, &mut rng);
+        let chosen = strategy.choose_move(Stone::Black, &state, &mut rng);
 
-        assert!(board.empty_position_ids().contains(&chosen));
+        assert!(state.empty_position_ids().contains(&chosen));
     }
 
     #[test]
     fn choose_move_deterministic_with_same_seed() {
         let mut rng = fastrand::Rng::with_seed(42);
         let strategy = TestStrategy::random("test", &mut rng);
-        let board = Board::new();
-        let cache_repo = CacheRepository::new();
+        let state = GameState::new();
 
         let mut rng1 = fastrand::Rng::with_seed(123);
         let mut rng2 = fastrand::Rng::with_seed(123);
 
-        let move1 = strategy.choose_move(Stone::Black, &board, &cache_repo, &mut rng1);
-        let move2 = strategy.choose_move(Stone::Black, &board, &cache_repo, &mut rng2);
+        let move1 = strategy.choose_move(Stone::Black, &state, &mut rng1);
+        let move2 = strategy.choose_move(Stone::Black, &state, &mut rng2);
 
         assert_eq!(move1, move2);
     }
@@ -222,13 +218,12 @@ mod tests {
     fn d8_symmetry_produces_valid_move_on_empty_board() {
         let mut rng = fastrand::Rng::with_seed(42);
         let strategy = TestStrategy::random("test", &mut rng);
-        let cache_repo = CacheRepository::new();
-        let board = Board::new();
+        let state = GameState::new();
 
         let mut rng1 = fastrand::Rng::with_seed(999);
-        let chosen = strategy.choose_move(Stone::Black, &board, &cache_repo, &mut rng1);
+        let chosen = strategy.choose_move(Stone::Black, &state, &mut rng1);
 
-        assert!(board.empty_position_ids().contains(&chosen));
+        assert!(state.empty_position_ids().contains(&chosen));
     }
 
     #[test]
@@ -309,10 +304,10 @@ mod tests {
 
         #[test]
         fn selected_position_maps_back_to_valid_empty() {
-            let mut board = Board::new();
-            board.place(pos(7, 7), Stone::Black).unwrap();
+            let mut state = GameState::new();
+            state.place(pos(7, 7), Stone::Black).unwrap();
 
-            let empty_positions = board.empty_position_ids();
+            let empty_positions = state.empty_position_ids();
 
             for transform in D8Transform::ALL {
                 // Transform empty positions
@@ -338,16 +333,15 @@ mod tests {
         fn all_transforms_produce_valid_moves() {
             let mut rng = fastrand::Rng::with_seed(42);
             let strategy = TestStrategy::random("test", &mut rng);
-            let cache_repo = CacheRepository::new();
-            let board = Board::new();
+            let state = GameState::new();
 
             // Test with many different seeds to cover different random transforms
             for seed in 0..100 {
                 let mut rng = fastrand::Rng::with_seed(seed);
-                let chosen = strategy.choose_move(Stone::Black, &board, &cache_repo, &mut rng);
+                let chosen = strategy.choose_move(Stone::Black, &state, &mut rng);
 
                 assert!(
-                    board.empty_position_ids().contains(&chosen),
+                    state.empty_position_ids().contains(&chosen),
                     "seed {seed}: chosen {chosen:?} not in empty positions"
                 );
             }
@@ -356,21 +350,20 @@ mod tests {
         #[test]
         fn transform_pipeline_preserves_best_position_semantics() {
             // Create a board with a specific pattern
-            let mut board = Board::new();
-            board.place(pos(7, 7), Stone::Black).unwrap();
+            let mut state = GameState::new();
+            state.place(pos(7, 7), Stone::Black).unwrap();
 
             let mut rng = fastrand::Rng::with_seed(42);
             let strategy = TestStrategy::random("test", &mut rng);
-            let cache_repo = CacheRepository::new();
 
             // Run many times with different transforms
             for seed in 0..50 {
                 let mut rng = fastrand::Rng::with_seed(seed);
-                let chosen = strategy.choose_move(Stone::Black, &board, &cache_repo, &mut rng);
+                let chosen = strategy.choose_move(Stone::Black, &state, &mut rng);
 
                 // The chosen position must be empty
                 assert!(
-                    board.empty_position_ids().contains(&chosen),
+                    state.empty_position_ids().contains(&chosen),
                     "seed {seed}: position {chosen:?} is not empty"
                 );
             }

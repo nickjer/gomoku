@@ -1,6 +1,5 @@
-use crate::board::Board;
 use crate::cache_id::CacheId;
-use crate::cache_repository::CacheRepository;
+use crate::game_state::GameState;
 use crate::position_id::PositionId;
 use crate::stone::Stone;
 use crate::strategy::Strategy;
@@ -27,11 +26,10 @@ impl Strategy for FirstAvailable {
     fn choose_move(
         &self,
         _current_stone: Stone,
-        board: &Board,
-        _cache_repo: &CacheRepository,
+        state: &GameState,
         _rng: &mut fastrand::Rng,
     ) -> PositionId {
-        board.empty_position_ids()[0]
+        state.empty_position_ids()[0]
     }
 
     fn label(&self) -> &str {
@@ -51,11 +49,10 @@ mod tests {
     #[test]
     fn chooses_first_empty_position() {
         let strategy = FirstAvailable::new("test");
-        let board = Board::new();
-        let cache_repo = CacheRepository::new();
+        let state = GameState::new();
         let mut rng = fastrand::Rng::new();
 
-        let chosen = strategy.choose_move(Stone::Black, &board, &cache_repo, &mut rng);
+        let chosen = strategy.choose_move(Stone::Black, &state, &mut rng);
 
         assert_eq!(chosen, pos(0, 0));
     }

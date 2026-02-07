@@ -46,38 +46,39 @@ impl<S> Population<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::evolution::fitness_score::FitnessScore;
     use crate::evolution::selection::HasFitness;
 
     #[derive(Debug, Clone)]
     struct MockStrategy;
 
-    fn population(fitnesses: &[u32]) -> Population<MockStrategy> {
+    fn population(fitnesses: &[f32]) -> Population<MockStrategy> {
         let individuals = fitnesses
             .iter()
-            .map(|&f| Individual::new(MockStrategy, f))
+            .map(|&fit| Individual::new(MockStrategy, FitnessScore::new(fit)))
             .collect();
         Population::new(individuals)
     }
 
     #[test]
     fn new_creates_population_at_generation_zero() {
-        let pop = population(&[10, 20, 30]);
+        let pop = population(&[10.0, 20.0, 30.0]);
 
         assert_eq!(pop.generation(), 0);
     }
 
     #[test]
     fn individuals_returns_slice() {
-        let pop = population(&[10, 20, 30]);
+        let pop = population(&[10.0, 20.0, 30.0]);
 
         assert_eq!(pop.individuals().len(), 3);
-        assert_eq!(pop.individuals()[0].fitness(), 10);
+        assert_eq!(pop.individuals()[0].fitness(), FitnessScore::new(10.0));
     }
 
     #[test]
     fn next_generation_increments_generation() {
-        let pop = population(&[10, 20]);
-        let new_individuals = vec![Individual::new(MockStrategy, 30)];
+        let pop = population(&[10.0, 20.0]);
+        let new_individuals = vec![Individual::new(MockStrategy, FitnessScore::new(30.0))];
 
         let next = pop.next_generation(new_individuals);
 
@@ -87,7 +88,7 @@ mod tests {
 
     #[test]
     fn into_strategies_extracts_strategies() {
-        let pop = population(&[10, 20, 30]);
+        let pop = population(&[10.0, 20.0, 30.0]);
 
         let strategies = pop.into_strategies();
 

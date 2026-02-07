@@ -6,6 +6,7 @@ use crate::position_map::PositionMap;
 use crate::stone::Stone;
 
 /// Cache of precomputed fingerprint indices for NN3 fingerprints.
+#[derive(Debug, Clone)]
 pub struct FingerprintNN3IndexCache {
     neighbor_nn1: NeighborCountsCache,
     neighbor_nn2: NeighborCountsCache,

@@ -11,8 +11,9 @@ use super::{PermutationCrossover, PermutationMutation, create_rng, setup_logging
 use crate::cluster::strategy::{NN1, NN2, NN3, NN4};
 use crate::conv::{ConvSmall, ConvTiny};
 use crate::evolution::crossover::Crossover;
+use crate::evolution::fitness_weight::FitnessWeight;
 use crate::evolution::mutation::Mutation;
-use crate::evolution::{Evolver, Population};
+use crate::evolution::{Evolver, Population, ThreatDefenseFitness, TournamentFitness};
 use crate::game::Freestyle;
 use crate::strategy::EvolvableStrategy;
 use crate::tournament::Swiss;
@@ -68,6 +69,14 @@ pub struct CommonArgs {
     /// RNG seed for reproducibility
     #[arg(long)]
     pub seed: Option<u64>,
+
+    /// Tournament evaluator weight (0 to disable)
+    #[arg(long, default_value = "1.0")]
+    pub tournament_weight: f32,
+
+    /// Threat defense evaluator weight (0 to disable)
+    #[arg(long, default_value = "0.0")]
+    pub defense_weight: f32,
 
     /// Log level (error, warn, info, debug, trace)
     #[arg(short, long, value_name = "LEVEL")]
@@ -178,15 +187,28 @@ fn run_conv<S: EvolvableStrategy>(
 }
 
 fn create_evolver(common: &CommonArgs, crossover: Crossover, mutation: Mutation) -> Evolver {
+    let mut evaluators = Vec::new();
+    if common.tournament_weight > 0.0 {
+        evaluators.push((
+            TournamentFitness::new(Swiss.into(), Freestyle.into()).into(),
+            FitnessWeight::new(common.tournament_weight),
+        ));
+    }
+    if common.defense_weight > 0.0 {
+        evaluators.push((
+            ThreatDefenseFitness.into(),
+            FitnessWeight::new(common.defense_weight),
+        ));
+    }
+
     Evolver::new()
+        .evaluators(evaluators)
         .generations(common.generations)
         .elitism(common.elitism)
         .crossover(crossover)
         .crossover_rate(common.crossover_rate)
         .mutation(mutation)
         .mutation_rate(common.mutation_rate)
-        .tournament(Swiss.into())
-        .game(Freestyle.into())
 }
 
 fn load_or_generate<S: EvolvableStrategy>(
