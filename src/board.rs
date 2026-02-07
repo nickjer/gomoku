@@ -17,6 +17,7 @@ const DIRECTIONS: [Offset; 4] = [
 ];
 
 /// A Gomoku game board.
+#[derive(Debug, Clone)]
 pub struct Board {
     stones: PositionMap<Stone>,
     empty_position_ids: Vec<PositionId>,
