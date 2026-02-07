@@ -1,4 +1,4 @@
-use tracing::{debug_span, info_span, instrument};
+use tracing::{debug_span, info, info_span, instrument};
 
 use crate::strategy::{EvolvableStrategy, Strategy};
 
@@ -106,6 +106,9 @@ impl Evolver {
             let _guard = span.enter();
             let new_strategies = self.create_next_generation(&population, rng);
             let new_individuals = self.evaluate_and_sort(new_strategies, rng);
+            let champion = new_individuals[0].strategy().label();
+            let champion_is_elite = champion.contains("elite");
+            info!(champion, champion_is_elite, "Generation complete");
             population = population.next_generation(new_individuals);
         }
 
@@ -118,12 +121,27 @@ impl Evolver {
         rng: &mut fastrand::Rng,
     ) -> Vec<FitnessScore> {
         let mut totals = vec![0.0_f32; strategies.len()];
+        let mut per_evaluator: Vec<(&FitnessEvaluator, Vec<FitnessScore>)> = Vec::new();
         for (evaluator, weight) in &self.evaluators {
             let scores = evaluator.evaluate(strategies, rng);
             for (total, score) in totals.iter_mut().zip(&scores) {
                 *total += score.value() * weight.value();
             }
+            per_evaluator.push((evaluator, scores));
         }
+
+        let mut indices: Vec<usize> = (0..strategies.len()).collect();
+        indices.sort_by(|&a, &b| totals[b].total_cmp(&totals[a]));
+
+        for (rank, &idx) in indices.iter().take(5).enumerate() {
+            log_fitness_breakdown(rank + 1, idx, &totals, strategies, &per_evaluator);
+        }
+        if indices.len() > 10 {
+            for (rank, &idx) in indices.iter().enumerate().skip(indices.len() - 5) {
+                log_fitness_breakdown(rank + 1, idx, &totals, strategies, &per_evaluator);
+            }
+        }
+
         totals.into_iter().map(FitnessScore::new).collect()
     }
 
@@ -205,6 +223,27 @@ impl Evolver {
         debug_span!("from_genes")
             .in_scope(|| S::from_genes(format!("gen{generation}_{index}"), child_genes))
     }
+}
+
+fn log_fitness_breakdown<S: Strategy>(
+    rank: usize,
+    idx: usize,
+    totals: &[f32],
+    strategies: &[S],
+    per_evaluator: &[(&FitnessEvaluator, Vec<FitnessScore>)],
+) {
+    let breakdown: String = per_evaluator
+        .iter()
+        .map(|(evaluator, scores)| format!("{}={:.1}", evaluator, scores[idx].value()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    info!(
+        rank,
+        label = strategies[idx].label(),
+        total = totals[idx],
+        breakdown,
+        "Fitness breakdown"
+    );
 }
 
 #[cfg(test)]

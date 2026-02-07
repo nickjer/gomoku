@@ -1,9 +1,10 @@
 use enum_dispatch::enum_dispatch;
+use tracing::{debug, info};
 
 use crate::game::Game;
 use crate::strategy::Strategy;
 use crate::threat::{generate_threat_scenarios, test_defense};
-use crate::tournament::{RunTournament, Tournament};
+use crate::tournament::{RunTournament, Standing, Tournament};
 
 use super::fitness_score::FitnessScore;
 
@@ -37,6 +38,7 @@ impl EvaluateFitness for TournamentFitness {
         rng: &mut fastrand::Rng,
     ) -> Vec<FitnessScore> {
         let standings = self.tournament.run(strategies, &self.game, rng);
+        log_standings(&standings, strategies);
         let population_size = strategies.len();
         let mut scores = vec![FitnessScore::new(0.0); population_size];
         for (rank, standing) in standings.into_iter().enumerate() {
@@ -45,6 +47,35 @@ impl EvaluateFitness for TournamentFitness {
             scores[standing.strategy_index()] = FitnessScore::new(f32::from(fitness));
         }
         scores
+    }
+}
+
+fn log_standings<S: Strategy>(standings: &[Standing], strategies: &[S]) {
+    let top_count = standings.len().min(5);
+    let bottom_start = if standings.len() > 10 {
+        standings.len() - 5
+    } else {
+        top_count
+    };
+
+    for (rank, standing) in standings.iter().enumerate() {
+        let label = strategies[standing.strategy_index()].label();
+        let wins = standing.wins();
+        let losses = standing.losses();
+        let draws = standing.draws();
+        let byes = standing.byes();
+
+        if rank < top_count || rank >= bottom_start {
+            info!(
+                rank = rank + 1,
+                label, wins, losses, draws, byes, "Standing"
+            );
+        } else {
+            debug!(
+                rank = rank + 1,
+                label, wins, losses, draws, byes, "Standing"
+            );
+        }
     }
 }
 
@@ -67,6 +98,7 @@ impl EvaluateFitness for ThreatDefenseFitness {
 
 /// Enum for polymorphic fitness evaluator dispatch.
 #[enum_dispatch(EvaluateFitness)]
+#[derive(strum::Display)]
 pub enum FitnessEvaluator {
     TournamentFitness,
     ThreatDefenseFitness,
