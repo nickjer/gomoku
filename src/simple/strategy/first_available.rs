@@ -1,5 +1,4 @@
-use crate::cache_id::CacheId;
-use crate::game_state::GameState;
+use crate::board::Board;
 use crate::position_id::PositionId;
 use crate::stone::Stone;
 use crate::strategy::Strategy;
@@ -19,17 +18,13 @@ impl FirstAvailable {
 }
 
 impl Strategy for FirstAvailable {
-    fn cache_dependencies(&self) -> &[CacheId] {
-        &[]
-    }
-
     fn choose_move(
         &self,
         _current_stone: Stone,
-        state: &GameState,
+        board: &Board,
         _rng: &mut fastrand::Rng,
     ) -> PositionId {
-        state.empty_position_ids()[0]
+        board.empty_position_ids()[0]
     }
 
     fn label(&self) -> &str {
@@ -49,18 +44,11 @@ mod tests {
     #[test]
     fn chooses_first_empty_position() {
         let strategy = FirstAvailable::new("test");
-        let state = GameState::new();
+        let board = Board::new();
         let mut rng = fastrand::Rng::new();
 
-        let chosen = strategy.choose_move(Stone::Black, &state, &mut rng);
+        let chosen = strategy.choose_move(Stone::Black, &board, &mut rng);
 
         assert_eq!(chosen, pos(0, 0));
-    }
-
-    #[test]
-    fn has_no_cache_dependencies() {
-        let strategy = FirstAvailable::new("test");
-
-        assert!(strategy.cache_dependencies().is_empty());
     }
 }

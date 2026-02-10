@@ -1,19 +1,12 @@
 #![warn(clippy::as_conversions)]
 
 pub mod board;
-pub mod cache_id;
-pub mod cache_repository;
 pub mod cli;
-pub mod cluster;
 pub mod conv;
 pub mod evolution;
 pub mod game;
-pub mod game_state;
-pub mod gene;
 pub mod interactive_strategy;
 pub mod match_result;
-pub mod neighbor_cache;
-pub mod neighbor_counts_cache;
 pub mod offset;
 pub mod outcome;
 pub mod position;

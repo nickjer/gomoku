@@ -4,18 +4,12 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::cluster::strategy::{NN1, NN2, NN3, NN4};
 use crate::conv::{ConvSmall, ConvTiny};
-use crate::gene::Gene;
 use crate::strategy::{EvolvableStrategy, Strategy};
 
 /// Binary-serializable strategy data (genes only, label comes from filename).
 #[derive(Debug, Serialize, Deserialize)]
 pub enum StrategyData {
-    Nn1 { genes: Vec<Gene> },
-    Nn2 { genes: Vec<Gene> },
-    Nn3 { genes: Vec<Gene> },
-    Nn4 { genes: Vec<Gene> },
     ConvTiny { genes: Vec<f32> },
     ConvSmall { genes: Vec<f32> },
 }
@@ -23,10 +17,6 @@ pub enum StrategyData {
 /// A homogeneous collection of strategies that can be evolved together.
 #[derive(Debug)]
 pub enum EvolvableStrategies {
-    Nn1 { strategies: Vec<NN1> },
-    Nn2 { strategies: Vec<NN2> },
-    Nn3 { strategies: Vec<NN3> },
-    Nn4 { strategies: Vec<NN4> },
     ConvTiny { strategies: Vec<ConvTiny> },
     ConvSmall { strategies: Vec<ConvSmall> },
 }
@@ -43,18 +33,6 @@ pub fn save_strategies_to_directory(dir: &Path, strategies: &EvolvableStrategies
         .with_context(|| format!("Failed to create directory: {}", dir.display()))?;
 
     match strategies {
-        EvolvableStrategies::Nn1 { strategies } => {
-            save_each(dir, strategies, |genes| StrategyData::Nn1 { genes })
-        }
-        EvolvableStrategies::Nn2 { strategies } => {
-            save_each(dir, strategies, |genes| StrategyData::Nn2 { genes })
-        }
-        EvolvableStrategies::Nn3 { strategies } => {
-            save_each(dir, strategies, |genes| StrategyData::Nn3 { genes })
-        }
-        EvolvableStrategies::Nn4 { strategies } => {
-            save_each(dir, strategies, |genes| StrategyData::Nn4 { genes })
-        }
         EvolvableStrategies::ConvTiny { strategies } => {
             save_each(dir, strategies, |genes| StrategyData::ConvTiny { genes })
         }
@@ -95,10 +73,6 @@ pub fn load_strategy_from_file(path: &Path) -> Result<Box<dyn Strategy>> {
     let (label, data) = load_strategy_data(path)?;
 
     Ok(match data {
-        StrategyData::Nn1 { genes } => Box::new(NN1::from_genes(label, genes)),
-        StrategyData::Nn2 { genes } => Box::new(NN2::from_genes(label, genes)),
-        StrategyData::Nn3 { genes } => Box::new(NN3::from_genes(label, genes)),
-        StrategyData::Nn4 { genes } => Box::new(NN4::from_genes(label, genes)),
         StrategyData::ConvTiny { genes } => Box::new(ConvTiny::from_genes(label, genes.into())),
         StrategyData::ConvSmall { genes } => Box::new(ConvSmall::from_genes(label, genes.into())),
     })
@@ -158,48 +132,12 @@ fn build_strategies(loaded: Vec<(String, StrategyData)>) -> Result<EvolvableStra
     }
 
     match &loaded[0].1 {
-        StrategyData::Nn1 { .. } => Ok(EvolvableStrategies::Nn1 {
-            strategies: loaded
-                .into_iter()
-                .map(|(label, data)| match data {
-                    StrategyData::Nn1 { genes } => NN1::from_genes(label, genes),
-                    _ => unreachable!(),
-                })
-                .collect(),
-        }),
-        StrategyData::Nn2 { .. } => Ok(EvolvableStrategies::Nn2 {
-            strategies: loaded
-                .into_iter()
-                .map(|(label, data)| match data {
-                    StrategyData::Nn2 { genes } => NN2::from_genes(label, genes),
-                    _ => unreachable!(),
-                })
-                .collect(),
-        }),
-        StrategyData::Nn3 { .. } => Ok(EvolvableStrategies::Nn3 {
-            strategies: loaded
-                .into_iter()
-                .map(|(label, data)| match data {
-                    StrategyData::Nn3 { genes } => NN3::from_genes(label, genes),
-                    _ => unreachable!(),
-                })
-                .collect(),
-        }),
-        StrategyData::Nn4 { .. } => Ok(EvolvableStrategies::Nn4 {
-            strategies: loaded
-                .into_iter()
-                .map(|(label, data)| match data {
-                    StrategyData::Nn4 { genes } => NN4::from_genes(label, genes),
-                    _ => unreachable!(),
-                })
-                .collect(),
-        }),
         StrategyData::ConvTiny { .. } => Ok(EvolvableStrategies::ConvTiny {
             strategies: loaded
                 .into_iter()
                 .map(|(label, data)| match data {
                     StrategyData::ConvTiny { genes } => ConvTiny::from_genes(label, genes.into()),
-                    _ => unreachable!(),
+                    StrategyData::ConvSmall { .. } => unreachable!(),
                 })
                 .collect(),
         }),
@@ -208,7 +146,7 @@ fn build_strategies(loaded: Vec<(String, StrategyData)>) -> Result<EvolvableStra
                 .into_iter()
                 .map(|(label, data)| match data {
                     StrategyData::ConvSmall { genes } => ConvSmall::from_genes(label, genes.into()),
-                    _ => unreachable!(),
+                    StrategyData::ConvTiny { .. } => unreachable!(),
                 })
                 .collect(),
         }),
@@ -221,81 +159,6 @@ mod tests {
 
     fn temp_dir() -> tempfile::TempDir {
         tempfile::tempdir().unwrap()
-    }
-
-    #[test]
-    fn save_and_load_nn1_round_trip() {
-        let dir = temp_dir();
-        let mut rng = fastrand::Rng::with_seed(42);
-        let strategies = vec![NN1::random("s0", &mut rng), NN1::random("s1", &mut rng)];
-        let original_genes: Vec<_> = strategies.iter().map(|s| s.genes().clone()).collect();
-        let original = EvolvableStrategies::Nn1 { strategies };
-
-        save_strategies_to_directory(dir.path(), &original).unwrap();
-        let loaded = load_strategies_from_directory(dir.path()).unwrap();
-
-        match loaded {
-            EvolvableStrategies::Nn1 { strategies } => {
-                assert_eq!(strategies.len(), 2);
-                assert_eq!(strategies[0].genes(), &original_genes[0]);
-                assert_eq!(strategies[1].genes(), &original_genes[1]);
-            }
-            _ => panic!("Expected Nn1"),
-        }
-    }
-
-    #[test]
-    fn save_and_load_nn4_round_trip() {
-        let dir = temp_dir();
-        let mut rng = fastrand::Rng::with_seed(42);
-        let strategy = NN4::random("test", &mut rng);
-        let original_genes = strategy.genes().clone();
-        let original = EvolvableStrategies::Nn4 {
-            strategies: vec![strategy],
-        };
-
-        save_strategies_to_directory(dir.path(), &original).unwrap();
-        let loaded = load_strategies_from_directory(dir.path()).unwrap();
-
-        match loaded {
-            EvolvableStrategies::Nn4 { strategies } => {
-                assert_eq!(strategies[0].genes(), &original_genes);
-            }
-            _ => panic!("Expected Nn4"),
-        }
-    }
-
-    #[test]
-    fn filenames_have_padded_ranks() {
-        let dir = temp_dir();
-        let mut rng = fastrand::Rng::with_seed(42);
-        let strategies = EvolvableStrategies::Nn1 {
-            strategies: (0..12)
-                .map(|i| NN1::random(format!("s{i}"), &mut rng))
-                .collect(),
-        };
-
-        save_strategies_to_directory(dir.path(), &strategies).unwrap();
-
-        let mut files: Vec<_> = fs::read_dir(dir.path())
-            .unwrap()
-            .filter_map(Result::ok)
-            .map(|e| e.file_name().to_string_lossy().to_string())
-            .collect();
-        files.sort();
-
-        assert_eq!(files[0], "01_s0.bin");
-        assert_eq!(files[9], "10_s9.bin");
-        assert_eq!(files[11], "12_s11.bin");
-    }
-
-    #[test]
-    fn load_empty_directory_fails() {
-        let dir = temp_dir();
-
-        let result = load_strategies_from_directory(dir.path());
-
-        assert!(result.unwrap_err().to_string().contains("No .bin files"));
     }
 
     #[test]
@@ -323,5 +186,38 @@ mod tests {
             }
             _ => panic!("Expected ConvTiny"),
         }
+    }
+
+    #[test]
+    fn filenames_have_padded_ranks() {
+        let dir = temp_dir();
+        let mut rng = fastrand::Rng::with_seed(42);
+        let strategies = EvolvableStrategies::ConvTiny {
+            strategies: (0..12)
+                .map(|i| ConvTiny::random(format!("s{i}"), &mut rng))
+                .collect(),
+        };
+
+        save_strategies_to_directory(dir.path(), &strategies).unwrap();
+
+        let mut files: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        files.sort();
+
+        assert_eq!(files[0], "01_s0.bin");
+        assert_eq!(files[9], "10_s9.bin");
+        assert_eq!(files[11], "12_s11.bin");
+    }
+
+    #[test]
+    fn load_empty_directory_fails() {
+        let dir = temp_dir();
+
+        let result = load_strategies_from_directory(dir.path());
+
+        assert!(result.unwrap_err().to_string().contains("No .bin files"));
     }
 }

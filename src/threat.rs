@@ -5,7 +5,7 @@
 //! - 4 in a row with at least one open end (must block or lose)
 //! - Open three: 3 in a row with both ends open (must block or opponent gets open four)
 
-use crate::game_state::GameState;
+use crate::board::Board;
 use crate::offset::Offset;
 use crate::position::Position;
 use crate::position_id::PositionId;
@@ -203,12 +203,11 @@ pub fn test_defense<S: Strategy>(
     let blocked_count = scenarios
         .iter()
         .filter(|scenario| {
-            let mut state = GameState::new();
-            state.activate_for(strategy);
+            let mut board = Board::new();
             for &(pos, stone) in &scenario.placed_stones {
-                state.place(pos, stone).expect("valid scenario placement");
+                board.place(pos, stone).expect("valid scenario placement");
             }
-            let chosen = strategy.choose_move(scenario.player_to_move, &state, rng);
+            let chosen = strategy.choose_move(scenario.player_to_move, &board, rng);
             scenario.is_blocking_move(chosen)
         })
         .count();

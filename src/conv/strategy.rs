@@ -1,7 +1,6 @@
 use tracing::instrument;
 
-use crate::cache_id::CacheId;
-use crate::game_state::GameState;
+use crate::board::Board;
 use crate::position_id::PositionId;
 use crate::position_map::{PositionSlice, PositionSliceMut};
 use crate::stone::Stone;
@@ -81,19 +80,14 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> ConvStrateg
 impl<const K: usize, const C: usize, const L: usize, const R: usize> Strategy
     for ConvStrategy<K, C, L, R>
 {
-    fn cache_dependencies(&self) -> &[CacheId] {
-        // ConvStrategy doesn't use the cache system
-        &[]
-    }
-
     #[instrument(level = "trace", skip_all)]
     fn choose_move(
         &self,
         current_stone: Stone,
-        state: &GameState,
+        board: &Board,
         rng: &mut fastrand::Rng,
     ) -> PositionId {
-        let encoding = encode_board(state, current_stone);
+        let encoding = encode_board(board, current_stone);
 
         // Random D8 transform for data augmentation (AlphaGo Zero style)
         let transform = D8Transform::random(rng);
@@ -105,7 +99,7 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> Strategy
         let policy_vec = self.forward(&transformed_encoding);
 
         // Transform empty positions to transformed space
-        let transformed_empty: Vec<PositionId> = state
+        let transformed_empty: Vec<PositionId> = board
             .empty_position_ids()
             .iter()
             .map(|&pos| transform.apply(pos))
@@ -192,24 +186,24 @@ mod tests {
     fn choose_move_returns_empty_position() {
         let mut rng = fastrand::Rng::with_seed(42);
         let strategy = TestStrategy::random("test", &mut rng);
-        let state = GameState::new();
+        let board = Board::new();
 
-        let chosen = strategy.choose_move(Stone::Black, &state, &mut rng);
+        let chosen = strategy.choose_move(Stone::Black, &board, &mut rng);
 
-        assert!(state.empty_position_ids().contains(&chosen));
+        assert!(board.empty_position_ids().contains(&chosen));
     }
 
     #[test]
     fn choose_move_deterministic_with_same_seed() {
         let mut rng = fastrand::Rng::with_seed(42);
         let strategy = TestStrategy::random("test", &mut rng);
-        let state = GameState::new();
+        let board = Board::new();
 
         let mut rng1 = fastrand::Rng::with_seed(123);
         let mut rng2 = fastrand::Rng::with_seed(123);
 
-        let move1 = strategy.choose_move(Stone::Black, &state, &mut rng1);
-        let move2 = strategy.choose_move(Stone::Black, &state, &mut rng2);
+        let move1 = strategy.choose_move(Stone::Black, &board, &mut rng1);
+        let move2 = strategy.choose_move(Stone::Black, &board, &mut rng2);
 
         assert_eq!(move1, move2);
     }
@@ -218,12 +212,12 @@ mod tests {
     fn d8_symmetry_produces_valid_move_on_empty_board() {
         let mut rng = fastrand::Rng::with_seed(42);
         let strategy = TestStrategy::random("test", &mut rng);
-        let state = GameState::new();
+        let board = Board::new();
 
         let mut rng1 = fastrand::Rng::with_seed(999);
-        let chosen = strategy.choose_move(Stone::Black, &state, &mut rng1);
+        let chosen = strategy.choose_move(Stone::Black, &board, &mut rng1);
 
-        assert!(state.empty_position_ids().contains(&chosen));
+        assert!(board.empty_position_ids().contains(&chosen));
     }
 
     #[test]
@@ -244,14 +238,6 @@ mod tests {
 
         assert_eq!(reconstructed.label(), "reconstructed");
         assert_eq!(reconstructed.genes().as_ref(), original.genes().as_ref());
-    }
-
-    #[test]
-    fn cache_dependencies_is_empty() {
-        let mut rng = fastrand::Rng::with_seed(42);
-        let strategy = TestStrategy::random("test", &mut rng);
-
-        assert!(strategy.cache_dependencies().is_empty());
     }
 
     #[test]
@@ -304,7 +290,7 @@ mod tests {
 
         #[test]
         fn selected_position_maps_back_to_valid_empty() {
-            let mut state = GameState::new();
+            let mut state = Board::new();
             state.place(pos(7, 7), Stone::Black).unwrap();
 
             let empty_positions = state.empty_position_ids();
@@ -333,7 +319,7 @@ mod tests {
         fn all_transforms_produce_valid_moves() {
             let mut rng = fastrand::Rng::with_seed(42);
             let strategy = TestStrategy::random("test", &mut rng);
-            let state = GameState::new();
+            let state = Board::new();
 
             // Test with many different seeds to cover different random transforms
             for seed in 0..100 {
@@ -350,7 +336,7 @@ mod tests {
         #[test]
         fn transform_pipeline_preserves_best_position_semantics() {
             // Create a board with a specific pattern
-            let mut state = GameState::new();
+            let mut state = Board::new();
             state.place(pos(7, 7), Stone::Black).unwrap();
 
             let mut rng = fastrand::Rng::with_seed(42);

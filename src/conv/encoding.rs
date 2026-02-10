@@ -1,4 +1,4 @@
-use crate::game_state::GameState;
+use crate::board::Board;
 use crate::position_id::PositionId;
 use crate::position_map::PositionSliceMut;
 use crate::stone::Stone;
@@ -13,7 +13,7 @@ pub const INPUT_CHANNELS: usize = 2;
 /// - Channel 1: Opponent's stones (1.0 where present, 0.0 elsewhere)
 ///
 /// Layout: `[own_channel..., opponent_channel...]`
-pub fn encode_board(state: &GameState, current_stone: Stone) -> Vec<f32> {
+pub fn encode_board(board: &Board, current_stone: Stone) -> Vec<f32> {
     debug_assert_ne!(current_stone, Stone::Empty, "current_stone cannot be Empty");
 
     let mut encoding = vec![0.0f32; INPUT_CHANNELS * PositionId::COUNT];
@@ -22,7 +22,7 @@ pub fn encode_board(state: &GameState, current_stone: Stone) -> Vec<f32> {
     let mut opponent_channel = PositionSliceMut::new(opponent_data);
 
     for pos in PositionId::iter() {
-        let stone = state.stone(pos);
+        let stone = board.stone(pos);
 
         if stone == current_stone {
             own_channel[pos] = 1.0;
@@ -56,9 +56,9 @@ mod tests {
 
     #[test]
     fn empty_board_encodes_to_all_zeros() {
-        let state = GameState::new();
+        let board = Board::new();
 
-        let encoding = encode_board(&state, Stone::Black);
+        let encoding = encode_board(&board, Stone::Black);
 
         assert_eq!(encoding.len(), INPUT_CHANNELS * PositionId::COUNT);
         assert!(encoding.iter().all(|&v| v == 0.0));
@@ -66,11 +66,11 @@ mod tests {
 
     #[test]
     fn own_stone_appears_in_channel_zero() {
-        let mut state = GameState::new();
+        let mut board = Board::new();
         let center = PositionId::center();
-        state.place(center, Stone::Black).unwrap();
+        board.place(center, Stone::Black).unwrap();
 
-        let encoding = encode_board(&state, Stone::Black);
+        let encoding = encode_board(&board, Stone::Black);
         let (own_data, opponent_data) = encoding.split_at(PositionId::COUNT);
         let own_channel = PositionSlice::new(own_data);
         let opponent_channel = PositionSlice::new(opponent_data);
@@ -81,11 +81,11 @@ mod tests {
 
     #[test]
     fn opponent_stone_appears_in_channel_one() {
-        let mut state = GameState::new();
+        let mut board = Board::new();
         let center = PositionId::center();
-        state.place(center, Stone::White).unwrap();
+        board.place(center, Stone::White).unwrap();
 
-        let encoding = encode_board(&state, Stone::Black);
+        let encoding = encode_board(&board, Stone::Black);
         let (own_data, opponent_data) = encoding.split_at(PositionId::COUNT);
         let own_channel = PositionSlice::new(own_data);
         let opponent_channel = PositionSlice::new(opponent_data);
@@ -96,14 +96,14 @@ mod tests {
 
     #[test]
     fn perspective_reversal_swaps_channels() {
-        let mut state = GameState::new();
+        let mut board = Board::new();
         let center = PositionId::center();
         let adjacent = center.from_offset(Offset::new(0, 1)).unwrap();
-        state.place(center, Stone::Black).unwrap();
-        state.place(adjacent, Stone::White).unwrap();
+        board.place(center, Stone::Black).unwrap();
+        board.place(adjacent, Stone::White).unwrap();
 
-        let black_view = encode_board(&state, Stone::Black);
-        let white_view = encode_board(&state, Stone::White);
+        let black_view = encode_board(&board, Stone::Black);
+        let white_view = encode_board(&board, Stone::White);
 
         let (black_own, black_opp) = black_view.split_at(PositionId::COUNT);
         let black_own = PositionSlice::new(black_own);
@@ -124,13 +124,13 @@ mod tests {
 
     #[test]
     fn multiple_stones_encoded_correctly() {
-        let mut state = GameState::new();
+        let mut board = Board::new();
         let positions = [corner(), PositionId::center(), far_corner()];
         for &p in &positions {
-            state.place(p, Stone::Black).unwrap();
+            board.place(p, Stone::Black).unwrap();
         }
 
-        let encoding = encode_board(&state, Stone::Black);
+        let encoding = encode_board(&board, Stone::Black);
         let (own_data, opponent_data) = encoding.split_at(PositionId::COUNT);
         let own_channel = PositionSlice::new(own_data);
 

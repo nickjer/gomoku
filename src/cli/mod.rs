@@ -48,8 +48,6 @@ pub fn create_rng(seed: Option<u64>) -> fastrand::Rng {
     }
 }
 
-use crate::evolution::crossover::Crossover;
-use crate::evolution::mutation::Mutation;
 use crate::evolution::selection::{Selection, Tournament, TournamentMode};
 use crate::game::{Freestyle, Game};
 use crate::tournament::{Swiss, Tournament as CompetitionTournament};
@@ -96,41 +94,5 @@ impl From<CliSelectionMode> for Selection {
             CliSelectionMode::WithoutReplacement => TournamentMode::WithoutReplacement,
         };
         Tournament::new(3, mode).into()
-    }
-}
-
-/// Crossover operators for permutation-based strategies (NN1-4).
-#[derive(Debug, Clone, Copy, Default, ValueEnum)]
-pub enum PermutationCrossover {
-    #[default]
-    Order,
-    Pmx,
-}
-
-impl From<PermutationCrossover> for Crossover {
-    fn from(cli: PermutationCrossover) -> Self {
-        match cli {
-            PermutationCrossover::Order => Crossover::Order,
-            PermutationCrossover::Pmx => Crossover::Pmx,
-        }
-    }
-}
-
-/// Mutation operators for permutation-based strategies (NN1-4).
-#[derive(Debug, Clone, Copy, Default, ValueEnum)]
-pub enum PermutationMutation {
-    #[default]
-    Swap,
-    Insert,
-    Inversion,
-}
-
-impl From<PermutationMutation> for Mutation {
-    fn from(cli: PermutationMutation) -> Self {
-        match cli {
-            PermutationMutation::Swap => Mutation::Swap,
-            PermutationMutation::Insert => Mutation::Insert,
-            PermutationMutation::Inversion => Mutation::Inversion,
-        }
     }
 }

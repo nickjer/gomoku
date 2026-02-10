@@ -205,12 +205,6 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> EvolvableGe
             Crossover::Uniform => {
                 Self::from_vec(uniform_crossover(self.as_ref(), other.as_ref(), rng))
             }
-            Crossover::Order => {
-                panic!("Order crossover is not supported for continuous genes")
-            }
-            Crossover::Pmx => {
-                panic!("PMX crossover is not supported for continuous genes")
-            }
         }
     }
 
@@ -218,15 +212,6 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> EvolvableGe
         match mutation {
             Mutation::Gaussian { sigma } => {
                 Self::from_vec(gaussian_mutate(self.as_ref(), sigma, rng))
-            }
-            Mutation::Swap => {
-                panic!("Swap mutation is not supported for continuous genes")
-            }
-            Mutation::Insert => {
-                panic!("Insert mutation is not supported for continuous genes")
-            }
-            Mutation::Inversion => {
-                panic!("Inversion mutation is not supported for continuous genes")
             }
         }
     }
@@ -421,52 +406,5 @@ mod tests {
         assert_eq!(result.as_ref().len(), TestWeights::TOTAL);
         let changed = result.as_ref().iter().filter(|&&val| val != 0.0).count();
         assert!(changed > 0, "some values should change");
-    }
-
-    #[test]
-    #[should_panic(expected = "Order crossover is not supported for continuous genes")]
-    fn crossover_with_order_panics() {
-        let mut rng = fastrand::Rng::with_seed(42);
-        let parent1 = TestWeights::random(&mut rng);
-        let parent2 = TestWeights::random(&mut rng);
-
-        let _ = parent1.crossover(&parent2, Crossover::Order, &mut rng);
-    }
-
-    #[test]
-    #[should_panic(expected = "PMX crossover is not supported for continuous genes")]
-    fn crossover_with_pmx_panics() {
-        let mut rng = fastrand::Rng::with_seed(42);
-        let parent1 = TestWeights::random(&mut rng);
-        let parent2 = TestWeights::random(&mut rng);
-
-        let _ = parent1.crossover(&parent2, Crossover::Pmx, &mut rng);
-    }
-
-    #[test]
-    #[should_panic(expected = "Swap mutation is not supported for continuous genes")]
-    fn mutate_with_swap_panics() {
-        let mut rng = fastrand::Rng::with_seed(42);
-        let weights = TestWeights::random(&mut rng);
-
-        let _ = weights.mutate(Mutation::Swap, &mut rng);
-    }
-
-    #[test]
-    #[should_panic(expected = "Insert mutation is not supported for continuous genes")]
-    fn mutate_with_insert_panics() {
-        let mut rng = fastrand::Rng::with_seed(42);
-        let weights = TestWeights::random(&mut rng);
-
-        let _ = weights.mutate(Mutation::Insert, &mut rng);
-    }
-
-    #[test]
-    #[should_panic(expected = "Inversion mutation is not supported for continuous genes")]
-    fn mutate_with_inversion_panics() {
-        let mut rng = fastrand::Rng::with_seed(42);
-        let weights = TestWeights::random(&mut rng);
-
-        let _ = weights.mutate(Mutation::Inversion, &mut rng);
     }
 }

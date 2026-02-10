@@ -1,5 +1,4 @@
-use crate::cache_id::CacheId;
-use crate::game_state::GameState;
+use crate::board::Board;
 use crate::position_id::PositionId;
 use crate::stone::Stone;
 use crate::strategy::Strategy;
@@ -19,17 +18,13 @@ impl Random {
 }
 
 impl Strategy for Random {
-    fn cache_dependencies(&self) -> &[CacheId] {
-        &[]
-    }
-
     fn choose_move(
         &self,
         _current_stone: Stone,
-        state: &GameState,
+        board: &Board,
         rng: &mut fastrand::Rng,
     ) -> PositionId {
-        let empty = state.empty_position_ids();
+        let empty = board.empty_position_ids();
         let index = rng.usize(..empty.len());
         empty[index]
     }
@@ -46,18 +41,11 @@ mod tests {
     #[test]
     fn chooses_from_empty_positions() {
         let strategy = Random::new("test");
-        let state = GameState::new();
+        let board = Board::new();
         let mut rng = fastrand::Rng::new();
 
-        let chosen = strategy.choose_move(Stone::Black, &state, &mut rng);
+        let chosen = strategy.choose_move(Stone::Black, &board, &mut rng);
 
-        assert!(state.empty_position_ids().contains(&chosen));
-    }
-
-    #[test]
-    fn has_no_cache_dependencies() {
-        let strategy = Random::new("test");
-
-        assert!(strategy.cache_dependencies().is_empty());
+        assert!(board.empty_position_ids().contains(&chosen));
     }
 }

@@ -1,6 +1,6 @@
 use tracing::instrument;
 
-use crate::game_state::GameState;
+use crate::board::Board;
 use crate::match_result::MatchResult;
 use crate::stone::Stone;
 use crate::strategy::Strategy;
@@ -25,34 +25,32 @@ impl Freestyle {
         white_strategy: &dyn Strategy,
         rng: &mut fastrand::Rng,
     ) -> MatchResult {
-        let mut state = GameState::new();
-        state.activate_for(black_strategy);
-        state.activate_for(white_strategy);
+        let mut board = Board::new();
 
         let mut turn_count: u32 = 0;
 
-        while !state.is_finished() {
+        while !board.is_finished() {
             let (strategy, stone): (&dyn Strategy, Stone) = if turn_count.is_multiple_of(2) {
                 (black_strategy, Stone::Black)
             } else {
                 (white_strategy, Stone::White)
             };
 
-            let position_id = strategy.choose_move(stone, &state, rng);
-            state
+            let position_id = strategy.choose_move(stone, &board, rng);
+            board
                 .place(position_id, stone)
                 .expect("strategy returned invalid move");
             turn_count += 1;
         }
 
-        let outcome = state.outcome().expect("game finished without outcome");
+        let outcome = board.outcome().expect("game finished without outcome");
 
         MatchResult::new(
             outcome,
             black_strategy.label().to_string(),
             white_strategy.label().to_string(),
             turn_count,
-            state.to_string(),
+            board.to_string(),
         )
     }
 }

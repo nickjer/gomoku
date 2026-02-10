@@ -249,7 +249,6 @@ fn log_fitness_breakdown<S: Strategy>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gene::Gene;
     use crate::strategy::{EvolvableStrategy, Strategy};
     use crate::test_utils::FakeEvolvableStrategy;
 
@@ -382,9 +381,9 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(42);
         let strategies = make_strategies(&mut rng, 4);
 
-        let parent_genes: Vec<Vec<Gene>> = strategies
+        let parent_genes: Vec<Vec<f32>> = strategies
             .iter()
-            .map(|strat| strat.genes().clone())
+            .map(|strat| strat.genes().as_ref().to_vec())
             .collect();
 
         // Run one generation with no crossover, no mutation
@@ -397,11 +396,10 @@ mod tests {
 
         // Every offspring should have genes identical to some parent
         for individual in gen1.individuals() {
-            let genes = individual.strategy().genes();
+            let genes: Vec<f32> = individual.strategy().genes().as_ref().to_vec();
             assert!(
-                parent_genes.iter().any(|parent| parent == genes),
-                "offspring genes {:?} should match a parent",
-                genes
+                parent_genes.iter().any(|parent| *parent == genes),
+                "offspring genes should match a parent",
             );
         }
     }
@@ -411,9 +409,9 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(42);
         let strategies = make_strategies(&mut rng, 4);
 
-        let parent_genes: Vec<Vec<Gene>> = strategies
+        let parent_genes: Vec<Vec<f32>> = strategies
             .iter()
-            .map(|strat| strat.genes().clone())
+            .map(|strat| strat.genes().as_ref().to_vec())
             .collect();
 
         // Run one generation with no crossover but 100% mutation
@@ -426,33 +424,10 @@ mod tests {
 
         // At least one offspring should have different genes than all parents
         let any_mutated = gen1.individuals().iter().any(|individual| {
-            let genes = individual.strategy().genes();
-            !parent_genes.iter().any(|parent| parent == genes)
+            let genes: Vec<f32> = individual.strategy().genes().as_ref().to_vec();
+            !parent_genes.iter().any(|parent| *parent == genes)
         });
 
         assert!(any_mutated, "some offspring should have mutated genes");
-    }
-
-    #[test]
-    fn crossover_rate_one_produces_valid_permutations() {
-        let mut rng = fastrand::Rng::with_seed(42);
-        let strategies = make_strategies(&mut rng, 4);
-
-        // Run one generation with 100% crossover but no mutation
-        let gen1 = Evolver::new()
-            .elitism(0)
-            .generations(1)
-            .crossover_rate(1.0)
-            .mutation_rate(0.0)
-            .evolve(strategies, &mut rng);
-
-        // With crossover, offspring genes should still be valid permutations
-        for individual in gen1.individuals() {
-            let genes = individual.strategy().genes();
-            let mut sorted: Vec<Gene> = genes.clone();
-            sorted.sort();
-            let expected: Vec<Gene> = (0..5).map(Gene::new).collect();
-            assert_eq!(sorted, expected, "genes should be valid permutation");
-        }
     }
 }

@@ -1,19 +1,15 @@
-use crate::cache_id::CacheId;
+use crate::board::Board;
 use crate::evolution::EvolvableGenes;
-use crate::game_state::GameState;
 use crate::position_id::PositionId;
 use crate::stone::Stone;
 
 /// A strategy for choosing moves in Gomoku.
 pub trait Strategy {
-    /// Returns the cache dependencies required by this strategy.
-    fn cache_dependencies(&self) -> &[CacheId];
-
     /// Chooses a move for the current player.
     fn choose_move(
         &self,
         current_stone: Stone,
-        state: &GameState,
+        board: &Board,
         rng: &mut fastrand::Rng,
     ) -> PositionId;
 

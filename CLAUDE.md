@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Gomoku is a genetic algorithm tool that evolves strategies to play Gomoku (five in a row) by learning optimal priority orderings of local board patterns.
+Gomoku is a genetic algorithm tool that evolves CNN-based strategies to play Gomoku (five in a row).
 
 ## Build and Development Commands
 
@@ -25,25 +25,11 @@ cargo fmt                # Format code
 - **PositionId**: Encapsulates board positions (0-224), supports neighbor navigation
 - **Offset**: Direction vectors for neighbor calculations
 
-### Fingerprint System
-Fingerprints encode local board patterns as `NeighborCounts` tuples of (player, opponent, empty) for neighbor rings:
-- **NN1**: 4 orthogonal neighbors at distance 1 (~70 fingerprints)
-- **NN2**: NN1 + 4 diagonal neighbors (~1,100 fingerprints)
-- **NN3**: NN2 + 4 orthogonal neighbors at distance 2 (~10,000 fingerprints)
-- **NN4**: NN3 + 8 knight-move neighbors (~100,000 fingerprints)
-
 ### Strategy
 Strategies implement the `Strategy` trait. Evolvable strategies additionally implement `EvolvableStrategy` with gene manipulation methods.
 
-- **Fingerprint strategies (NN1-NN4)**: Select moves based on priority ordering of local patterns
 - **Conv strategies (ConvTiny, ConvSmall)**: CNN-based policy networks with 3×3 kernels
 - **InteractiveStrategy**: TUI-based human input, generic over `Backend` for testability
-
-Move selection for fingerprint-based strategies (NN1-NN4):
-1. Calculate fingerprint for each empty position
-2. Find fingerprint's index in the gene list (priority)
-3. Select position with highest priority (lowest index)
-4. Break ties randomly
 
 Move selection for conv strategies:
 1. Encode board as 2-channel tensor (own stones, opponent stones)
@@ -66,31 +52,28 @@ The `Tournament` enum manages competition formats using `enum_dispatch`:
 ### Evolution
 The `Evolver` orchestrates the genetic algorithm. Call `evolve(strategies, rng)` with initial strategies.
 
-- **Fitness**: Swiss tournament ranking (`population_size - rank`)
+- **Fitness**: Weighted combination of tournament ranking and threat defense evaluation
 - **Selection** enum: `TournamentWithReplacement`, `TournamentWithoutReplacement`
-- **Crossover** enum: `Order` (OX), `Pmx` (Partially Mapped Crossover)
-- **Mutation** enum: `Swap`, `Insert`, `Inversion`
+- **Crossover** enum: `Uniform`
+- **Mutation** enum: `Gaussian { sigma }`
 - **Elitism**: Preserve top N performers unchanged each generation
 - **Game**: Game variant to use for matches (defaults to `Freestyle`)
-
-### Caching
-`CacheRepository` provides lazy-loaded `NeighborCountsCache` instances for each NN level, updated incrementally as stones are placed.
 
 ### CLI
 
 **Subcommands:** `evolve`, `play`, `interactive`
 
-The `evolve` command has strategy-type subcommands: `nn1`, `nn2`, `nn3`, `nn4`, `conv-tiny`, `conv-small`.
+The `evolve` command has strategy-type subcommands: `conv-tiny`, `conv-small`.
 
 ```bash
-# Generate and evolve 16 random NN4 strategies for 10 generations
-cargo run --release -- evolve nn4 -p 16 -o tmp/output -g 10
+# Evolve ConvTiny CNN strategies
+cargo run --release -- evolve conv-tiny -p 16 -o tmp/output -g 10 --seed 42
 
 # Evolve ConvSmall CNN strategies
 cargo run --release -- evolve conv-small -p 8 -o tmp/output -g 20 --seed 42
 
 # Continue evolving from saved strategies
-cargo run --release -- evolve nn4 -i tmp/output -o tmp/output2 -g 50
+cargo run --release -- evolve conv-small -i tmp/output -o tmp/output2 -g 50
 
 # Play a game between two strategies
 cargo run --release -- play tmp/output/1_*.bin tmp/output/2_*.bin
@@ -110,11 +93,11 @@ cargo run --release -- interactive tmp/output/1_*.bin --play-as white
 - `-i/--input`: Load strategies from directory (skips random generation)
 - `-g/--generations` [10]: Number of generations to evolve
 - `-e/--elitism` [2]: Number of top performers preserved each generation
-- `-c/--crossover` (order/pmx) [order]: Crossover operator (fingerprint strategies only)
 - `--crossover-rate` [0.8]: Crossover probability
-- `-m/--mutation` (swap/insert/inversion) [swap]: Mutation operator (fingerprint strategies only)
 - `--mutation-rate` [0.1]: Mutation probability
-- `--sigma` [0.01]: Gaussian mutation sigma (conv strategies only)
+- `--sigma` [0.01]: Gaussian mutation sigma
+- `--tournament-weight` [1.0]: Tournament evaluator weight (0 to disable)
+- `--defense-weight` [0.0]: Threat defense evaluator weight (0 to disable)
 - `--seed`: RNG seed for reproducibility
 - `-l/--log-level`: Log level (error/warn/info/debug/trace)
 

@@ -2,11 +2,10 @@
 
 use std::cell::Cell;
 
-use crate::cache_id::CacheId;
+use crate::board::Board;
+use crate::conv::{ConvTiny, ConvWeights};
 use crate::evolution::fitness_score::FitnessScore;
 use crate::evolution::selection::HasFitness;
-use crate::game_state::GameState;
-use crate::gene::Gene;
 use crate::position::Position;
 use crate::position_id::PositionId;
 use crate::stone::Stone;
@@ -85,14 +84,10 @@ impl ScriptedStrategy {
 }
 
 impl Strategy for ScriptedStrategy {
-    fn cache_dependencies(&self) -> &[CacheId] {
-        &[]
-    }
-
     fn choose_move(
         &self,
         _current_stone: Stone,
-        _state: &GameState,
+        _board: &Board,
         _rng: &mut fastrand::Rng,
     ) -> PositionId {
         let idx = self.index.get();
@@ -156,14 +151,10 @@ impl StubStrategy {
 }
 
 impl Strategy for StubStrategy {
-    fn cache_dependencies(&self) -> &[CacheId] {
-        &[]
-    }
-
     fn choose_move(
         &self,
         _current_stone: Stone,
-        _state: &GameState,
+        _board: &Board,
         _rng: &mut fastrand::Rng,
     ) -> PositionId {
         panic!("StubStrategy::choose_move should not be called in tournament tests")
@@ -175,20 +166,18 @@ impl Strategy for StubStrategy {
 }
 
 /// A fake evolvable strategy for evolution tests.
+///
+/// Uses `ConvTiny` weights as its gene type for lightweight testing.
 pub struct FakeEvolvableStrategy {
     label: String,
-    genes: Vec<Gene>,
+    weights: <ConvTiny as EvolvableStrategy>::Genes,
 }
 
 impl Strategy for FakeEvolvableStrategy {
-    fn cache_dependencies(&self) -> &[CacheId] {
-        &[]
-    }
-
     fn choose_move(
         &self,
         _current_stone: Stone,
-        _state: &GameState,
+        _board: &Board,
         _rng: &mut fastrand::Rng,
     ) -> PositionId {
         panic!("FakeEvolvableStrategy::choose_move should not be called")
@@ -200,25 +189,23 @@ impl Strategy for FakeEvolvableStrategy {
 }
 
 impl EvolvableStrategy for FakeEvolvableStrategy {
-    type Genes = Vec<Gene>;
+    type Genes = ConvWeights<3, 32, 2, 0>;
 
     fn random(label: impl Into<String>, rng: &mut fastrand::Rng) -> Self {
-        let mut genes: Vec<Gene> = (0..5).map(Gene::new).collect();
-        rng.shuffle(&mut genes);
         Self {
             label: label.into(),
-            genes,
+            weights: ConvWeights::random(rng),
         }
     }
 
     fn genes(&self) -> &Self::Genes {
-        &self.genes
+        &self.weights
     }
 
     fn from_genes(label: impl Into<String>, genes: Self::Genes) -> Self {
         Self {
             label: label.into(),
-            genes,
+            weights: genes,
         }
     }
 }
