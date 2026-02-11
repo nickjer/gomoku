@@ -8,7 +8,8 @@ use crate::position_map::{PositionMap, PositionSlice, PositionSliceMut};
 /// into a contiguous slice. Out-of-bounds positions are zero-padded.
 ///
 /// The workspace stride must equal `input.stride() * K * K`.
-#[inline]
+#[allow(clippy::inline_always)]
+#[inline(always)]
 fn gather_workspace<const K: usize>(
     input: PositionSlice<'_, f32>,
     mut workspace: PositionSliceMut<'_, f32>,
@@ -41,7 +42,8 @@ fn gather_workspace<const K: usize>(
 /// - `workspace`: per-position padded input neighborhoods
 /// - `weights`: `[workspace.stride()][OUT_C]` layout
 /// - `bias`: `[OUT_C]`
-#[inline]
+#[allow(clippy::inline_always)]
+#[inline(always)]
 fn conv2d_from_workspace<const OUT_C: usize>(
     workspace: PositionSlice<'_, f32>,
     weights: &[f32],
