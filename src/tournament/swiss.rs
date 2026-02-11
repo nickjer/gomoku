@@ -35,12 +35,15 @@ impl Swiss {
     ) {
         let pairings = Self::generate_pairings(state);
 
-        for (black_idx, white_idx) in pairings {
-            if let Some(white_idx) = white_idx {
-                let result = game.play(&strategies[black_idx], &strategies[white_idx], rng);
-                Self::update_state(state, black_idx, white_idx, result.outcome());
+        for (first_idx, second_idx) in pairings {
+            if let Some(second_idx) = second_idx {
+                let result = game.play(&strategies[first_idx], &strategies[second_idx], rng);
+                Self::update_state(state, first_idx, second_idx, result.outcome());
+
+                let rematch = game.play(&strategies[second_idx], &strategies[first_idx], rng);
+                Self::update_state(state, second_idx, first_idx, rematch.outcome());
             } else {
-                state.award_bye(black_idx);
+                state.award_bye(first_idx);
             }
         }
     }
@@ -325,6 +328,23 @@ mod tests {
         let standings = tournament.run(&strategies, &game, &mut rng);
 
         assert_eq!(labels(&standings, &strategies), vec!["a", "d", "b", "c"]);
+    }
+
+    #[test]
+    fn each_pairing_plays_two_games_with_swapped_colors() {
+        let game: Game = Scripted::new().add("a", "b", Some("a")).into();
+        let tournament = Swiss::new();
+        let strategies = make_strategies(&["a", "b"]);
+        let mut rng = fastrand::Rng::new();
+
+        let standings = tournament.run(&strategies, &game, &mut rng);
+
+        let winner = &standings[0];
+        let loser = &standings[1];
+        assert_eq!(winner.wins(), 2);
+        assert_eq!(winner.losses(), 0);
+        assert_eq!(loser.wins(), 0);
+        assert_eq!(loser.losses(), 2);
     }
 
     #[test]
