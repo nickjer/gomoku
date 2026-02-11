@@ -1,6 +1,6 @@
 use crate::board::Board;
 use crate::position_id::PositionId;
-use crate::position_map::PositionSliceMut;
+use crate::position_map::PositionMap;
 use crate::stone::Stone;
 
 /// Number of input channels for board encoding (own stones, opponent stones).
@@ -8,26 +8,21 @@ pub const INPUT_CHANNELS: usize = 2;
 
 /// Encodes the board from the perspective of the current player.
 ///
-/// Returns a flat array of length `2 * PositionId::COUNT` containing:
-/// - Channel 0: Current player's stones (1.0 where present, 0.0 elsewhere)
-/// - Channel 1: Opponent's stones (1.0 where present, 0.0 elsewhere)
-///
-/// Layout: `[own_channel..., opponent_channel...]`
-pub fn encode_board(board: &Board, current_stone: Stone) -> Vec<f32> {
+/// Returns a `PositionMap` with `INPUT_CHANNELS` channels per position:
+/// channel 0 is the current player's stones, channel 1 is the opponent's stones.
+/// Values are 1.0 (stone present) or 0.0.
+pub fn encode_board(board: &Board, current_stone: Stone) -> PositionMap<f32, INPUT_CHANNELS> {
     debug_assert_ne!(current_stone, Stone::Empty, "current_stone cannot be Empty");
 
-    let mut encoding = vec![0.0f32; INPUT_CHANNELS * PositionId::COUNT];
-    let (own_data, opponent_data) = encoding.split_at_mut(PositionId::COUNT);
-    let mut own_channel = PositionSliceMut::new(own_data);
-    let mut opponent_channel = PositionSliceMut::new(opponent_data);
+    let mut encoding = PositionMap::<f32, INPUT_CHANNELS>::new(0.0);
 
     for pos in PositionId::iter() {
         let stone = board.stone(pos);
 
         if stone == current_stone {
-            own_channel[pos] = 1.0;
+            encoding.get_mut(pos)[0] = 1.0;
         } else if stone != Stone::Empty {
-            opponent_channel[pos] = 1.0;
+            encoding.get_mut(pos)[1] = 1.0;
         }
     }
 
@@ -39,7 +34,6 @@ mod tests {
     use super::*;
     use crate::offset::Offset;
     use crate::position::Position;
-    use crate::position_map::PositionSlice;
 
     fn pos(row: usize, col: usize) -> PositionId {
         PositionId::from_position(Position::new(row, col))
@@ -60,8 +54,11 @@ mod tests {
 
         let encoding = encode_board(&board, Stone::Black);
 
-        assert_eq!(encoding.len(), INPUT_CHANNELS * PositionId::COUNT);
-        assert!(encoding.iter().all(|&v| v == 0.0));
+        assert_eq!(
+            encoding.as_slice().len(),
+            INPUT_CHANNELS * PositionId::COUNT
+        );
+        assert!(encoding.as_slice().iter().all(|&v| v == 0.0));
     }
 
     #[test]
@@ -71,12 +68,8 @@ mod tests {
         board.place(center, Stone::Black).unwrap();
 
         let encoding = encode_board(&board, Stone::Black);
-        let (own_data, opponent_data) = encoding.split_at(PositionId::COUNT);
-        let own_channel = PositionSlice::new(own_data);
-        let opponent_channel = PositionSlice::new(opponent_data);
 
-        assert_eq!(own_channel[center], 1.0);
-        assert_eq!(opponent_channel[center], 0.0);
+        assert_eq!(encoding.get(center), &[1.0, 0.0]);
     }
 
     #[test]
@@ -86,12 +79,8 @@ mod tests {
         board.place(center, Stone::White).unwrap();
 
         let encoding = encode_board(&board, Stone::Black);
-        let (own_data, opponent_data) = encoding.split_at(PositionId::COUNT);
-        let own_channel = PositionSlice::new(own_data);
-        let opponent_channel = PositionSlice::new(opponent_data);
 
-        assert_eq!(own_channel[center], 0.0);
-        assert_eq!(opponent_channel[center], 1.0);
+        assert_eq!(encoding.get(center), &[0.0, 1.0]);
     }
 
     #[test]
@@ -105,21 +94,13 @@ mod tests {
         let black_view = encode_board(&board, Stone::Black);
         let white_view = encode_board(&board, Stone::White);
 
-        let (black_own, black_opp) = black_view.split_at(PositionId::COUNT);
-        let black_own = PositionSlice::new(black_own);
-        let black_opp = PositionSlice::new(black_opp);
-
-        let (white_own, white_opp) = white_view.split_at(PositionId::COUNT);
-        let white_own = PositionSlice::new(white_own);
-        let white_opp = PositionSlice::new(white_opp);
-
         // From Black's perspective: center is own, adjacent is opponent
-        assert_eq!(black_own[center], 1.0);
-        assert_eq!(black_opp[adjacent], 1.0);
+        assert_eq!(black_view.get(center)[0], 1.0);
+        assert_eq!(black_view.get(adjacent)[1], 1.0);
 
         // From White's perspective: adjacent is own, center is opponent
-        assert_eq!(white_own[adjacent], 1.0);
-        assert_eq!(white_opp[center], 1.0);
+        assert_eq!(white_view.get(adjacent)[0], 1.0);
+        assert_eq!(white_view.get(center)[1], 1.0);
     }
 
     #[test]
@@ -131,19 +112,22 @@ mod tests {
         }
 
         let encoding = encode_board(&board, Stone::Black);
-        let (own_data, opponent_data) = encoding.split_at(PositionId::COUNT);
-        let own_channel = PositionSlice::new(own_data);
 
         // All three positions should be 1.0 in own channel
         for &p in &positions {
-            assert_eq!(own_channel[p], 1.0);
+            assert_eq!(encoding.get(p)[0], 1.0);
         }
 
-        // Count total 1.0s in own channel should be exactly 3
-        let own_count = own_data.iter().filter(|&&v| v == 1.0).count();
+        // Count total positions with own=1.0 should be exactly 3
+        let own_count = PositionId::iter()
+            .filter(|&p| encoding.get(p)[0] == 1.0)
+            .count();
         assert_eq!(own_count, 3);
 
-        // Opponent channel should be all zeros
-        assert!(opponent_data.iter().all(|&v| v == 0.0));
+        // No opponent stones
+        let opp_count = PositionId::iter()
+            .filter(|&p| encoding.get(p)[1] == 1.0)
+            .count();
+        assert_eq!(opp_count, 0);
     }
 }

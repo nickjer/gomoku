@@ -2,12 +2,12 @@ use tracing::instrument;
 
 use crate::board::Board;
 use crate::position_id::PositionId;
-use crate::position_map::{PositionSlice, PositionSliceMut};
+use crate::position_map::{PositionMap, PositionSlice};
 use crate::stone::Stone;
 use crate::strategy::{EvolvableStrategy, Strategy};
 
 use super::encoding::{INPUT_CHANNELS, encode_board};
-use super::layer::{conv2d_im2col, relu_inplace};
+use super::layer::{conv2d, relu_inplace};
 use super::select::select_best_position;
 use super::symmetry::D8Transform;
 use super::weights::ConvWeights;
@@ -36,43 +36,43 @@ pub type ConvSmall = ConvStrategy<3, 64, 4, 0>;
 impl<const K: usize, const C: usize, const L: usize, const R: usize> ConvStrategy<K, C, L, R> {
     /// Forward pass through the network.
     ///
-    /// Input: `[2 * PositionId::COUNT]` (two-channel board encoding)
-    /// Output: `[PositionId::COUNT]` (policy logits for each position)
-    fn forward(&self, input: &[f32]) -> Vec<f32> {
-        // Allocate patch buffer for im2col (reused across all layers)
+    /// Input: encoding with `INPUT_CHANNELS` channels per position.
+    /// Output: `PositionMap<f32, 1>` with policy logits for each position.
+    fn forward(&self, input: &[f32]) -> PositionMap<f32, 1> {
+        // Allocate workspace (reused across all layers)
         // First layer needs INPUT_CHANNELS * K * K, hidden layers need C * K * K
         const fn max(a: usize, b: usize) -> usize {
             if a > b { a } else { b }
         }
-        let patch_buffer_size = PositionId::COUNT * max(INPUT_CHANNELS, C) * K * K;
-        let mut patch_buffer = vec![0.0f32; patch_buffer_size];
+        let workspace_size = PositionId::COUNT * max(INPUT_CHANNELS, C) * K * K;
+        let mut workspace = vec![0.0f32; workspace_size];
 
         // First conv: INPUT_CHANNELS -> C channels
-        let mut x = conv2d_im2col::<INPUT_CHANNELS, C, K>(
+        let mut x = conv2d::<INPUT_CHANNELS, C, K>(
             input,
             self.weights.first_conv_weights(),
             self.weights.first_conv_bias(),
-            &mut patch_buffer,
+            &mut workspace,
         );
-        relu_inplace(&mut x);
+        relu_inplace(x.as_mut_slice());
 
         // Hidden convs: C -> C channels
         for i in 0..(L - 1) {
-            x = conv2d_im2col::<C, C, K>(
-                &x,
+            x = conv2d::<C, C, K>(
+                x.as_slice(),
                 self.weights.hidden_conv_weights(i),
                 self.weights.hidden_conv_bias(i),
-                &mut patch_buffer,
+                &mut workspace,
             );
-            relu_inplace(&mut x);
+            relu_inplace(x.as_mut_slice());
         }
 
         // Final conv: C -> 1 channel (1×1 kernel)
-        conv2d_im2col::<C, 1, 1>(
-            &x,
+        conv2d::<C, 1, 1>(
+            x.as_slice(),
             self.weights.final_conv_weights(),
             &[self.weights.final_conv_bias()],
-            &mut patch_buffer,
+            &mut workspace,
         )
     }
 }
@@ -96,7 +96,7 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> Strategy
         let transformed_encoding = transform_encoding(&encoding, |pos| transform.apply(pos));
 
         // Forward pass
-        let policy_vec = self.forward(&transformed_encoding);
+        let policy = self.forward(transformed_encoding.as_slice());
 
         // Transform empty positions to transformed space
         let transformed_empty: Vec<PositionId> = board
@@ -106,8 +106,11 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> Strategy
             .collect();
 
         // Select best position in transformed space
-        let transformed_pos =
-            select_best_position(&transformed_empty, PositionSlice::new(&policy_vec), rng);
+        let transformed_pos = select_best_position(
+            &transformed_empty,
+            PositionSlice::new(policy.as_slice(), 1),
+            rng,
+        );
 
         // Map selected position back to original orientation
         transform.apply_inverse(transformed_pos)
@@ -142,25 +145,17 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> EvolvableSt
     }
 }
 
-/// Transforms a 2-channel encoding by applying a position transformation.
+/// Transforms an encoding by applying a position transformation.
 ///
-/// For each position `p`, sets `output[f(p)] = input[p]`.
-fn transform_encoding(encoding: &[f32], f: impl Fn(PositionId) -> PositionId) -> Vec<f32> {
-    let mut result = vec![0.0f32; encoding.len()];
-    let (own_in, opp_in) = encoding.split_at(PositionId::COUNT);
-    let (own_out, opp_out) = result.split_at_mut(PositionId::COUNT);
-
-    let own_in = PositionSlice::new(own_in);
-    let opp_in = PositionSlice::new(opp_in);
-    let mut own_out = PositionSliceMut::new(own_out);
-    let mut opp_out = PositionSliceMut::new(opp_out);
-
+/// For each position `p`, copies all channels from `encoding[p]` to `result[f(p)]`.
+fn transform_encoding(
+    encoding: &PositionMap<f32, INPUT_CHANNELS>,
+    f: impl Fn(PositionId) -> PositionId,
+) -> PositionMap<f32, INPUT_CHANNELS> {
+    let mut result = PositionMap::<f32, INPUT_CHANNELS>::new(0.0);
     for pos in PositionId::iter() {
-        let dst_pos = f(pos);
-        own_out[dst_pos] = own_in[pos];
-        opp_out[dst_pos] = opp_in[pos];
+        *result.get_mut(f(pos)) = *encoding.get(pos);
     }
-
     result
 }
 
@@ -175,11 +170,11 @@ mod tests {
     fn forward_produces_correct_output_size() {
         let mut rng = fastrand::Rng::with_seed(42);
         let strategy = TestStrategy::random("test", &mut rng);
-        let input = vec![0.0f32; 2 * PositionId::COUNT];
+        let input = vec![0.0f32; INPUT_CHANNELS * PositionId::COUNT];
 
         let output = strategy.forward(&input);
 
-        assert_eq!(output.len(), PositionId::COUNT);
+        assert_eq!(output.as_slice().len(), PositionId::COUNT);
     }
 
     #[test]
@@ -242,28 +237,24 @@ mod tests {
 
     #[test]
     fn transform_encoding_with_identity_preserves_values() {
-        let encoding: Vec<f32> = (0..2 * PositionId::COUNT).map(|i| i as f32).collect();
+        let encoding = encode_board(&Board::new(), Stone::Black);
 
         let result = transform_encoding(&encoding, |pos| pos);
 
-        assert_eq!(result, encoding);
+        assert_eq!(result.as_slice(), encoding.as_slice());
     }
 
     #[test]
     fn transform_encoding_with_invert_moves_values() {
-        let mut encoding = vec![0.0f32; 2 * PositionId::COUNT];
+        let mut encoding = PositionMap::<f32, INPUT_CHANNELS>::new(0.0);
         let first_pos = PositionId::iter().next().unwrap();
         let last_pos = first_pos.invert();
 
-        // Set distinctive values at first position in both channels
-        encoding[PositionId::COUNT * 0 + usize::from(first_pos)] = 1.0;
-        encoding[PositionId::COUNT * 1 + usize::from(first_pos)] = 2.0;
+        *encoding.get_mut(first_pos) = [1.0, 2.0];
 
         let result = transform_encoding(&encoding, PositionId::invert);
 
-        // After invert, first_pos maps to last_pos
-        assert_eq!(result[PositionId::COUNT * 0 + usize::from(last_pos)], 1.0);
-        assert_eq!(result[PositionId::COUNT * 1 + usize::from(last_pos)], 2.0);
+        assert_eq!(result.get(last_pos), &[1.0, 2.0]);
     }
 
     mod transform_pipeline_tests {
@@ -296,16 +287,12 @@ mod tests {
             let empty_positions = state.empty_position_ids();
 
             for transform in D8Transform::ALL {
-                // Transform empty positions
                 let transformed_empty: Vec<PositionId> = empty_positions
                     .iter()
                     .map(|&p| transform.apply(p))
                     .collect();
 
-                // Pick any transformed position
                 let transformed_pos = transformed_empty[0];
-
-                // Map back to original
                 let original_pos = transform.apply_inverse(transformed_pos);
 
                 assert!(
@@ -321,7 +308,6 @@ mod tests {
             let strategy = TestStrategy::random("test", &mut rng);
             let state = Board::new();
 
-            // Test with many different seeds to cover different random transforms
             for seed in 0..100 {
                 let mut rng = fastrand::Rng::with_seed(seed);
                 let chosen = strategy.choose_move(Stone::Black, &state, &mut rng);
@@ -335,19 +321,16 @@ mod tests {
 
         #[test]
         fn transform_pipeline_preserves_best_position_semantics() {
-            // Create a board with a specific pattern
             let mut state = Board::new();
             state.place(pos(7, 7), Stone::Black).unwrap();
 
             let mut rng = fastrand::Rng::with_seed(42);
             let strategy = TestStrategy::random("test", &mut rng);
 
-            // Run many times with different transforms
             for seed in 0..50 {
                 let mut rng = fastrand::Rng::with_seed(seed);
                 let chosen = strategy.choose_move(Stone::Black, &state, &mut rng);
 
-                // The chosen position must be empty
                 assert!(
                     state.empty_position_ids().contains(&chosen),
                     "seed {seed}: position {chosen:?} is not empty"

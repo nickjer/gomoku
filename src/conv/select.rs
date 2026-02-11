@@ -19,11 +19,11 @@ pub fn select_best_position(
         .expect("no empty positions to select from");
 
     let mut best_pos = first;
-    let mut best_value = policy[first];
+    let mut best_value = policy.get(first)[0];
     let mut tie_count = 1;
 
     for &pos in rest {
-        let value = policy[pos];
+        let value = policy.get(pos)[0];
 
         if value > best_value {
             best_value = value;
@@ -45,17 +45,18 @@ pub fn select_best_position(
 mod tests {
     use super::*;
     use crate::position::Position;
+    use crate::position_map::PositionMap;
 
     fn pos(row: usize, col: usize) -> PositionId {
         PositionId::from_position(Position::new(row, col))
     }
 
     fn policy_with_values(values: &[(PositionId, f32)]) -> Vec<f32> {
-        let mut data = vec![f32::NEG_INFINITY; PositionId::COUNT];
+        let mut map = PositionMap::new(f32::NEG_INFINITY);
         for &(pos, value) in values {
-            data[usize::from(pos)] = value;
+            map[pos] = value;
         }
-        data
+        map.into_vec()
     }
 
     #[test]
@@ -63,7 +64,7 @@ mod tests {
         let positions = vec![pos(0, 0), pos(0, 1), pos(0, 2)];
         let policy_data =
             policy_with_values(&[(pos(0, 0), 1.0), (pos(0, 1), 5.0), (pos(0, 2), 3.0)]);
-        let policy = PositionSlice::new(&policy_data);
+        let policy = PositionSlice::new(&policy_data, 1);
         let mut rng = fastrand::Rng::with_seed(42);
 
         let selected = select_best_position(&positions, policy, &mut rng);
@@ -76,7 +77,7 @@ mod tests {
         let positions = vec![pos(0, 0), pos(0, 1), pos(0, 2)];
         let policy_data =
             policy_with_values(&[(pos(0, 0), -5.0), (pos(0, 1), -1.0), (pos(0, 2), -3.0)]);
-        let policy = PositionSlice::new(&policy_data);
+        let policy = PositionSlice::new(&policy_data, 1);
         let mut rng = fastrand::Rng::with_seed(42);
 
         let selected = select_best_position(&positions, policy, &mut rng);
@@ -89,7 +90,7 @@ mod tests {
         let positions = vec![pos(0, 0), pos(0, 1), pos(0, 2)];
         let policy_data =
             policy_with_values(&[(pos(0, 0), 5.0), (pos(0, 1), 5.0), (pos(0, 2), 1.0)]);
-        let policy = PositionSlice::new(&policy_data);
+        let policy = PositionSlice::new(&policy_data, 1);
         let mut rng = fastrand::Rng::with_seed(42);
 
         let selected = select_best_position(&positions, policy, &mut rng);
@@ -104,7 +105,7 @@ mod tests {
 
         let mut counts = [0, 0];
         for seed in 0..1000 {
-            let policy = PositionSlice::new(&policy_data);
+            let policy = PositionSlice::new(&policy_data, 1);
             let mut rng = fastrand::Rng::with_seed(seed);
             let selected = select_best_position(&positions, policy, &mut rng);
 
@@ -130,7 +131,7 @@ mod tests {
 
         let results: Vec<_> = (0..5)
             .map(|_| {
-                let policy = PositionSlice::new(&policy_data);
+                let policy = PositionSlice::new(&policy_data, 1);
                 let mut rng = fastrand::Rng::with_seed(12345);
                 select_best_position(&positions, policy, &mut rng)
             })
@@ -145,7 +146,7 @@ mod tests {
         let positions = vec![pos(0, 1), pos(0, 2)];
         let policy_data =
             policy_with_values(&[(pos(0, 0), 100.0), (pos(0, 1), 5.0), (pos(0, 2), 3.0)]);
-        let policy = PositionSlice::new(&policy_data);
+        let policy = PositionSlice::new(&policy_data, 1);
         let mut rng = fastrand::Rng::with_seed(42);
 
         let selected = select_best_position(&positions, policy, &mut rng);
@@ -157,7 +158,7 @@ mod tests {
     fn single_position_returns_that_position() {
         let positions = vec![pos(7, 7)];
         let policy_data = policy_with_values(&[(pos(7, 7), 0.0)]);
-        let policy = PositionSlice::new(&policy_data);
+        let policy = PositionSlice::new(&policy_data, 1);
         let mut rng = fastrand::Rng::with_seed(42);
 
         let selected = select_best_position(&positions, policy, &mut rng);
@@ -170,7 +171,7 @@ mod tests {
     fn panics_on_empty_positions() {
         let positions: Vec<PositionId> = vec![];
         let policy_data = vec![0.0f32; PositionId::COUNT];
-        let policy = PositionSlice::new(&policy_data);
+        let policy = PositionSlice::new(&policy_data, 1);
         let mut rng = fastrand::Rng::with_seed(42);
 
         select_best_position(&positions, policy, &mut rng);

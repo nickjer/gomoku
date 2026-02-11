@@ -164,4 +164,4 @@ cargo install flamegraph
 cargo flamegraph --release -o tmp/flamegraph.svg -- evolve conv-small -p 4 -o tmp/profile -g 1
 ```
 
-**Key optimization insight:** The conv layers use im2col with rank-1 updates for cache efficiency. Patches are gathered into `[patch_size][225]` layout, then accumulated via outer products with loop order `k -> out_ch -> pos` to keep each patch slice in cache across all output channels. Weights are stored in transposed `[patch_size][OUT_C]` layout to avoid runtime transposition.
+**Key optimization insight:** The conv layers gather zero-padded neighborhoods into a workspace buffer (per-position layout), then compute dot products against transposed weights (`[IN_C * K * K][OUT_C]` layout). The workspace eliminates bounds checks from the hot convolution loop.

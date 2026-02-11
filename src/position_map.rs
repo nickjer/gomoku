@@ -2,7 +2,7 @@ use crate::position_id::PositionId;
 
 /// A map from board positions to values, indexed by `PositionId`.
 ///
-/// Each position stores `N` contiguous elements in Array of Structures layout.
+/// Each position stores `N` contiguous elements.
 /// For `N = 1` (default), this behaves as a simple position-to-value map with `Index` support.
 /// For `N > 1`, use `get`/`get_mut` to access `&[T; N]` per position.
 #[derive(Debug, Clone)]
@@ -39,6 +39,23 @@ impl<T, const N: usize> PositionMap<T, N> {
         let start = usize::from(position_id) * N;
         (&mut self.data[start..start + N]).try_into().unwrap()
     }
+
+    /// Returns the underlying data as a slice.
+    #[must_use]
+    pub fn as_slice(&self) -> &[T] {
+        &self.data
+    }
+
+    /// Returns the underlying data as a mutable slice.
+    pub fn as_mut_slice(&mut self) -> &mut [T] {
+        &mut self.data
+    }
+
+    /// Consumes the map and returns the underlying data as a `Vec`.
+    #[must_use]
+    pub fn into_vec(self) -> Vec<T> {
+        self.data
+    }
 }
 
 impl<T> std::ops::Index<PositionId> for PositionMap<T, 1> {
@@ -55,111 +72,123 @@ impl<T> std::ops::IndexMut<PositionId> for PositionMap<T, 1> {
     }
 }
 
-/// A borrowed view of position-indexed data.
+/// A borrowed view of position-indexed data with a runtime stride.
 ///
-/// Each position holds `N` contiguous elements. For `N = 1` (default), `Index` returns `&T`.
-/// For `N > 1`, use `get` to access `&[T; N]` per position.
+/// Each position holds `stride` contiguous elements. Use `get` to access
+/// `&[T]` per position and `stride()` to query the stride.
 #[derive(Debug, Clone, Copy)]
-pub struct PositionSlice<'a, T, const N: usize = 1> {
+pub struct PositionSlice<'a, T> {
     data: &'a [T],
+    stride: usize,
 }
 
-impl<'a, T, const N: usize> PositionSlice<'a, T, N> {
-    /// Wraps a slice, asserting it has exactly `PositionId::COUNT * N` elements.
+impl<'a, T> PositionSlice<'a, T> {
+    /// Wraps a slice with the given stride.
+    ///
+    /// Takes the first `PositionId::COUNT * stride` elements from the slice.
     ///
     /// # Panics
     ///
-    /// Panics if `data.len() != PositionId::COUNT * N`.
+    /// Panics if `data.len() < PositionId::COUNT * stride` or on overflow.
     #[must_use]
-    pub fn new(data: &'a [T]) -> Self {
-        let expected = PositionId::COUNT * N;
-        assert_eq!(
+    pub fn new(data: &'a [T], stride: usize) -> Self {
+        let required = PositionId::COUNT
+            .checked_mul(stride)
+            .expect("PositionSlice: stride overflow");
+        assert!(
+            data.len() >= required,
+            "PositionSlice requires at least {required} elements (stride={stride}), got {}",
             data.len(),
-            expected,
-            "PositionSlice<_, {N}> requires exactly {expected} elements",
         );
-        Self { data }
+        Self {
+            data: &data[..required],
+            stride,
+        }
     }
 
-    /// Returns a reference to the `N` elements at the given position.
+    /// Returns the stride (number of elements per position).
+    #[must_use]
+    pub const fn stride(&self) -> usize {
+        self.stride
+    }
+
+    /// Returns a reference to the elements at the given position.
     ///
     /// # Panics
     ///
     /// Panics if `position_id` is out of bounds.
     #[must_use]
-    pub fn get(&self, position_id: PositionId) -> &[T; N] {
-        let start = usize::from(position_id) * N;
-        self.data[start..start + N].try_into().unwrap()
+    pub fn get(&self, position_id: PositionId) -> &[T] {
+        let start = usize::from(position_id)
+            .checked_mul(self.stride)
+            .expect("PositionSlice::get: offset overflow");
+        &self.data[start..start + self.stride]
     }
 }
 
-impl<T> std::ops::Index<PositionId> for PositionSlice<'_, T, 1> {
-    type Output = T;
-
-    fn index(&self, position_id: PositionId) -> &Self::Output {
-        &self.data[usize::from(position_id)]
-    }
-}
-
-/// A mutable borrowed view of position-indexed data.
+/// A mutable borrowed view of position-indexed data with a runtime stride.
 ///
-/// Each position holds `N` contiguous elements. For `N = 1` (default), `Index`/`IndexMut`
-/// return `&T`/`&mut T`. For `N > 1`, use `get`/`get_mut` to access `&[T; N]` per position.
+/// Each position holds `stride` contiguous elements. Use `get`/`get_mut` to access
+/// `&[T]`/`&mut [T]` per position and `stride()` to query the stride.
 #[derive(Debug)]
-pub struct PositionSliceMut<'a, T, const N: usize = 1> {
+pub struct PositionSliceMut<'a, T> {
     data: &'a mut [T],
+    stride: usize,
 }
 
-impl<'a, T, const N: usize> PositionSliceMut<'a, T, N> {
-    /// Wraps a mutable slice, asserting it has exactly `PositionId::COUNT * N` elements.
+impl<'a, T> PositionSliceMut<'a, T> {
+    /// Wraps a mutable slice with the given stride.
+    ///
+    /// Takes the first `PositionId::COUNT * stride` elements from the slice.
     ///
     /// # Panics
     ///
-    /// Panics if `data.len() != PositionId::COUNT * N`.
+    /// Panics if `data.len() < PositionId::COUNT * stride` or on overflow.
     #[must_use]
-    pub fn new(data: &'a mut [T]) -> Self {
-        let expected = PositionId::COUNT * N;
-        assert_eq!(
+    pub fn new(data: &'a mut [T], stride: usize) -> Self {
+        let required = PositionId::COUNT
+            .checked_mul(stride)
+            .expect("PositionSliceMut: stride overflow");
+        assert!(
+            data.len() >= required,
+            "PositionSliceMut requires at least {required} elements (stride={stride}), got {}",
             data.len(),
-            expected,
-            "PositionSliceMut<_, {N}> requires exactly {expected} elements",
         );
-        Self { data }
+        Self {
+            data: &mut data[..required],
+            stride,
+        }
     }
 
-    /// Returns a reference to the `N` elements at the given position.
+    /// Returns the stride (number of elements per position).
+    #[must_use]
+    pub const fn stride(&self) -> usize {
+        self.stride
+    }
+
+    /// Returns a reference to the elements at the given position.
     ///
     /// # Panics
     ///
     /// Panics if `position_id` is out of bounds.
     #[must_use]
-    pub fn get(&self, position_id: PositionId) -> &[T; N] {
-        let start = usize::from(position_id) * N;
-        self.data[start..start + N].try_into().unwrap()
+    pub fn get(&self, position_id: PositionId) -> &[T] {
+        let start = usize::from(position_id)
+            .checked_mul(self.stride)
+            .expect("PositionSliceMut::get: offset overflow");
+        &self.data[start..start + self.stride]
     }
 
-    /// Returns a mutable reference to the `N` elements at the given position.
+    /// Returns a mutable reference to the elements at the given position.
     ///
     /// # Panics
     ///
     /// Panics if `position_id` is out of bounds.
-    pub fn get_mut(&mut self, position_id: PositionId) -> &mut [T; N] {
-        let start = usize::from(position_id) * N;
-        (&mut self.data[start..start + N]).try_into().unwrap()
-    }
-}
-
-impl<T> std::ops::Index<PositionId> for PositionSliceMut<'_, T, 1> {
-    type Output = T;
-
-    fn index(&self, position_id: PositionId) -> &Self::Output {
-        &self.data[usize::from(position_id)]
-    }
-}
-
-impl<T> std::ops::IndexMut<PositionId> for PositionSliceMut<'_, T, 1> {
-    fn index_mut(&mut self, position_id: PositionId) -> &mut Self::Output {
-        &mut self.data[usize::from(position_id)]
+    pub fn get_mut(&mut self, position_id: PositionId) -> &mut [T] {
+        let start = usize::from(position_id)
+            .checked_mul(self.stride)
+            .expect("PositionSliceMut::get_mut: offset overflow");
+        &mut self.data[start..start + self.stride]
     }
 }
 
@@ -172,7 +201,7 @@ mod tests {
         PositionId::from_position(Position::new(row, col))
     }
 
-    // ── N=1 tests ───────────────────────────────────────────────────────
+    // ── PositionMap N=1 tests ──────────────────────────────────────────
 
     #[test]
     fn position_map_indexes_correctly() {
@@ -185,41 +214,7 @@ mod tests {
         assert_eq!(map[pos(1, 0)], 0);
     }
 
-    #[test]
-    fn position_slice_indexes_correctly() {
-        let data: Vec<i32> = (0..PositionId::COUNT as i32).collect();
-        let slice = PositionSlice::new(&data);
-
-        assert_eq!(slice[pos(0, 0)], 0);
-        assert_eq!(slice[pos(0, 1)], 1);
-        assert_eq!(slice[pos(1, 0)], 15);
-    }
-
-    #[test]
-    #[should_panic(expected = "PositionSlice<_, 1> requires exactly")]
-    fn position_slice_panics_on_wrong_length() {
-        let data = vec![0i32; 100];
-        let _ = PositionSlice::<i32>::new(&data);
-    }
-
-    #[test]
-    fn position_slice_mut_allows_mutation() {
-        let mut data = vec![0i32; PositionId::COUNT];
-        {
-            let mut slice = PositionSliceMut::new(&mut data);
-            slice[pos(5, 5)] = 42;
-        }
-        assert_eq!(data[5 * 15 + 5], 42);
-    }
-
-    #[test]
-    #[should_panic(expected = "PositionSliceMut<_, 1> requires exactly")]
-    fn position_slice_mut_panics_on_wrong_length() {
-        let mut data = vec![0i32; 100];
-        let _ = PositionSliceMut::<i32>::new(&mut data);
-    }
-
-    // ── N=2 tests ───────────────────────────────────────────────────────
+    // ── PositionMap N=2 tests ──────────────────────────────────────────
 
     #[test]
     fn position_map_n2_get_returns_correct_pair() {
@@ -239,28 +234,119 @@ mod tests {
         assert_eq!(map.get(pos(7, 8)), &[0, 0]);
     }
 
-    #[test]
-    fn position_slice_n2_wraps_flat_data() {
-        // AoS layout: [pos0_ch0, pos0_ch1, pos1_ch0, pos1_ch1, ...]
-        let data: Vec<f32> = (0..PositionId::COUNT * 2)
-            .map(|idx| idx as f32)
-            .collect();
-        let slice = PositionSlice::<f32, 2>::new(&data);
+    // ── PositionMap accessor tests ─────────────────────────────────────
 
-        // Position (0,0) is index 0, so elements at [0, 1]
+    #[test]
+    fn position_map_as_slice_returns_full_data() {
+        let map = PositionMap::<f32, 2>::new(1.0);
+
+        assert_eq!(map.as_slice().len(), PositionId::COUNT * 2);
+        assert!(map.as_slice().iter().all(|&val| val == 1.0));
+    }
+
+    #[test]
+    fn position_map_as_mut_slice_allows_modification() {
+        let mut map = PositionMap::<i32>::new(0);
+        map.as_mut_slice()[0] = 42;
+
+        assert_eq!(map[pos(0, 0)], 42);
+    }
+
+    #[test]
+    fn position_map_into_vec_returns_owned_data() {
+        let mut map = PositionMap::<i32>::new(0);
+        map[pos(0, 0)] = 7;
+
+        let data = map.into_vec();
+
+        assert_eq!(data.len(), PositionId::COUNT);
+        assert_eq!(data[0], 7);
+    }
+
+    // ── PositionSlice stride=1 tests ───────────────────────────────────
+
+    #[test]
+    fn position_slice_get_returns_correct_value() {
+        let data: Vec<i32> = (0..PositionId::COUNT as i32).collect();
+        let slice = PositionSlice::new(&data, 1);
+
+        assert_eq!(slice.get(pos(0, 0)), &[0]);
+        assert_eq!(slice.get(pos(0, 1)), &[1]);
+        assert_eq!(slice.get(pos(1, 0)), &[15]);
+    }
+
+    #[test]
+    fn position_slice_stride_returns_stride() {
+        let data = vec![0i32; PositionId::COUNT];
+        let slice = PositionSlice::new(&data, 1);
+
+        assert_eq!(slice.stride(), 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "PositionSlice requires at least")]
+    fn position_slice_panics_on_too_small_data() {
+        let data = vec![0i32; 100];
+        let _ = PositionSlice::new(&data, 1);
+    }
+
+    #[test]
+    fn position_slice_accepts_oversized_data() {
+        let data = vec![0i32; PositionId::COUNT + 100];
+        let slice = PositionSlice::new(&data, 1);
+
+        assert_eq!(slice.get(pos(0, 0)), &[0]);
+    }
+
+    // ── PositionSliceMut stride=1 tests ────────────────────────────────
+
+    #[test]
+    fn position_slice_mut_allows_mutation() {
+        let mut data = vec![0i32; PositionId::COUNT];
+        {
+            let mut slice = PositionSliceMut::new(&mut data, 1);
+            slice.get_mut(pos(5, 5))[0] = 42;
+        }
+        assert_eq!(data[5 * 15 + 5], 42);
+    }
+
+    #[test]
+    #[should_panic(expected = "PositionSliceMut requires at least")]
+    fn position_slice_mut_panics_on_too_small_data() {
+        let mut data = vec![0i32; 100];
+        let _ = PositionSliceMut::new(&mut data, 1);
+    }
+
+    // ── PositionSlice stride=2 tests ───────────────────────────────────
+
+    #[test]
+    fn position_slice_stride2_wraps_flat_data() {
+        let data: Vec<f32> = (0..PositionId::COUNT * 2).map(|idx| idx as f32).collect();
+        let slice = PositionSlice::new(&data, 2);
+
+        assert_eq!(slice.stride(), 2);
         assert_eq!(slice.get(pos(0, 0)), &[0.0, 1.0]);
-        // Position (0,1) is index 1, so elements at [2, 3]
         assert_eq!(slice.get(pos(0, 1)), &[2.0, 3.0]);
-        // Position (1,0) is index 15, so elements at [30, 31]
         assert_eq!(slice.get(pos(1, 0)), &[30.0, 31.0]);
     }
 
     #[test]
-    fn position_slice_mut_n2_allows_mutation() {
+    #[should_panic(expected = "PositionSlice requires at least")]
+    fn position_slice_stride2_panics_on_too_small_data() {
+        let data = vec![0.0f32; 100];
+        let _ = PositionSlice::new(&data, 2);
+    }
+
+    // ── PositionSliceMut stride=2 tests ────────────────────────────────
+
+    #[test]
+    fn position_slice_mut_stride2_allows_mutation() {
         let mut data = vec![0.0f32; PositionId::COUNT * 2];
         {
-            let mut slice = PositionSliceMut::<f32, 2>::new(&mut data);
-            *slice.get_mut(pos(5, 5)) = [3.0, 4.0];
+            let mut slice = PositionSliceMut::new(&mut data, 2);
+            let channels = slice.get_mut(pos(5, 5));
+            channels[0] = 3.0;
+            channels[1] = 4.0;
         }
         let idx = (5 * 15 + 5) * 2;
         assert_eq!(data[idx], 3.0);
@@ -268,16 +354,9 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "PositionSlice<_, 2> requires exactly")]
-    fn position_slice_n2_panics_on_wrong_length() {
-        let data = vec![0.0f32; 100];
-        let _ = PositionSlice::<f32, 2>::new(&data);
-    }
-
-    #[test]
-    #[should_panic(expected = "PositionSliceMut<_, 2> requires exactly")]
-    fn position_slice_mut_n2_panics_on_wrong_length() {
+    #[should_panic(expected = "PositionSliceMut requires at least")]
+    fn position_slice_mut_stride2_panics_on_too_small_data() {
         let mut data = vec![0.0f32; 100];
-        let _ = PositionSliceMut::<f32, 2>::new(&mut data);
+        let _ = PositionSliceMut::new(&mut data, 2);
     }
 }
