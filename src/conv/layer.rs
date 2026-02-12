@@ -71,26 +71,19 @@ fn conv2d_from_workspace<const OUT_C: usize>(
 
 /// Convolution with workspace-based neighborhood gathering.
 ///
-/// Weights must be in `[IN_C * K * K][OUT_C]` layout.
+/// Weights must be in `[IN_C * K * K][OUT_C]` layout, where `IN_C` is `input.stride()`.
 ///
 /// # Panics
 ///
-/// Panics if input slices have incorrect lengths.
-pub fn conv2d<const IN_C: usize, const OUT_C: usize, const K: usize>(
-    input: &[f32],
+/// Panics if weight, bias, or workspace slices have incorrect lengths.
+pub fn conv2d<const OUT_C: usize, const K: usize>(
+    input: PositionMapView<'_, f32>,
     weights: &[f32],
     bias: &[f32],
     workspace: &mut [f32],
 ) -> PositionMap<f32> {
-    let stride = IN_C * K * K;
+    let stride = input.stride() * K * K;
 
-    assert_eq!(
-        input.len(),
-        IN_C * PositionId::COUNT,
-        "input length mismatch: expected {}, got {}",
-        IN_C * PositionId::COUNT,
-        input.len()
-    );
     assert_eq!(
         weights.len(),
         stride * OUT_C,
@@ -111,9 +104,8 @@ pub fn conv2d<const IN_C: usize, const OUT_C: usize, const K: usize>(
         workspace.len()
     );
 
-    let input_view = PositionMapView::new(input, IN_C);
     let workspace_mut = PositionMapViewMut::new(workspace, stride);
-    gather_workspace::<K>(input_view, workspace_mut);
+    gather_workspace::<K>(input, workspace_mut);
 
     let workspace_view = PositionMapView::new(workspace, stride);
     conv2d_from_workspace::<OUT_C>(workspace_view, weights, bias)
@@ -142,7 +134,8 @@ mod tests {
     ) -> PositionMap<f32> {
         let workspace_size = PositionId::COUNT * IN_C * K * K;
         let mut workspace = vec![0.0f32; workspace_size];
-        conv2d::<IN_C, OUT_C, K>(input, weights, bias, &mut workspace)
+        let input_view = PositionMapView::new(input, IN_C);
+        conv2d::<OUT_C, K>(input_view, weights, bias, &mut workspace)
     }
 
     /// Creates input with a single non-zero value at the given position in channel 0.
@@ -383,10 +376,12 @@ mod tests {
             weights[4] = 1.0;
             let bias = vec![0.0];
 
-            let output1 = conv2d::<2, 1, 3>(&input1, &weights, &bias, &mut workspace);
+            let input1_view = PositionMapView::new(&input1, 2);
+            let output1 = conv2d::<1, 3>(input1_view, &weights, &bias, &mut workspace);
 
             let input2 = vec![0.0f32; 2 * PositionId::COUNT];
-            let output2 = conv2d::<2, 1, 3>(&input2, &weights, &bias, &mut workspace);
+            let input2_view = PositionMapView::new(&input2, 2);
+            let output2 = conv2d::<1, 3>(input2_view, &weights, &bias, &mut workspace);
 
             assert_eq!(output1.get(PositionId::center()), &[5.0]);
             assert_eq!(output2.get(PositionId::center()), &[0.0]);

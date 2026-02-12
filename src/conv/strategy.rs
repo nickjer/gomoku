@@ -2,7 +2,7 @@ use tracing::instrument;
 
 use crate::board::Board;
 use crate::position_id::PositionId;
-use crate::position_map::PositionMap;
+use crate::position_map::{PositionMap, PositionMapView};
 use crate::stone::Stone;
 use crate::strategy::{EvolvableStrategy, Strategy};
 
@@ -38,7 +38,7 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> ConvStrateg
     ///
     /// Input: encoding with `INPUT_CHANNELS` channels per position.
     /// Output: [`PositionMap<f32>`] with policy logits for each position.
-    fn forward(&self, input: &[f32]) -> PositionMap<f32> {
+    fn forward(&self, input: PositionMapView<'_, f32>) -> PositionMap<f32> {
         // Allocate workspace (reused across all layers)
         // First layer needs INPUT_CHANNELS * K * K, hidden layers need C * K * K
         const fn max(a: usize, b: usize) -> usize {
@@ -48,7 +48,7 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> ConvStrateg
         let mut workspace = vec![0.0f32; workspace_size];
 
         // First conv: INPUT_CHANNELS -> C channels
-        let mut x = conv2d::<INPUT_CHANNELS, C, K>(
+        let mut x = conv2d::<C, K>(
             input,
             self.weights.first_conv_weights(),
             self.weights.first_conv_bias(),
@@ -58,8 +58,8 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> ConvStrateg
 
         // Hidden convs: C -> C channels
         for i in 0..(L - 1) {
-            x = conv2d::<C, C, K>(
-                x.as_slice(),
+            x = conv2d::<C, K>(
+                x.as_view(),
                 self.weights.hidden_conv_weights(i),
                 self.weights.hidden_conv_bias(i),
                 &mut workspace,
@@ -68,8 +68,8 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> ConvStrateg
         }
 
         // Final conv: C -> 1 channel (1×1 kernel)
-        conv2d::<C, 1, 1>(
-            x.as_slice(),
+        conv2d::<1, 1>(
+            x.as_view(),
             self.weights.final_conv_weights(),
             &[self.weights.final_conv_bias()],
             &mut workspace,
@@ -96,7 +96,7 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> Strategy
         let transformed_encoding = transform_encoding(&encoding, |pos| transform.apply(pos));
 
         // Forward pass
-        let policy = self.forward(transformed_encoding.as_slice());
+        let policy = self.forward(transformed_encoding.as_view());
 
         // Transform empty positions to transformed space
         let transformed_empty: Vec<PositionId> = board
@@ -166,9 +166,9 @@ mod tests {
     fn forward_produces_correct_output_size() {
         let mut rng = fastrand::Rng::with_seed(42);
         let strategy = TestStrategy::random("test", &mut rng);
-        let input = vec![0.0f32; INPUT_CHANNELS * PositionId::COUNT];
+        let input = PositionMap::new(0.0f32, INPUT_CHANNELS);
 
-        let output = strategy.forward(&input);
+        let output = strategy.forward(input.as_view());
 
         assert_eq!(output.as_slice().len(), PositionId::COUNT);
     }
