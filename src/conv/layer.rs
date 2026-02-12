@@ -1,6 +1,6 @@
 use crate::offset::Offset;
 use crate::position_id::PositionId;
-use crate::position_map::{PositionMap, PositionSlice, PositionSliceMut};
+use crate::position_stride_map::{PositionStrideMap, PositionStrideSlice, PositionStrideSliceMut};
 
 /// Gathers zero-padded input neighborhoods into the workspace buffer.
 ///
@@ -11,8 +11,8 @@ use crate::position_map::{PositionMap, PositionSlice, PositionSliceMut};
 #[allow(clippy::inline_always)]
 #[inline(always)]
 fn gather_workspace<const K: usize>(
-    input: PositionSlice<'_, f32>,
-    mut workspace: PositionSliceMut<'_, f32>,
+    input: PositionStrideSlice<'_, f32>,
+    mut workspace: PositionStrideSliceMut<'_, f32>,
 ) {
     let pad = isize::try_from(K / 2).expect("kernel size too large");
 
@@ -45,12 +45,12 @@ fn gather_workspace<const K: usize>(
 #[allow(clippy::inline_always)]
 #[inline(always)]
 fn conv2d_from_workspace<const OUT_C: usize>(
-    workspace: PositionSlice<'_, f32>,
+    workspace: PositionStrideSlice<'_, f32>,
     weights: &[f32],
     bias: &[f32],
-) -> PositionMap<f32, OUT_C> {
+) -> PositionStrideMap<f32> {
     let stride = workspace.stride();
-    let mut output = PositionMap::<f32, OUT_C>::new(0.0);
+    let mut output = PositionStrideMap::new(0.0, OUT_C);
 
     for pos in PositionId::iter() {
         let out = output.get_mut(pos);
@@ -81,7 +81,7 @@ pub fn conv2d<const IN_C: usize, const OUT_C: usize, const K: usize>(
     weights: &[f32],
     bias: &[f32],
     workspace: &mut [f32],
-) -> PositionMap<f32, OUT_C> {
+) -> PositionStrideMap<f32> {
     let stride = IN_C * K * K;
 
     assert_eq!(
@@ -111,11 +111,11 @@ pub fn conv2d<const IN_C: usize, const OUT_C: usize, const K: usize>(
         workspace.len()
     );
 
-    let input_view = PositionSlice::new(input, IN_C);
-    let workspace_mut = PositionSliceMut::new(workspace, stride);
+    let input_view = PositionStrideSlice::new(input, IN_C);
+    let workspace_mut = PositionStrideSliceMut::new(workspace, stride);
     gather_workspace::<K>(input_view, workspace_mut);
 
-    let workspace_view = PositionSlice::new(workspace, stride);
+    let workspace_view = PositionStrideSlice::new(workspace, stride);
     conv2d_from_workspace::<OUT_C>(workspace_view, weights, bias)
 }
 
@@ -130,7 +130,6 @@ pub fn relu_inplace(data: &mut [f32]) {
 mod tests {
     use super::*;
     use crate::position::Position;
-
     fn pos(row: usize, col: usize) -> PositionId {
         PositionId::from_position(Position::new(row, col))
     }
@@ -140,7 +139,7 @@ mod tests {
         input: &[f32],
         weights: &[f32],
         bias: &[f32],
-    ) -> PositionMap<f32, OUT_C> {
+    ) -> PositionStrideMap<f32> {
         let workspace_size = PositionId::COUNT * IN_C * K * K;
         let mut workspace = vec![0.0f32; workspace_size];
         conv2d::<IN_C, OUT_C, K>(input, weights, bias, &mut workspace)
@@ -148,7 +147,7 @@ mod tests {
 
     /// Creates input with a single non-zero value at the given position in channel 0.
     fn single_value_input<const C: usize>(position: PositionId, value: f32) -> Vec<f32> {
-        let mut input = PositionMap::<f32, C>::new(0.0);
+        let mut input = PositionStrideMap::new(0.0, C);
         input.get_mut(position)[0] = value;
         input.into_vec()
     }
@@ -243,10 +242,10 @@ mod tests {
 
         #[test]
         fn summing_kernel_sums_neighbors() {
-            let mut input = PositionMap::<f32>::new(0.0);
+            let mut input = PositionStrideMap::new(0.0f32, 1);
             let positions = [pos(7, 7), pos(7, 8), pos(8, 7), pos(8, 8)];
             for &p in &positions {
-                input[p] = 1.0;
+                input.get_mut(p)[0] = 1.0;
             }
 
             let weights = vec![1.0f32; 1 * 1 * 3 * 3];
@@ -262,8 +261,8 @@ mod tests {
         #[test]
         fn multiple_input_channels_are_summed() {
             let center = PositionId::center();
-            let mut input = PositionMap::<f32, 2>::new(0.0);
-            *input.get_mut(center) = [2.0, 3.0];
+            let mut input = PositionStrideMap::new(0.0f32, 2);
+            input.get_mut(center).copy_from_slice(&[2.0, 3.0]);
 
             let mut weights = vec![0.0f32; 1 * 2 * 3 * 3];
             weights[4] = 1.0;
@@ -292,9 +291,9 @@ mod tests {
 
         #[test]
         fn weighted_kernel_applies_correctly() {
-            let mut input = PositionMap::<f32>::new(0.0);
-            input[pos(7, 7)] = 2.0;
-            input[pos(7, 8)] = 3.0;
+            let mut input = PositionStrideMap::new(0.0f32, 1);
+            input.get_mut(pos(7, 7))[0] = 2.0;
+            input.get_mut(pos(7, 8))[0] = 3.0;
 
             let mut weights = vec![0.0f32; 1 * 1 * 3 * 3];
             weights[4] = 2.0;
@@ -310,8 +309,8 @@ mod tests {
         #[test]
         fn one_by_one_kernel_acts_as_pointwise() {
             let center = PositionId::center();
-            let mut input = PositionMap::<f32, 2>::new(0.0);
-            *input.get_mut(center) = [3.0, 4.0];
+            let mut input = PositionStrideMap::new(0.0f32, 2);
+            input.get_mut(center).copy_from_slice(&[3.0, 4.0]);
 
             let weights = vec![2.0, 0.5];
             let bias = vec![1.0];
@@ -340,8 +339,8 @@ mod tests {
         #[test]
         fn different_input_output_channels() {
             let center = PositionId::center();
-            let mut input = PositionMap::<f32, 2>::new(0.0);
-            *input.get_mut(center) = [1.0, 2.0];
+            let mut input = PositionStrideMap::new(0.0f32, 2);
+            input.get_mut(center).copy_from_slice(&[1.0, 2.0]);
 
             let mut weights = vec![0.0f32; 3 * 2 * 3 * 3];
             weights[center_weight_index::<2, 3, 3>(0, 0)] = 1.0;
@@ -357,11 +356,11 @@ mod tests {
 
         #[test]
         fn all_corners_use_zero_padding() {
-            let mut input = PositionMap::<f32>::new(0.0);
-            input[pos(0, 0)] = 1.0;
-            input[pos(0, 14)] = 1.0;
-            input[pos(14, 0)] = 1.0;
-            input[pos(14, 14)] = 1.0;
+            let mut input = PositionStrideMap::new(0.0f32, 1);
+            input.get_mut(pos(0, 0))[0] = 1.0;
+            input.get_mut(pos(0, 14))[0] = 1.0;
+            input.get_mut(pos(14, 0))[0] = 1.0;
+            input.get_mut(pos(14, 14))[0] = 1.0;
 
             let weights = vec![1.0f32; 9];
             let bias = vec![0.0f32];

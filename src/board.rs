@@ -5,7 +5,7 @@ use anyhow::{Result, bail};
 use crate::offset::Offset;
 use crate::outcome::Outcome;
 use crate::position_id::PositionId;
-use crate::position_map::PositionMap;
+use crate::position_stride_map::PositionStrideMap;
 use crate::stone::Stone;
 
 const WIN_LENGTH: usize = 5;
@@ -19,7 +19,7 @@ const DIRECTIONS: [Offset; 4] = [
 /// A Gomoku game board.
 #[derive(Debug, Clone)]
 pub struct Board {
-    stones: PositionMap<Stone>,
+    stones: PositionStrideMap<Stone>,
     empty_position_ids: Vec<PositionId>,
     outcome: Option<Outcome>,
 }
@@ -28,7 +28,7 @@ impl Board {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            stones: PositionMap::new(Stone::Empty),
+            stones: PositionStrideMap::new(Stone::Empty, 1),
             empty_position_ids: PositionId::iter().collect(),
             outcome: None,
         }
@@ -36,7 +36,7 @@ impl Board {
 
     #[must_use]
     pub fn stone(&self, position_id: PositionId) -> Stone {
-        self.stones[position_id]
+        self.stones.get(position_id)[0]
     }
 
     #[must_use]
@@ -78,7 +78,7 @@ impl Board {
             bail!("Position is not empty");
         }
 
-        self.stones[position_id] = stone;
+        self.stones.get_mut(position_id)[0] = stone;
         self.empty_position_ids.retain(|&id| id != position_id);
 
         self.outcome = if self.check_winner(position_id, stone) {
