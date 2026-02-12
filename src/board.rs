@@ -5,7 +5,7 @@ use anyhow::{Result, bail};
 use crate::offset::Offset;
 use crate::outcome::Outcome;
 use crate::position_id::PositionId;
-use crate::position_stride_map::PositionStrideMap;
+use crate::position_map::PositionMap;
 use crate::stone::Stone;
 
 const WIN_LENGTH: usize = 5;
@@ -19,7 +19,7 @@ const DIRECTIONS: [Offset; 4] = [
 /// A Gomoku game board.
 #[derive(Debug, Clone)]
 pub struct Board {
-    stones: PositionStrideMap<Stone>,
+    stones: PositionMap<Stone>,
     empty_position_ids: Vec<PositionId>,
     outcome: Option<Outcome>,
 }
@@ -28,7 +28,7 @@ impl Board {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            stones: PositionStrideMap::new(Stone::Empty, 1),
+            stones: PositionMap::new(Stone::Empty, 1),
             empty_position_ids: PositionId::iter().collect(),
             outcome: None,
         }

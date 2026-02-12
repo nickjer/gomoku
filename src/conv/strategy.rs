@@ -2,7 +2,7 @@ use tracing::instrument;
 
 use crate::board::Board;
 use crate::position_id::PositionId;
-use crate::position_stride_map::PositionStrideMap;
+use crate::position_map::PositionMap;
 use crate::stone::Stone;
 use crate::strategy::{EvolvableStrategy, Strategy};
 
@@ -37,8 +37,8 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> ConvStrateg
     /// Forward pass through the network.
     ///
     /// Input: encoding with `INPUT_CHANNELS` channels per position.
-    /// Output: `PositionStrideMap<f32>` with policy logits for each position.
-    fn forward(&self, input: &[f32]) -> PositionStrideMap<f32> {
+    /// Output: [`PositionMap<f32>`] with policy logits for each position.
+    fn forward(&self, input: &[f32]) -> PositionMap<f32> {
         // Allocate workspace (reused across all layers)
         // First layer needs INPUT_CHANNELS * K * K, hidden layers need C * K * K
         const fn max(a: usize, b: usize) -> usize {
@@ -106,8 +106,7 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> Strategy
             .collect();
 
         // Select best position in transformed space
-        let transformed_pos =
-            select_best_position(&transformed_empty, policy.as_stride_slice(), rng);
+        let transformed_pos = select_best_position(&transformed_empty, policy.as_view(), rng);
 
         // Map selected position back to original orientation
         transform.apply_inverse(transformed_pos)
@@ -146,10 +145,10 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> EvolvableSt
 ///
 /// For each position `p`, copies all channels from `encoding[p]` to `result[f(p)]`.
 fn transform_encoding(
-    encoding: &PositionStrideMap<f32>,
+    encoding: &PositionMap<f32>,
     f: impl Fn(PositionId) -> PositionId,
-) -> PositionStrideMap<f32> {
-    let mut result = PositionStrideMap::new(0.0, encoding.stride());
+) -> PositionMap<f32> {
+    let mut result = PositionMap::new(0.0, encoding.stride());
     for pos in PositionId::iter() {
         result.get_mut(f(pos)).copy_from_slice(encoding.get(pos));
     }
@@ -243,7 +242,7 @@ mod tests {
 
     #[test]
     fn transform_encoding_with_invert_moves_values() {
-        let mut encoding = PositionStrideMap::new(0.0f32, INPUT_CHANNELS);
+        let mut encoding = PositionMap::new(0.0f32, INPUT_CHANNELS);
         let first_pos = PositionId::iter().next().unwrap();
         let last_pos = first_pos.invert();
 

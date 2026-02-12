@@ -1,6 +1,6 @@
 use crate::board::Board;
 use crate::position_id::PositionId;
-use crate::position_stride_map::PositionStrideMap;
+use crate::position_map::PositionMap;
 use crate::stone::Stone;
 
 /// Number of input channels for board encoding (own stones, opponent stones).
@@ -8,13 +8,13 @@ pub const INPUT_CHANNELS: usize = 2;
 
 /// Encodes the board from the perspective of the current player.
 ///
-/// Returns a `PositionStrideMap` with `INPUT_CHANNELS` channels per position:
+/// Returns a [`PositionMap`] with `INPUT_CHANNELS` channels per position:
 /// channel 0 is the current player's stones, channel 1 is the opponent's stones.
 /// Values are 1.0 (stone present) or 0.0.
-pub fn encode_board(board: &Board, current_stone: Stone) -> PositionStrideMap<f32> {
+pub fn encode_board(board: &Board, current_stone: Stone) -> PositionMap<f32> {
     debug_assert_ne!(current_stone, Stone::Empty, "current_stone cannot be Empty");
 
-    let mut encoding = PositionStrideMap::new(0.0, INPUT_CHANNELS);
+    let mut encoding = PositionMap::new(0.0, INPUT_CHANNELS);
 
     for pos in PositionId::iter() {
         let stone = board.stone(pos);

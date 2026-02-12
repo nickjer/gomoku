@@ -1,19 +1,19 @@
 use crate::position_id::PositionId;
 
-// ── PositionStrideMap ──────────────────────────────────────────────────
+// ── PositionMap ───────────────────────────────────────────────────────
 
 /// An owned map from board positions to values with a runtime stride.
 ///
 /// Each position stores `stride` contiguous elements.
 /// Use `get`/`get_mut` to access `&[T]`/`&mut [T]` per position.
 #[derive(Debug, Clone)]
-pub struct PositionStrideMap<T> {
+pub struct PositionMap<T> {
     data: Vec<T>,
     stride: usize,
 }
 
-impl<T: Clone> PositionStrideMap<T> {
-    /// Creates a new stride map with `stride` elements per position, all set to `value`.
+impl<T: Clone> PositionMap<T> {
+    /// Creates a new map with `stride` elements per position, all set to `value`.
     ///
     /// # Panics
     ///
@@ -21,7 +21,7 @@ impl<T: Clone> PositionStrideMap<T> {
     pub fn new(value: T, stride: usize) -> Self {
         let len = PositionId::COUNT
             .checked_mul(stride)
-            .expect("PositionStrideMap::new: stride overflow");
+            .expect("PositionMap::new: stride overflow");
         Self {
             data: vec![value; len],
             stride,
@@ -29,7 +29,7 @@ impl<T: Clone> PositionStrideMap<T> {
     }
 }
 
-impl<T> PositionStrideMap<T> {
+impl<T> PositionMap<T> {
     /// Returns the stride (number of elements per position).
     #[must_use]
     pub const fn stride(&self) -> usize {
@@ -45,7 +45,7 @@ impl<T> PositionStrideMap<T> {
     pub fn get(&self, position_id: PositionId) -> &[T] {
         let start = usize::from(position_id)
             .checked_mul(self.stride)
-            .expect("PositionStrideMap::get: offset overflow");
+            .expect("PositionMap::get: offset overflow");
         &self.data[start..start + self.stride]
     }
 
@@ -57,7 +57,7 @@ impl<T> PositionStrideMap<T> {
     pub fn get_mut(&mut self, position_id: PositionId) -> &mut [T] {
         let start = usize::from(position_id)
             .checked_mul(self.stride)
-            .expect("PositionStrideMap::get_mut: offset overflow");
+            .expect("PositionMap::get_mut: offset overflow");
         &mut self.data[start..start + self.stride]
     }
 
@@ -72,18 +72,18 @@ impl<T> PositionStrideMap<T> {
         &mut self.data
     }
 
-    /// Returns a borrowed stride-indexed view of this map.
+    /// Returns a borrowed view of this map.
     #[must_use]
-    pub fn as_stride_slice(&self) -> PositionStrideSlice<'_, T> {
-        PositionStrideSlice {
+    pub fn as_view(&self) -> PositionMapView<'_, T> {
+        PositionMapView {
             data: &self.data,
             stride: self.stride,
         }
     }
 
-    /// Returns a mutable borrowed stride-indexed view of this map.
-    pub fn as_stride_slice_mut(&mut self) -> PositionStrideSliceMut<'_, T> {
-        PositionStrideSliceMut {
+    /// Returns a mutable borrowed view of this map.
+    pub fn as_view_mut(&mut self) -> PositionMapViewMut<'_, T> {
+        PositionMapViewMut {
             data: &mut self.data,
             stride: self.stride,
         }
@@ -96,25 +96,25 @@ impl<T> PositionStrideMap<T> {
     }
 }
 
-impl<'a, T> From<&'a PositionStrideMap<T>> for PositionStrideSlice<'a, T> {
-    fn from(map: &'a PositionStrideMap<T>) -> Self {
-        map.as_stride_slice()
+impl<'a, T> From<&'a PositionMap<T>> for PositionMapView<'a, T> {
+    fn from(map: &'a PositionMap<T>) -> Self {
+        map.as_view()
     }
 }
 
-// ── PositionStrideSlice ────────────────────────────────────────────────
+// ── PositionMapView ───────────────────────────────────────────────────
 
 /// A borrowed view of position-indexed data with a runtime stride.
 ///
 /// Each position holds `stride` contiguous elements. Use `get` to access
 /// `&[T]` per position and `stride()` to query the stride.
 #[derive(Debug, Clone, Copy)]
-pub struct PositionStrideSlice<'a, T> {
+pub struct PositionMapView<'a, T> {
     data: &'a [T],
     stride: usize,
 }
 
-impl<'a, T> PositionStrideSlice<'a, T> {
+impl<'a, T> PositionMapView<'a, T> {
     /// Wraps a slice with the given stride.
     ///
     /// Takes the first `PositionId::COUNT * stride` elements from the slice.
@@ -126,10 +126,10 @@ impl<'a, T> PositionStrideSlice<'a, T> {
     pub fn new(data: &'a [T], stride: usize) -> Self {
         let required = PositionId::COUNT
             .checked_mul(stride)
-            .expect("PositionStrideSlice::new: stride overflow");
+            .expect("PositionMapView::new: stride overflow");
         assert!(
             data.len() >= required,
-            "PositionStrideSlice requires at least {required} elements (stride={stride}), got {}",
+            "PositionMapView requires at least {required} elements (stride={stride}), got {}",
             data.len(),
         );
         Self {
@@ -153,24 +153,24 @@ impl<'a, T> PositionStrideSlice<'a, T> {
     pub fn get(&self, position_id: PositionId) -> &[T] {
         let start = usize::from(position_id)
             .checked_mul(self.stride)
-            .expect("PositionStrideSlice::get: offset overflow");
+            .expect("PositionMapView::get: offset overflow");
         &self.data[start..start + self.stride]
     }
 }
 
-// ── PositionStrideSliceMut ─────────────────────────────────────────────
+// ── PositionMapViewMut ────────────────────────────────────────────────
 
 /// A mutable borrowed view of position-indexed data with a runtime stride.
 ///
 /// Each position holds `stride` contiguous elements. Use `get`/`get_mut` to access
 /// `&[T]`/`&mut [T]` per position and `stride()` to query the stride.
 #[derive(Debug)]
-pub struct PositionStrideSliceMut<'a, T> {
+pub struct PositionMapViewMut<'a, T> {
     data: &'a mut [T],
     stride: usize,
 }
 
-impl<'a, T> PositionStrideSliceMut<'a, T> {
+impl<'a, T> PositionMapViewMut<'a, T> {
     /// Wraps a mutable slice with the given stride.
     ///
     /// Takes the first `PositionId::COUNT * stride` elements from the slice.
@@ -182,10 +182,10 @@ impl<'a, T> PositionStrideSliceMut<'a, T> {
     pub fn new(data: &'a mut [T], stride: usize) -> Self {
         let required = PositionId::COUNT
             .checked_mul(stride)
-            .expect("PositionStrideSliceMut::new: stride overflow");
+            .expect("PositionMapViewMut::new: stride overflow");
         assert!(
             data.len() >= required,
-            "PositionStrideSliceMut requires at least {required} elements (stride={stride}), got {}",
+            "PositionMapViewMut requires at least {required} elements (stride={stride}), got {}",
             data.len(),
         );
         Self {
@@ -209,7 +209,7 @@ impl<'a, T> PositionStrideSliceMut<'a, T> {
     pub fn get(&self, position_id: PositionId) -> &[T] {
         let start = usize::from(position_id)
             .checked_mul(self.stride)
-            .expect("PositionStrideSliceMut::get: offset overflow");
+            .expect("PositionMapViewMut::get: offset overflow");
         &self.data[start..start + self.stride]
     }
 
@@ -221,7 +221,7 @@ impl<'a, T> PositionStrideSliceMut<'a, T> {
     pub fn get_mut(&mut self, position_id: PositionId) -> &mut [T] {
         let start = usize::from(position_id)
             .checked_mul(self.stride)
-            .expect("PositionStrideSliceMut::get_mut: offset overflow");
+            .expect("PositionMapViewMut::get_mut: offset overflow");
         &mut self.data[start..start + self.stride]
     }
 }
@@ -235,11 +235,11 @@ mod tests {
         PositionId::from_position(Position::new(row, col))
     }
 
-    // ── PositionStrideMap tests ────────────────────────────────────────
+    // ── PositionMap tests ──────────────────────────────────────────
 
     #[test]
     fn stride_map_get_returns_correct_pair() {
-        let mut map = PositionStrideMap::new(0.0f32, 2);
+        let mut map = PositionMap::new(0.0f32, 2);
         map.get_mut(pos(3, 4)).copy_from_slice(&[1.0, 2.0]);
 
         assert_eq!(map.get(pos(3, 4)), &[1.0, 2.0]);
@@ -248,7 +248,7 @@ mod tests {
 
     #[test]
     fn stride_map_get_mut_modifies_correctly() {
-        let mut map = PositionStrideMap::new(0i32, 2);
+        let mut map = PositionMap::new(0i32, 2);
         map.get_mut(pos(7, 7)).copy_from_slice(&[10, 20]);
 
         assert_eq!(map.get(pos(7, 7)), &[10, 20]);
@@ -257,7 +257,7 @@ mod tests {
 
     #[test]
     fn stride_map_as_slice_returns_full_data() {
-        let map = PositionStrideMap::new(1.0f32, 2);
+        let map = PositionMap::new(1.0f32, 2);
 
         assert_eq!(map.as_slice().len(), PositionId::COUNT * 2);
         assert!(map.as_slice().iter().all(|&val| val == 1.0));
@@ -265,17 +265,17 @@ mod tests {
 
     #[test]
     fn stride_map_stride_returns_stride() {
-        let map = PositionStrideMap::new(0i32, 3);
+        let map = PositionMap::new(0i32, 3);
 
         assert_eq!(map.stride(), 3);
     }
 
     #[test]
-    fn stride_map_as_stride_slice_returns_view() {
-        let mut map = PositionStrideMap::new(0.0f32, 2);
+    fn stride_map_as_view_returns_view() {
+        let mut map = PositionMap::new(0.0f32, 2);
         map.get_mut(pos(3, 4)).copy_from_slice(&[1.0, 2.0]);
 
-        let slice = map.as_stride_slice();
+        let slice = map.as_view();
 
         assert_eq!(slice.stride(), 2);
         assert_eq!(slice.get(pos(3, 4)), &[1.0, 2.0]);
@@ -283,18 +283,18 @@ mod tests {
 
     #[test]
     fn stride_map_from_converts_to_stride_slice() {
-        let map = PositionStrideMap::new(0.0f32, 2);
-        let slice: PositionStrideSlice<'_, f32> = (&map).into();
+        let map = PositionMap::new(0.0f32, 2);
+        let slice: PositionMapView<'_, f32> = (&map).into();
 
         assert_eq!(slice.stride(), 2);
     }
 
-    // ── PositionStrideSlice stride=1 tests ─────────────────────────────
+    // ── PositionMapView stride=1 tests ─────────────────────────────────
 
     #[test]
     fn stride_slice_get_returns_correct_value() {
         let data: Vec<i32> = (0..PositionId::COUNT as i32).collect();
-        let slice = PositionStrideSlice::new(&data, 1);
+        let slice = PositionMapView::new(&data, 1);
 
         assert_eq!(slice.get(pos(0, 0)), &[0]);
         assert_eq!(slice.get(pos(0, 1)), &[1]);
@@ -304,51 +304,51 @@ mod tests {
     #[test]
     fn stride_slice_stride_returns_stride() {
         let data = vec![0i32; PositionId::COUNT];
-        let slice = PositionStrideSlice::new(&data, 1);
+        let slice = PositionMapView::new(&data, 1);
 
         assert_eq!(slice.stride(), 1);
     }
 
     #[test]
-    #[should_panic(expected = "PositionStrideSlice requires at least")]
+    #[should_panic(expected = "PositionMapView requires at least")]
     fn stride_slice_panics_on_too_small_data() {
         let data = vec![0i32; 100];
-        let _ = PositionStrideSlice::new(&data, 1);
+        let _ = PositionMapView::new(&data, 1);
     }
 
     #[test]
     fn stride_slice_accepts_oversized_data() {
         let data = vec![0i32; PositionId::COUNT + 100];
-        let slice = PositionStrideSlice::new(&data, 1);
+        let slice = PositionMapView::new(&data, 1);
 
         assert_eq!(slice.get(pos(0, 0)), &[0]);
     }
 
-    // ── PositionStrideSliceMut stride=1 tests ──────────────────────────
+    // ── PositionMapViewMut stride=1 tests ───────────────────────────────
 
     #[test]
     fn stride_slice_mut_allows_mutation() {
         let mut data = vec![0i32; PositionId::COUNT];
         {
-            let mut slice = PositionStrideSliceMut::new(&mut data, 1);
+            let mut slice = PositionMapViewMut::new(&mut data, 1);
             slice.get_mut(pos(5, 5))[0] = 42;
         }
         assert_eq!(data[5 * 15 + 5], 42);
     }
 
     #[test]
-    #[should_panic(expected = "PositionStrideSliceMut requires at least")]
+    #[should_panic(expected = "PositionMapViewMut requires at least")]
     fn stride_slice_mut_panics_on_too_small_data() {
         let mut data = vec![0i32; 100];
-        let _ = PositionStrideSliceMut::new(&mut data, 1);
+        let _ = PositionMapViewMut::new(&mut data, 1);
     }
 
-    // ── PositionStrideSlice stride=2 tests ─────────────────────────────
+    // ── PositionMapView stride=2 tests ─────────────────────────────────
 
     #[test]
     fn stride_slice_stride2_wraps_flat_data() {
         let data: Vec<f32> = (0..PositionId::COUNT * 2).map(|idx| idx as f32).collect();
-        let slice = PositionStrideSlice::new(&data, 2);
+        let slice = PositionMapView::new(&data, 2);
 
         assert_eq!(slice.stride(), 2);
         assert_eq!(slice.get(pos(0, 0)), &[0.0, 1.0]);
@@ -357,19 +357,19 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "PositionStrideSlice requires at least")]
+    #[should_panic(expected = "PositionMapView requires at least")]
     fn stride_slice_stride2_panics_on_too_small_data() {
         let data = vec![0.0f32; 100];
-        let _ = PositionStrideSlice::new(&data, 2);
+        let _ = PositionMapView::new(&data, 2);
     }
 
-    // ── PositionStrideSliceMut stride=2 tests ──────────────────────────
+    // ── PositionMapViewMut stride=2 tests ───────────────────────────────
 
     #[test]
     fn stride_slice_mut_stride2_allows_mutation() {
         let mut data = vec![0.0f32; PositionId::COUNT * 2];
         {
-            let mut slice = PositionStrideSliceMut::new(&mut data, 2);
+            let mut slice = PositionMapViewMut::new(&mut data, 2);
             let channels = slice.get_mut(pos(5, 5));
             channels[0] = 3.0;
             channels[1] = 4.0;
@@ -380,9 +380,9 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "PositionStrideSliceMut requires at least")]
+    #[should_panic(expected = "PositionMapViewMut requires at least")]
     fn stride_slice_mut_stride2_panics_on_too_small_data() {
         let mut data = vec![0.0f32; 100];
-        let _ = PositionStrideSliceMut::new(&mut data, 2);
+        let _ = PositionMapViewMut::new(&mut data, 2);
     }
 }
