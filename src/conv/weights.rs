@@ -5,6 +5,7 @@ use crate::evolution::genes::EvolvableGenes;
 use crate::evolution::mutation::{Mutation, gaussian_mutate};
 
 use super::encoding::INPUT_CHANNELS;
+use super::params::ConvParams;
 
 /// Weights for a convolutional neural network with const-generic architecture.
 ///
@@ -110,53 +111,34 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> ConvWeights
 
     // ===== Layer accessors =====
 
-    /// First conv layer weights: `[INPUT_CHANNELS * K * K][C]`.
+    /// First conv layer parameters: `INPUT_CHANNELS` → `C`, K×K kernel.
     #[must_use]
-    pub fn first_conv_weights(&self) -> &[f32] {
-        &self.data[Self::FIRST_WEIGHTS_START..][..Self::FIRST_CONV_WEIGHTS]
+    pub fn first_conv(&self) -> ConvParams<'_, { INPUT_CHANNELS }, C, K> {
+        let weights = &self.data[Self::FIRST_WEIGHTS_START..][..Self::FIRST_CONV_WEIGHTS];
+        let bias = &self.data[Self::FIRST_BIAS_START..][..Self::FIRST_CONV_BIAS];
+        ConvParams::new(weights, bias)
     }
 
-    /// First conv layer biases: `[C]`.
-    #[must_use]
-    pub fn first_conv_bias(&self) -> &[f32] {
-        &self.data[Self::FIRST_BIAS_START..][..Self::FIRST_CONV_BIAS]
-    }
-
-    /// Hidden conv layer weights: `[C * K * K][C]`.
+    /// Hidden conv layer parameters for layer `index` (0-indexed): `C` → `C`, K×K kernel.
     ///
     /// # Panics
     ///
     /// Panics if `index >= L - 1`.
     #[must_use]
-    pub fn hidden_conv_weights(&self, index: usize) -> &[f32] {
+    pub fn hidden_conv(&self, index: usize) -> ConvParams<'_, C, C, K> {
         assert!(index < L - 1, "hidden layer index out of bounds");
         let start = Self::HIDDEN_START + index * Self::HIDDEN_CONV_TOTAL;
-        &self.data[start..][..Self::HIDDEN_CONV_WEIGHTS]
+        let weights = &self.data[start..][..Self::HIDDEN_CONV_WEIGHTS];
+        let bias = &self.data[start + Self::HIDDEN_CONV_WEIGHTS..][..Self::HIDDEN_CONV_BIAS];
+        ConvParams::new(weights, bias)
     }
 
-    /// Hidden conv layer biases for layer `index` (0-indexed): `[C]`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `index >= L - 1`.
+    /// Final conv layer parameters: `C` → 1, 1×1 kernel.
     #[must_use]
-    pub fn hidden_conv_bias(&self, index: usize) -> &[f32] {
-        assert!(index < L - 1, "hidden layer index out of bounds");
-        let start =
-            Self::HIDDEN_START + index * Self::HIDDEN_CONV_TOTAL + Self::HIDDEN_CONV_WEIGHTS;
-        &self.data[start..][..Self::HIDDEN_CONV_BIAS]
-    }
-
-    /// Final conv layer weights: `[C][1]` (1×1 kernel, C -> 1).
-    #[must_use]
-    pub fn final_conv_weights(&self) -> &[f32] {
-        &self.data[Self::FINAL_START..][..Self::FINAL_CONV_WEIGHTS]
-    }
-
-    /// Final conv layer bias (scalar).
-    #[must_use]
-    pub fn final_conv_bias(&self) -> f32 {
-        self.data[Self::FINAL_START + Self::FINAL_CONV_WEIGHTS]
+    pub fn final_conv(&self) -> ConvParams<'_, C, 1, 1> {
+        let weights = &self.data[Self::FINAL_START..][..Self::FINAL_CONV_WEIGHTS];
+        let bias = &self.data[Self::FINAL_START + Self::FINAL_CONV_WEIGHTS..][..Self::FINAL_CONV_BIAS];
+        ConvParams::new(weights, bias)
     }
 }
 
@@ -296,29 +278,37 @@ mod tests {
     }
 
     #[test]
-    fn slice_accessors_have_correct_lengths() {
+    fn layer_accessors_have_correct_lengths() {
         let mut rng = fastrand::Rng::with_seed(42);
         let weights = TestWeights::random(&mut rng);
 
-        assert_eq!(weights.first_conv_weights().len(), 2 * 8 * 3 * 3);
-        assert_eq!(weights.first_conv_bias().len(), 8);
-        assert_eq!(weights.hidden_conv_weights(0).len(), 8 * 8 * 3 * 3);
-        assert_eq!(weights.hidden_conv_bias(0).len(), 8);
-        assert_eq!(weights.final_conv_weights().len(), 8);
+        let first = weights.first_conv();
+        assert_eq!(first.weights().len(), 2 * 8 * 3 * 3);
+        assert_eq!(first.bias().len(), 8);
+
+        let hidden = weights.hidden_conv(0);
+        assert_eq!(hidden.weights().len(), 8 * 8 * 3 * 3);
+        assert_eq!(hidden.bias().len(), 8);
+
+        let final_layer = weights.final_conv();
+        assert_eq!(final_layer.weights().len(), 8);
+        assert_eq!(final_layer.bias().len(), 1);
     }
 
     #[test]
-    fn slice_accessors_are_non_overlapping() {
+    fn layer_accessors_are_non_overlapping() {
         let data: Vec<f32> = (0..TestWeights::TOTAL as u32).map(|i| i as f32).collect();
         let weights = TestWeights::from_vec(data);
 
         // Check that each accessor returns sequential, non-overlapping data
-        let first_w_end = weights.first_conv_weights().last().unwrap();
-        let first_b_start = weights.first_conv_bias().first().unwrap();
+        let first = weights.first_conv();
+        let first_w_end = first.weights().last().unwrap();
+        let first_b_start = first.bias().first().unwrap();
         assert_eq!(*first_w_end + 1.0, *first_b_start);
 
-        let first_b_end = weights.first_conv_bias().last().unwrap();
-        let hidden_w_start = weights.hidden_conv_weights(0).first().unwrap();
+        let first_b_end = first.bias().last().unwrap();
+        let hidden = weights.hidden_conv(0);
+        let hidden_w_start = hidden.weights().first().unwrap();
         assert_eq!(*first_b_end + 1.0, *hidden_w_start);
     }
 
@@ -328,7 +318,7 @@ mod tests {
         let weights = TestWeights::random(&mut rng);
 
         // Check first conv weights have reasonable variance
-        let first_weights = weights.first_conv_weights();
+        let first_weights = weights.first_conv().weights();
         let mean: f32 = first_weights.iter().sum::<f32>() / first_weights.len() as f32;
         let variance: f32 = first_weights
             .iter()
@@ -350,18 +340,18 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(42);
         let weights = TestWeights::random(&mut rng);
 
-        assert!(weights.first_conv_bias().iter().all(|&b| b == 0.0));
-        assert!(weights.hidden_conv_bias(0).iter().all(|&b| b == 0.0));
-        assert_eq!(weights.final_conv_bias(), 0.0);
+        assert!(weights.first_conv().bias().iter().all(|&b| b == 0.0));
+        assert!(weights.hidden_conv(0).bias().iter().all(|&b| b == 0.0));
+        assert!(weights.final_conv().bias().iter().all(|&b| b == 0.0));
     }
 
     #[test]
     #[should_panic(expected = "hidden layer index out of bounds")]
-    fn hidden_weights_panics_on_invalid_index() {
+    fn hidden_conv_panics_on_invalid_index() {
         let mut rng = fastrand::Rng::with_seed(42);
         let weights = TestWeights::random(&mut rng);
         // TestWeights has L=2, so only 1 hidden layer (index 0)
-        let _ = weights.hidden_conv_weights(1);
+        let _ = weights.hidden_conv(1);
     }
 
     #[test]

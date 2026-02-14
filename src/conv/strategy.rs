@@ -12,6 +12,8 @@ use super::select::select_best_position;
 use super::symmetry::D8Transform;
 use super::weights::ConvWeights;
 
+use std::cmp::max;
+
 /// A convolutional neural network strategy for Gomoku.
 ///
 /// # Type Parameters
@@ -41,39 +43,21 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> ConvStrateg
     fn forward(&self, input: PositionMapView<'_, f32>) -> PositionMap<f32> {
         // Allocate workspace (reused across all layers)
         // First layer needs INPUT_CHANNELS * K * K, hidden layers need C * K * K
-        const fn max(a: usize, b: usize) -> usize {
-            if a > b { a } else { b }
-        }
         let workspace_size = PositionId::COUNT * max(INPUT_CHANNELS, C) * K * K;
         let mut workspace = vec![0.0f32; workspace_size];
 
         // First conv: INPUT_CHANNELS -> C channels
-        let mut x = conv2d::<C, K>(
-            input,
-            self.weights.first_conv_weights(),
-            self.weights.first_conv_bias(),
-            &mut workspace,
-        );
+        let mut x = conv2d(input, self.weights.first_conv(), &mut workspace);
         relu_inplace(x.as_mut_slice());
 
         // Hidden convs: C -> C channels
         for i in 0..(L - 1) {
-            x = conv2d::<C, K>(
-                x.as_view(),
-                self.weights.hidden_conv_weights(i),
-                self.weights.hidden_conv_bias(i),
-                &mut workspace,
-            );
+            x = conv2d(x.as_view(), self.weights.hidden_conv(i), &mut workspace);
             relu_inplace(x.as_mut_slice());
         }
 
         // Final conv: C -> 1 channel (1×1 kernel)
-        conv2d::<1, 1>(
-            x.as_view(),
-            self.weights.final_conv_weights(),
-            &[self.weights.final_conv_bias()],
-            &mut workspace,
-        )
+        conv2d(x.as_view(), self.weights.final_conv(), &mut workspace)
     }
 }
 

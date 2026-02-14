@@ -2,6 +2,8 @@ use crate::offset::Offset;
 use crate::position_id::PositionId;
 use crate::position_map::{PositionMap, PositionMapView, PositionMapViewMut};
 
+use super::params::ConvParams;
+
 /// Gathers zero-padded input neighborhoods into the workspace buffer.
 ///
 /// For each board position, collects the K×K neighborhood across all input channels
@@ -71,32 +73,19 @@ fn conv2d_from_workspace<const OUT_C: usize>(
 
 /// Convolution with workspace-based neighborhood gathering.
 ///
-/// Weights must be in `[IN_C * K * K][OUT_C]` layout, where `IN_C` is `input.stride()`.
+/// Dimensions (`IN_C`, `OUT_C`, `K`) are encoded in the [`ConvParams`] type, ensuring
+/// separate monomorphizations for each layer configuration.
 ///
 /// # Panics
 ///
-/// Panics if weight, bias, or workspace slices have incorrect lengths.
-pub fn conv2d<const OUT_C: usize, const K: usize>(
+/// Panics if the workspace is too small.
+pub fn conv2d<const IN_C: usize, const OUT_C: usize, const K: usize>(
     input: PositionMapView<'_, f32>,
-    weights: &[f32],
-    bias: &[f32],
+    params: ConvParams<'_, IN_C, OUT_C, K>,
     workspace: &mut [f32],
 ) -> PositionMap<f32> {
-    let stride = input.stride() * K * K;
+    let stride = IN_C * K * K;
 
-    assert_eq!(
-        weights.len(),
-        stride * OUT_C,
-        "weights length mismatch: expected {}, got {}",
-        stride * OUT_C,
-        weights.len()
-    );
-    assert_eq!(
-        bias.len(),
-        OUT_C,
-        "bias length mismatch: expected {OUT_C}, got {}",
-        bias.len()
-    );
     assert!(
         workspace.len() >= stride * PositionId::COUNT,
         "workspace too small: expected at least {}, got {}",
@@ -108,7 +97,7 @@ pub fn conv2d<const OUT_C: usize, const K: usize>(
     gather_workspace::<K>(input, workspace_mut);
 
     let workspace_view = PositionMapView::new(workspace, stride);
-    conv2d_from_workspace::<OUT_C>(workspace_view, weights, bias)
+    conv2d_from_workspace::<OUT_C>(workspace_view, params.weights(), params.bias())
 }
 
 /// Applies `ReLU` activation in-place: `x = max(0, x)`.
@@ -128,74 +117,79 @@ mod tests {
 
     /// Helper to run conv2d with automatic workspace allocation.
     fn conv<const IN_C: usize, const OUT_C: usize, const K: usize>(
-        input: &[f32],
-        weights: &[f32],
-        bias: &[f32],
+        input: PositionMapView<'_, f32>,
+        params: ConvParams<'_, IN_C, OUT_C, K>,
     ) -> PositionMap<f32> {
         let workspace_size = PositionId::COUNT * IN_C * K * K;
         let mut workspace = vec![0.0f32; workspace_size];
-        let input_view = PositionMapView::new(input, IN_C);
-        conv2d::<OUT_C, K>(input_view, weights, bias, &mut workspace)
+        conv2d(input, params, &mut workspace)
     }
 
     /// Creates input with a single non-zero value at the given position in channel 0.
-    fn single_value_input<const C: usize>(position: PositionId, value: f32) -> Vec<f32> {
-        let mut input = PositionMap::new(0.0, C);
+    fn single_value_input(channels: usize, position: PositionId, value: f32) -> PositionMap<f32> {
+        let mut input = PositionMap::new(0.0, channels);
         input.get_mut(position)[0] = value;
-        input.into_vec()
+        input
     }
 
     mod conv2d_tests {
         use super::*;
 
-        /// Computes weight index in `[stride][OUT_C]` layout.
-        const fn weight_index<const IN_C: usize, const OUT_C: usize, const K: usize>(
+        /// Computes weight index in `[stride][out_channels]` layout.
+        const fn weight_index(
             in_ch: usize,
             kr: usize,
             kc: usize,
             out_ch: usize,
+            kernel_size: usize,
+            out_channels: usize,
         ) -> usize {
-            let patch_idx = in_ch * K * K + kr * K + kc;
-            patch_idx * OUT_C + out_ch
+            let patch_idx = in_ch * kernel_size * kernel_size + kr * kernel_size + kc;
+            patch_idx * out_channels + out_ch
         }
 
         /// Shorthand for center kernel position (kr=K/2, kc=K/2).
-        const fn center_weight_index<const IN_C: usize, const OUT_C: usize, const K: usize>(
+        const fn center_weight_index(
             in_ch: usize,
             out_ch: usize,
+            kernel_size: usize,
+            out_channels: usize,
         ) -> usize {
-            weight_index::<IN_C, OUT_C, K>(in_ch, K / 2, K / 2, out_ch)
+            weight_index(in_ch, kernel_size / 2, kernel_size / 2, out_ch, kernel_size, out_channels)
         }
 
         #[test]
         fn output_has_correct_shape_3x3_kernel() {
-            let input = vec![0.0f32; 2 * PositionId::COUNT];
+            let input = PositionMap::new(0.0f32, 2);
             let weights = vec![0.0f32; 4 * 2 * 3 * 3];
             let bias = vec![0.0f32; 4];
+            let params = ConvParams::<2, 4, 3>::new(&weights, &bias);
 
-            let output = conv::<2, 4, 3>(&input, &weights, &bias);
+            let output = conv(input.as_view(), params);
 
             assert_eq!(output.as_slice().len(), 4 * PositionId::COUNT);
         }
 
         #[test]
         fn output_has_correct_shape_1x1_kernel() {
-            let input = vec![0.0f32; 8 * PositionId::COUNT];
+            let input = PositionMap::new(0.0f32, 8);
             let weights = vec![0.0f32; 1 * 8 * 1 * 1];
             let bias = vec![0.0f32; 1];
+            let params = ConvParams::<8, 1, 1>::new(&weights, &bias);
 
-            let output = conv::<8, 1, 1>(&input, &weights, &bias);
+            let output = conv(input.as_view(), params);
 
             assert_eq!(output.as_slice().len(), PositionId::COUNT);
         }
 
         #[test]
         fn bias_only_produces_constant_output() {
-            let input = vec![0.0f32; 1 * PositionId::COUNT];
+            let input = PositionMap::new(0.0f32, 1);
             let weights = vec![0.0f32; 2 * 1 * 3 * 3];
             let bias = vec![1.5, -0.5];
+            let params = ConvParams::<1, 2, 3>::new(&weights, &bias);
 
-            let output = conv::<1, 2, 3>(&input, &weights, &bias);
+            let output = conv(input.as_view(), params);
 
             for pos in PositionId::iter() {
                 assert_eq!(output.get(pos), &[1.5, -0.5]);
@@ -205,13 +199,14 @@ mod tests {
         #[test]
         fn identity_kernel_copies_input() {
             let center = PositionId::center();
-            let input = single_value_input::<1>(center, 7.0);
+            let input = single_value_input(1, center, 7.0);
 
             let mut weights = vec![0.0f32; 1 * 1 * 3 * 3];
             weights[4] = 1.0;
             let bias = vec![0.0f32; 1];
+            let params = ConvParams::<1, 1, 3>::new(&weights, &bias);
 
-            let output = conv::<1, 1, 3>(&input, &weights, &bias);
+            let output = conv(input.as_view(), params);
 
             assert_eq!(output.get(center), &[7.0]);
             assert_eq!(output.get(pos(0, 0)), &[0.0]);
@@ -220,13 +215,14 @@ mod tests {
         #[test]
         fn shift_kernel_moves_value() {
             let input_pos = pos(5, 5);
-            let input = single_value_input::<1>(input_pos, 3.0);
+            let input = single_value_input(1, input_pos, 3.0);
 
             let mut weights = vec![0.0f32; 1 * 1 * 3 * 3];
             weights[0] = 1.0;
             let bias = vec![0.0f32; 1];
+            let params = ConvParams::<1, 1, 3>::new(&weights, &bias);
 
-            let output = conv::<1, 1, 3>(&input, &weights, &bias);
+            let output = conv(input.as_view(), params);
 
             let output_pos = pos(6, 6);
             assert_eq!(output.get(output_pos), &[3.0]);
@@ -243,8 +239,9 @@ mod tests {
 
             let weights = vec![1.0f32; 1 * 1 * 3 * 3];
             let bias = vec![0.0f32; 1];
+            let params = ConvParams::<1, 1, 3>::new(&weights, &bias);
 
-            let output = conv::<1, 1, 3>(input.as_slice(), &weights, &bias);
+            let output = conv(input.as_view(), params);
 
             assert_eq!(output.get(pos(7, 7)), &[4.0]);
             assert_eq!(output.get(pos(6, 6)), &[1.0]);
@@ -261,8 +258,9 @@ mod tests {
             weights[4] = 1.0;
             weights[9 + 4] = 1.0;
             let bias = vec![0.0f32; 1];
+            let params = ConvParams::<2, 1, 3>::new(&weights, &bias);
 
-            let output = conv::<2, 1, 3>(input.as_slice(), &weights, &bias);
+            let output = conv(input.as_view(), params);
 
             assert_eq!(output.get(center), &[5.0]);
         }
@@ -270,12 +268,13 @@ mod tests {
         #[test]
         fn edge_position_uses_zero_padding() {
             let corner = pos(0, 0);
-            let input = single_value_input::<1>(corner, 9.0);
+            let input = single_value_input(1, corner, 9.0);
 
             let weights = vec![1.0f32; 1 * 1 * 3 * 3];
             let bias = vec![0.0f32; 1];
+            let params = ConvParams::<1, 1, 3>::new(&weights, &bias);
 
-            let output = conv::<1, 1, 3>(&input, &weights, &bias);
+            let output = conv(input.as_view(), params);
 
             assert_eq!(output.get(corner), &[9.0]);
             assert_eq!(output.get(pos(1, 1)), &[9.0]);
@@ -292,8 +291,9 @@ mod tests {
             weights[4] = 2.0;
             weights[5] = 3.0;
             let bias = vec![1.0f32; 1];
+            let params = ConvParams::<1, 1, 3>::new(&weights, &bias);
 
-            let output = conv::<1, 1, 3>(input.as_slice(), &weights, &bias);
+            let output = conv(input.as_view(), params);
 
             assert_eq!(output.get(pos(7, 7)), &[14.0]);
             assert_eq!(output.get(pos(7, 8)), &[7.0]);
@@ -307,8 +307,9 @@ mod tests {
 
             let weights = vec![2.0, 0.5];
             let bias = vec![1.0];
+            let params = ConvParams::<2, 1, 1>::new(&weights, &bias);
 
-            let output = conv::<2, 1, 1>(input.as_slice(), &weights, &bias);
+            let output = conv(input.as_view(), params);
 
             assert_eq!(output.get(center), &[9.0]);
             assert_eq!(output.get(pos(0, 0)), &[1.0]);
@@ -317,14 +318,15 @@ mod tests {
         #[test]
         fn multiple_output_channels() {
             let center = PositionId::center();
-            let input = single_value_input::<1>(center, 5.0);
+            let input = single_value_input(1, center, 5.0);
 
             let mut weights = vec![0.0f32; 2 * 1 * 3 * 3];
-            weights[center_weight_index::<1, 2, 3>(0, 0)] = 1.0;
-            weights[center_weight_index::<1, 2, 3>(0, 1)] = 2.0;
+            weights[center_weight_index(0, 0, 3, 2)] = 1.0;
+            weights[center_weight_index(0, 1, 3, 2)] = 2.0;
             let bias = vec![0.0, 10.0];
+            let params = ConvParams::<1, 2, 3>::new(&weights, &bias);
 
-            let output = conv::<1, 2, 3>(&input, &weights, &bias);
+            let output = conv(input.as_view(), params);
 
             assert_eq!(output.get(center), &[5.0, 20.0]);
         }
@@ -336,13 +338,14 @@ mod tests {
             input.get_mut(center).copy_from_slice(&[1.0, 2.0]);
 
             let mut weights = vec![0.0f32; 3 * 2 * 3 * 3];
-            weights[center_weight_index::<2, 3, 3>(0, 0)] = 1.0;
-            weights[center_weight_index::<2, 3, 3>(1, 0)] = 1.0;
-            weights[center_weight_index::<2, 3, 3>(0, 1)] = 2.0;
-            weights[center_weight_index::<2, 3, 3>(1, 2)] = 3.0;
+            weights[center_weight_index(0, 0, 3, 3)] = 1.0;
+            weights[center_weight_index(1, 0, 3, 3)] = 1.0;
+            weights[center_weight_index(0, 1, 3, 3)] = 2.0;
+            weights[center_weight_index(1, 2, 3, 3)] = 3.0;
             let bias = vec![0.0, 0.0, 0.0];
+            let params = ConvParams::<2, 3, 3>::new(&weights, &bias);
 
-            let output = conv::<2, 3, 3>(input.as_slice(), &weights, &bias);
+            let output = conv(input.as_view(), params);
 
             assert_eq!(output.get(center), &[3.0, 2.0, 6.0]);
         }
@@ -357,8 +360,9 @@ mod tests {
 
             let weights = vec![1.0f32; 9];
             let bias = vec![0.0f32];
+            let params = ConvParams::<1, 1, 3>::new(&weights, &bias);
 
-            let output = conv::<1, 1, 3>(input.as_slice(), &weights, &bias);
+            let output = conv(input.as_view(), params);
 
             assert_eq!(output.get(pos(0, 0)), &[1.0]);
             assert_eq!(output.get(pos(0, 14)), &[1.0]);
@@ -371,17 +375,16 @@ mod tests {
             let workspace_size = PositionId::COUNT * 2 * 3 * 3;
             let mut workspace = vec![99.0f32; workspace_size];
 
-            let input1 = single_value_input::<2>(PositionId::center(), 5.0);
+            let input1 = single_value_input(2, PositionId::center(), 5.0);
             let mut weights = vec![0.0f32; 1 * 2 * 3 * 3];
             weights[4] = 1.0;
             let bias = vec![0.0];
+            let params = ConvParams::<2, 1, 3>::new(&weights, &bias);
 
-            let input1_view = PositionMapView::new(&input1, 2);
-            let output1 = conv2d::<1, 3>(input1_view, &weights, &bias, &mut workspace);
+            let output1 = conv2d(input1.as_view(), params, &mut workspace);
 
-            let input2 = vec![0.0f32; 2 * PositionId::COUNT];
-            let input2_view = PositionMapView::new(&input2, 2);
-            let output2 = conv2d::<1, 3>(input2_view, &weights, &bias, &mut workspace);
+            let input2 = PositionMap::new(0.0f32, 2);
+            let output2 = conv2d(input2.as_view(), params, &mut workspace);
 
             assert_eq!(output1.get(PositionId::center()), &[5.0]);
             assert_eq!(output2.get(PositionId::center()), &[0.0]);
