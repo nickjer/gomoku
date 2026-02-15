@@ -51,13 +51,13 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> ConvWeights
         // First conv: He init with n_in = INPUT_CHANNELS * K * K
         let first_std = he_std(INPUT_CHANNELS * K * K);
         data.extend((0..INPUT_CHANNELS * C * K * K).map(|_| rng.f32_normal(0.0, first_std)));
-        data.resize(data.len() + C, 0.0); // Biases initialized to zero
+        data.extend(std::iter::repeat_n(0.0, C)); // Biases initialized to zero
 
         // Hidden convs: He init with n_in = C * K * K
         let hidden_std = he_std(C * K * K);
         for _ in 0..(L - 1) {
             data.extend((0..C * C * K * K).map(|_| rng.f32_normal(0.0, hidden_std)));
-            data.resize(data.len() + C, 0.0);
+            data.extend(std::iter::repeat_n(0.0, C));
         }
 
         // Final conv: He init with n_in = C (1×1 kernel)
@@ -88,10 +88,29 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> ConvWeights
         Self { data }
     }
 
-    /// Returns a cursor for sequentially reading layer parameters.
+    /// Returns type-safe views of all layer parameters.
+    ///
+    /// The const generics are locked to the struct's architecture, making
+    /// dimension mismatches impossible.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal data length doesn't match the expected total
+    /// (indicates a bug in weight construction).
     #[must_use]
-    pub fn cursor(&self) -> SliceCursor<'_> {
-        SliceCursor::new(&self.data)
+    pub fn layers(
+        &self,
+    ) -> (
+        ConvParams<'_, { INPUT_CHANNELS }, C, K>,
+        Vec<ConvParams<'_, C, C, K>>,
+        ConvParams<'_, C, 1, 1>,
+    ) {
+        let mut cursor = SliceCursor::new(&self.data);
+        let first = cursor.take_params();
+        let hidden = (0..(L - 1)).map(|_| cursor.take_params()).collect();
+        let final_layer = cursor.take_params();
+        assert!(cursor.is_empty());
+        (first, hidden, final_layer)
     }
 }
 
@@ -161,7 +180,7 @@ const fn layer_params(in_c: usize, out_c: usize, k: usize) -> usize {
 
 /// A sequential cursor over a float slice, used to safely partition arena memory
 /// into typed [`ConvParams`] views without manual offset arithmetic.
-pub struct SliceCursor<'a> {
+struct SliceCursor<'a> {
     data: &'a [f32],
 }
 
@@ -179,7 +198,7 @@ impl<'a> SliceCursor<'a> {
     /// Takes the next layer's weights and bias as a [`ConvParams`].
     ///
     /// Advances the cursor by `IN_C * K * K * OUT_C + OUT_C` elements.
-    pub fn take_params<const IN_C: usize, const OUT_C: usize, const K: usize>(
+    fn take_params<const IN_C: usize, const OUT_C: usize, const K: usize>(
         &mut self,
     ) -> ConvParams<'a, IN_C, OUT_C, K> {
         let weight_count = IN_C
@@ -192,13 +211,7 @@ impl<'a> SliceCursor<'a> {
         ConvParams::new(weights, bias)
     }
 
-    /// Advances past the next layer's parameters without returning them.
-    pub fn skip_params<const IN_C: usize, const OUT_C: usize, const K: usize>(&mut self) {
-        let _ = self.take_params::<IN_C, OUT_C, K>();
-    }
-
-    /// Returns `true` if all data has been consumed.
-    pub fn is_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
 }
@@ -282,41 +295,35 @@ mod tests {
     }
 
     #[test]
-    fn cursor_takes_params_with_correct_lengths() {
+    fn layers_have_correct_lengths() {
         let mut rng = fastrand::Rng::with_seed(42);
         let weights = TestWeights::random(&mut rng);
-        let mut cursor = weights.cursor();
+        let (first_conv, hidden_convs, final_conv) = weights.layers();
 
-        let first_conv = cursor.take_params::<{ INPUT_CHANNELS }, 8, 3>();
         assert_eq!(first_conv.weights().len(), 2 * 8 * 3 * 3);
         assert_eq!(first_conv.bias().len(), 8);
 
-        let hidden_conv = cursor.take_params::<8, 8, 3>();
-        assert_eq!(hidden_conv.weights().len(), 8 * 8 * 3 * 3);
-        assert_eq!(hidden_conv.bias().len(), 8);
+        assert_eq!(hidden_convs.len(), 1);
+        assert_eq!(hidden_convs[0].weights().len(), 8 * 8 * 3 * 3);
+        assert_eq!(hidden_convs[0].bias().len(), 8);
 
-        let final_conv = cursor.take_params::<8, 1, 1>();
         assert_eq!(final_conv.weights().len(), 8);
         assert_eq!(final_conv.bias().len(), 1);
-
-        assert!(cursor.is_empty());
     }
 
     #[test]
-    fn cursor_produces_non_overlapping_params() {
+    fn layers_produce_non_overlapping_params() {
         let data: Vec<f32> = (0..TestWeights::TOTAL as u32).map(|i| i as f32).collect();
         let weights = TestWeights::from_vec(data);
-        let mut cursor = weights.cursor();
+        let (first_conv, hidden_convs, _) = weights.layers();
 
-        // Check that each take_params returns sequential, non-overlapping data
-        let first_conv = cursor.take_params::<{ INPUT_CHANNELS }, 8, 3>();
+        // Check that each layer's data is sequential and non-overlapping
         let first_w_end = first_conv.weights().last().unwrap();
         let first_b_start = first_conv.bias().first().unwrap();
         assert_eq!(*first_w_end + 1.0, *first_b_start);
 
         let first_b_end = first_conv.bias().last().unwrap();
-        let hidden_conv = cursor.take_params::<8, 8, 3>();
-        let hidden_w_start = hidden_conv.weights().first().unwrap();
+        let hidden_w_start = hidden_convs[0].weights().first().unwrap();
         assert_eq!(*first_b_end + 1.0, *hidden_w_start);
     }
 
@@ -324,10 +331,9 @@ mod tests {
     fn he_initialization_has_reasonable_distribution() {
         let mut rng = fastrand::Rng::with_seed(42);
         let weights = TestWeights::random(&mut rng);
-        let mut cursor = weights.cursor();
+        let (first_conv, _, _) = weights.layers();
 
         // Check first conv weights have reasonable variance
-        let first_conv = cursor.take_params::<{ INPUT_CHANNELS }, 8, 3>();
         let first_weights = first_conv.weights();
         let mean: f32 = first_weights.iter().sum::<f32>() / first_weights.len() as f32;
         let variance: f32 = first_weights
@@ -349,14 +355,10 @@ mod tests {
     fn biases_initialized_to_zero() {
         let mut rng = fastrand::Rng::with_seed(42);
         let weights = TestWeights::random(&mut rng);
-        let mut cursor = weights.cursor();
-
-        let first_conv = cursor.take_params::<{ INPUT_CHANNELS }, 8, 3>();
-        let hidden_conv = cursor.take_params::<8, 8, 3>();
-        let final_conv = cursor.take_params::<8, 1, 1>();
+        let (first_conv, hidden_convs, final_conv) = weights.layers();
 
         assert!(first_conv.bias().iter().all(|&b| b == 0.0));
-        assert!(hidden_conv.bias().iter().all(|&b| b == 0.0));
+        assert!(hidden_convs[0].bias().iter().all(|&b| b == 0.0));
         assert!(final_conv.bias().iter().all(|&b| b == 0.0));
     }
 
