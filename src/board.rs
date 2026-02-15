@@ -109,7 +109,7 @@ impl Board {
         let mut count = 0;
         let mut current_id = start_id;
 
-        while let Some(next_id) = current_id.from_offset(offset) {
+        while let Some(next_id) = current_id.offset(offset) {
             if self.stone(next_id) != stone {
                 break;
             }
@@ -171,7 +171,7 @@ mod tests {
         let mut current = start;
         for _ in 0..count {
             board.place(current, stone).unwrap();
-            if let Some(next) = current.from_offset(offset) {
+            if let Some(next) = current.offset(offset) {
                 current = next;
             }
         }
@@ -219,7 +219,7 @@ mod tests {
         let right = Offset::new(0, 1);
         board.place(corner, Stone::Black).unwrap();
         board
-            .place(corner.from_offset(right).unwrap(), Stone::White)
+            .place(corner.offset(right).unwrap(), Stone::White)
             .unwrap();
         let display = board.to_string();
 

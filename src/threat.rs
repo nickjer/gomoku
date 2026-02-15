@@ -99,17 +99,17 @@ fn generate_four_in_a_row_threat(
 
     placed_stones.push((start, opponent));
     for _ in 0..3 {
-        current = current.from_offset(direction)?;
+        current = current.offset(direction)?;
         placed_stones.push((current, opponent));
     }
 
     // Find blocking positions (open ends of the line)
     let mut threat_positions = Vec::new();
 
-    if let Some(before) = start.from_offset(-direction) {
+    if let Some(before) = start.offset(-direction) {
         threat_positions.push(before);
     }
-    if let Some(after) = current.from_offset(direction) {
+    if let Some(after) = current.offset(direction) {
         threat_positions.push(after);
     }
 
@@ -147,13 +147,13 @@ fn generate_open_three_threat(
 
     placed_stones.push((start, opponent));
     for _ in 0..2 {
-        current = current.from_offset(direction)?;
+        current = current.offset(direction)?;
         placed_stones.push((current, opponent));
     }
 
     // Both ends must be valid positions (on the board) for an "open three"
-    let before = start.from_offset(-direction)?;
-    let after = current.from_offset(direction)?;
+    let before = start.offset(-direction)?;
+    let after = current.offset(direction)?;
 
     let threat_positions = vec![before, after];
 

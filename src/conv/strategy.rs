@@ -155,7 +155,7 @@ mod tests {
 
         let output = strategy.forward(input.as_view());
 
-        assert_eq!(output.as_slice().len(), PositionId::COUNT);
+        assert_eq!(output.stride(), 1);
     }
 
     #[test]
@@ -222,7 +222,9 @@ mod tests {
 
         let result = transform_encoding(&encoding, |pos| pos);
 
-        assert_eq!(result.as_slice(), encoding.as_slice());
+        for pos in PositionId::iter() {
+            assert_eq!(result.get(pos), encoding.get(pos));
+        }
     }
 
     #[test]

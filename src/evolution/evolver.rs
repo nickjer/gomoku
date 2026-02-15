@@ -81,12 +81,6 @@ impl Evolver {
     }
 
     #[must_use]
-    pub fn selection(mut self, selection: Selection) -> Self {
-        self.selection = selection;
-        self
-    }
-
-    #[must_use]
     pub fn evaluators(mut self, evaluators: Vec<(FitnessEvaluator, FitnessWeight)>) -> Self {
         self.evaluators = evaluators;
         self
@@ -367,11 +361,6 @@ mod tests {
     #[test]
     fn mutation_builder_sets_mutation() {
         let _evolver = Evolver::new().mutation(Mutation::default());
-    }
-
-    #[test]
-    fn selection_builder_sets_selection() {
-        let _evolver = Evolver::new().selection(Selection::default());
     }
 
     #[test]

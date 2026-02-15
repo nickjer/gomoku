@@ -51,23 +51,21 @@ mod tests {
         PositionId::from_position(Position::new(row, col))
     }
 
-    fn policy_with_values(values: &[(PositionId, f32)]) -> Vec<f32> {
+    fn policy_with_values(values: &[(PositionId, f32)]) -> PositionMap<f32> {
         let mut map = PositionMap::new(f32::NEG_INFINITY, 1);
         for &(pos, value) in values {
             map.get_mut(pos)[0] = value;
         }
-        map.into_vec()
+        map
     }
 
     #[test]
     fn selects_highest_value() {
         let positions = vec![pos(0, 0), pos(0, 1), pos(0, 2)];
-        let policy_data =
-            policy_with_values(&[(pos(0, 0), 1.0), (pos(0, 1), 5.0), (pos(0, 2), 3.0)]);
-        let policy = PositionMapView::new(&policy_data, 1);
+        let policy = policy_with_values(&[(pos(0, 0), 1.0), (pos(0, 1), 5.0), (pos(0, 2), 3.0)]);
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let selected = select_best_position(&positions, policy, &mut rng);
+        let selected = select_best_position(&positions, policy.as_view(), &mut rng);
 
         assert_eq!(selected, pos(0, 1));
     }
@@ -75,12 +73,10 @@ mod tests {
     #[test]
     fn handles_negative_values() {
         let positions = vec![pos(0, 0), pos(0, 1), pos(0, 2)];
-        let policy_data =
-            policy_with_values(&[(pos(0, 0), -5.0), (pos(0, 1), -1.0), (pos(0, 2), -3.0)]);
-        let policy = PositionMapView::new(&policy_data, 1);
+        let policy = policy_with_values(&[(pos(0, 0), -5.0), (pos(0, 1), -1.0), (pos(0, 2), -3.0)]);
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let selected = select_best_position(&positions, policy, &mut rng);
+        let selected = select_best_position(&positions, policy.as_view(), &mut rng);
 
         assert_eq!(selected, pos(0, 1));
     }
@@ -88,12 +84,10 @@ mod tests {
     #[test]
     fn tiebreaking_selects_from_tied_positions() {
         let positions = vec![pos(0, 0), pos(0, 1), pos(0, 2)];
-        let policy_data =
-            policy_with_values(&[(pos(0, 0), 5.0), (pos(0, 1), 5.0), (pos(0, 2), 1.0)]);
-        let policy = PositionMapView::new(&policy_data, 1);
+        let policy = policy_with_values(&[(pos(0, 0), 5.0), (pos(0, 1), 5.0), (pos(0, 2), 1.0)]);
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let selected = select_best_position(&positions, policy, &mut rng);
+        let selected = select_best_position(&positions, policy.as_view(), &mut rng);
 
         assert!(selected == pos(0, 0) || selected == pos(0, 1));
     }
@@ -101,13 +95,12 @@ mod tests {
     #[test]
     fn tiebreaking_is_uniform() {
         let positions = vec![pos(0, 0), pos(0, 1)];
-        let policy_data = policy_with_values(&[(pos(0, 0), 5.0), (pos(0, 1), 5.0)]);
+        let policy = policy_with_values(&[(pos(0, 0), 5.0), (pos(0, 1), 5.0)]);
 
         let mut counts = [0, 0];
         for seed in 0..1000 {
-            let policy = PositionMapView::new(&policy_data, 1);
             let mut rng = fastrand::Rng::with_seed(seed);
-            let selected = select_best_position(&positions, policy, &mut rng);
+            let selected = select_best_position(&positions, policy.as_view(), &mut rng);
 
             if selected == pos(0, 0) {
                 counts[0] += 1;
@@ -126,14 +119,12 @@ mod tests {
     #[test]
     fn deterministic_with_same_seed() {
         let positions = vec![pos(0, 0), pos(0, 1), pos(0, 2)];
-        let policy_data =
-            policy_with_values(&[(pos(0, 0), 5.0), (pos(0, 1), 5.0), (pos(0, 2), 5.0)]);
+        let policy = policy_with_values(&[(pos(0, 0), 5.0), (pos(0, 1), 5.0), (pos(0, 2), 5.0)]);
 
         let results: Vec<_> = (0..5)
             .map(|_| {
-                let policy = PositionMapView::new(&policy_data, 1);
                 let mut rng = fastrand::Rng::with_seed(12345);
-                select_best_position(&positions, policy, &mut rng)
+                select_best_position(&positions, policy.as_view(), &mut rng)
             })
             .collect();
 
@@ -144,12 +135,10 @@ mod tests {
     fn only_considers_provided_positions() {
         // pos(0,0) has highest value but isn't in the list
         let positions = vec![pos(0, 1), pos(0, 2)];
-        let policy_data =
-            policy_with_values(&[(pos(0, 0), 100.0), (pos(0, 1), 5.0), (pos(0, 2), 3.0)]);
-        let policy = PositionMapView::new(&policy_data, 1);
+        let policy = policy_with_values(&[(pos(0, 0), 100.0), (pos(0, 1), 5.0), (pos(0, 2), 3.0)]);
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let selected = select_best_position(&positions, policy, &mut rng);
+        let selected = select_best_position(&positions, policy.as_view(), &mut rng);
 
         assert_eq!(selected, pos(0, 1));
     }
@@ -157,11 +146,10 @@ mod tests {
     #[test]
     fn single_position_returns_that_position() {
         let positions = vec![pos(7, 7)];
-        let policy_data = policy_with_values(&[(pos(7, 7), 0.0)]);
-        let policy = PositionMapView::new(&policy_data, 1);
+        let policy = policy_with_values(&[(pos(7, 7), 0.0)]);
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let selected = select_best_position(&positions, policy, &mut rng);
+        let selected = select_best_position(&positions, policy.as_view(), &mut rng);
 
         assert_eq!(selected, pos(7, 7));
     }
@@ -170,10 +158,9 @@ mod tests {
     #[should_panic(expected = "no empty positions")]
     fn panics_on_empty_positions() {
         let positions: Vec<PositionId> = vec![];
-        let policy_data = vec![0.0f32; PositionId::COUNT];
-        let policy = PositionMapView::new(&policy_data, 1);
+        let policy = PositionMap::new(0.0f32, 1);
         let mut rng = fastrand::Rng::with_seed(42);
 
-        select_best_position(&positions, policy, &mut rng);
+        select_best_position(&positions, policy.as_view(), &mut rng);
     }
 }

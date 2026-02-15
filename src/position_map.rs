@@ -61,12 +61,6 @@ impl<T> PositionMap<T> {
         &mut self.data[start..start + self.stride]
     }
 
-    /// Returns the underlying data as a slice.
-    #[must_use]
-    pub fn as_slice(&self) -> &[T] {
-        &self.data
-    }
-
     /// Returns the underlying data as a mutable slice.
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         &mut self.data
@@ -79,20 +73,6 @@ impl<T> PositionMap<T> {
             data: &self.data,
             stride: self.stride,
         }
-    }
-
-    /// Returns a mutable borrowed view of this map.
-    pub fn as_view_mut(&mut self) -> PositionMapViewMut<'_, T> {
-        PositionMapViewMut {
-            data: &mut self.data,
-            stride: self.stride,
-        }
-    }
-
-    /// Consumes the map and returns the underlying data as a `Vec`.
-    #[must_use]
-    pub fn into_vec(self) -> Vec<T> {
-        self.data
     }
 }
 
@@ -194,25 +174,6 @@ impl<'a, T> PositionMapViewMut<'a, T> {
         }
     }
 
-    /// Returns the stride (number of elements per position).
-    #[must_use]
-    pub const fn stride(&self) -> usize {
-        self.stride
-    }
-
-    /// Returns a reference to the elements at the given position.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `position_id` is out of bounds or on offset overflow.
-    #[must_use]
-    pub fn get(&self, position_id: PositionId) -> &[T] {
-        let start = usize::from(position_id)
-            .checked_mul(self.stride)
-            .expect("PositionMapViewMut::get: offset overflow");
-        &self.data[start..start + self.stride]
-    }
-
     /// Returns a mutable reference to the elements at the given position.
     ///
     /// # Panics
@@ -253,14 +214,6 @@ mod tests {
 
         assert_eq!(map.get(pos(7, 7)), &[10, 20]);
         assert_eq!(map.get(pos(7, 8)), &[0, 0]);
-    }
-
-    #[test]
-    fn stride_map_as_slice_returns_full_data() {
-        let map = PositionMap::new(1.0f32, 2);
-
-        assert_eq!(map.as_slice().len(), PositionId::COUNT * 2);
-        assert!(map.as_slice().iter().all(|&val| val == 1.0));
     }
 
     #[test]

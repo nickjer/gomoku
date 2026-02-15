@@ -54,11 +54,10 @@ mod tests {
 
         let encoding = encode_board(&board, Stone::Black);
 
-        assert_eq!(
-            encoding.as_slice().len(),
-            INPUT_CHANNELS * PositionId::COUNT
-        );
-        assert!(encoding.as_slice().iter().all(|&v| v == 0.0));
+        assert_eq!(encoding.stride(), INPUT_CHANNELS);
+        for pos in PositionId::iter() {
+            assert_eq!(encoding.get(pos), &[0.0, 0.0]);
+        }
     }
 
     #[test]
@@ -87,7 +86,7 @@ mod tests {
     fn perspective_reversal_swaps_channels() {
         let mut board = Board::new();
         let center = PositionId::center();
-        let adjacent = center.from_offset(Offset::new(0, 1)).unwrap();
+        let adjacent = center.offset(Offset::new(0, 1)).unwrap();
         board.place(center, Stone::Black).unwrap();
         board.place(adjacent, Stone::White).unwrap();
 

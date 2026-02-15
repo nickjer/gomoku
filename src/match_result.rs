@@ -52,59 +52,11 @@ impl MatchResult {
     pub fn board_state(&self) -> &str {
         &self.board_state
     }
-
-    #[must_use]
-    pub fn winner_label(&self) -> Option<&str> {
-        match self.outcome {
-            Outcome::BlackWins => Some(&self.black_label),
-            Outcome::WhiteWins => Some(&self.white_label),
-            Outcome::Draw => None,
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn winner_label_returns_black_label_when_black_wins() {
-        let result = MatchResult::new(
-            Outcome::BlackWins,
-            "black_strategy".to_string(),
-            "white_strategy".to_string(),
-            9,
-            String::new(),
-        );
-
-        assert_eq!(result.winner_label(), Some("black_strategy"));
-    }
-
-    #[test]
-    fn winner_label_returns_white_label_when_white_wins() {
-        let result = MatchResult::new(
-            Outcome::WhiteWins,
-            "black_strategy".to_string(),
-            "white_strategy".to_string(),
-            10,
-            String::new(),
-        );
-
-        assert_eq!(result.winner_label(), Some("white_strategy"));
-    }
-
-    #[test]
-    fn winner_label_returns_none_on_draw() {
-        let result = MatchResult::new(
-            Outcome::Draw,
-            "black".to_string(),
-            "white".to_string(),
-            225,
-            String::new(),
-        );
-
-        assert_eq!(result.winner_label(), None);
-    }
 
     #[test]
     fn accessors_return_correct_values() {

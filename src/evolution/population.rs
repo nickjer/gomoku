@@ -33,14 +33,6 @@ impl<S> Population<S> {
             generation: self.generation + 1,
         }
     }
-
-    #[must_use]
-    pub fn into_strategies(self) -> Vec<S> {
-        self.individuals
-            .into_iter()
-            .map(Individual::into_strategy)
-            .collect()
-    }
 }
 
 #[cfg(test)]
@@ -84,14 +76,5 @@ mod tests {
 
         assert_eq!(next.generation(), 1);
         assert_eq!(next.individuals().len(), 1);
-    }
-
-    #[test]
-    fn into_strategies_extracts_strategies() {
-        let pop = population(&[10.0, 20.0, 30.0]);
-
-        let strategies = pop.into_strategies();
-
-        assert_eq!(strategies.len(), 3);
     }
 }

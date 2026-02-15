@@ -20,11 +20,6 @@ impl<S> Individual<S> {
     pub fn strategy(&self) -> &S {
         &self.strategy
     }
-
-    #[must_use]
-    pub fn into_strategy(self) -> S {
-        self.strategy
-    }
 }
 
 impl<S> PartialEq for Individual<S> {
@@ -63,16 +58,6 @@ mod tests {
 
         assert_eq!(individual.strategy(), &strategy);
         assert_eq!(individual.fitness(), FitnessScore::new(42.0));
-    }
-
-    #[test]
-    fn into_strategy_consumes_and_returns_strategy() {
-        let strategy = MockStrategy {
-            genes: vec![1, 2, 3],
-        };
-        let individual = Individual::new(strategy.clone(), FitnessScore::new(42.0));
-
-        assert_eq!(individual.into_strategy(), strategy);
     }
 
     #[test]

@@ -22,11 +22,6 @@ pub fn total_rounds(count: usize) -> u32 {
 pub struct Swiss;
 
 impl Swiss {
-    #[must_use]
-    pub fn new() -> Self {
-        Self
-    }
-
     fn play_round<S: Strategy>(
         state: &mut State,
         strategies: &[S],
@@ -244,7 +239,7 @@ mod tests {
     #[test]
     fn run_returns_standings() {
         let game: Game = Scripted::new().add("a", "b", Some("a")).into();
-        let tournament = Swiss::new();
+        let tournament = Swiss;
         let strategies = make_strategies(&["a", "b"]);
         let mut rng = fastrand::Rng::new();
 
@@ -256,7 +251,7 @@ mod tests {
     #[test]
     fn winner_ranks_first() {
         let game: Game = Scripted::new().add("a", "b", Some("a")).into();
-        let tournament = Swiss::new();
+        let tournament = Swiss;
         let strategies = make_strategies(&["a", "b"]);
         let mut rng = fastrand::Rng::new();
 
@@ -268,7 +263,7 @@ mod tests {
     #[test]
     fn loser_ranks_last() {
         let game: Game = Scripted::new().add("a", "b", Some("b")).into();
-        let tournament = Swiss::new();
+        let tournament = Swiss;
         let strategies = make_strategies(&["a", "b"]);
         let mut rng = fastrand::Rng::new();
 
@@ -280,7 +275,7 @@ mod tests {
     #[test]
     fn draw_keeps_original_order() {
         let game: Game = Scripted::new().add("a", "b", None).into();
-        let tournament = Swiss::new();
+        let tournament = Swiss;
         let strategies = make_strategies(&["a", "b"]);
         let mut rng = fastrand::Rng::new();
 
@@ -299,7 +294,7 @@ mod tests {
             .add("a", "b", Some("a"))
             .add("a", "c", Some("a"))
             .into();
-        let tournament = Swiss::new();
+        let tournament = Swiss;
         let strategies = make_strategies(&["a", "b", "c"]);
         let mut rng = fastrand::Rng::new();
 
@@ -321,7 +316,7 @@ mod tests {
             .add("a", "d", None)
             .add("b", "c", Some("b"))
             .into();
-        let tournament = Swiss::new();
+        let tournament = Swiss;
         let strategies = make_strategies(&["a", "b", "c", "d"]);
         let mut rng = fastrand::Rng::new();
 
@@ -333,7 +328,7 @@ mod tests {
     #[test]
     fn each_pairing_plays_two_games_with_swapped_colors() {
         let game: Game = Scripted::new().add("a", "b", Some("a")).into();
-        let tournament = Swiss::new();
+        let tournament = Swiss;
         let strategies = make_strategies(&["a", "b"]);
         let mut rng = fastrand::Rng::new();
 
@@ -361,7 +356,7 @@ mod tests {
             .add("a", "c", Some("c"))
             .add("b", "d", Some("b"))
             .into();
-        let tournament = Swiss::new();
+        let tournament = Swiss;
         let strategies = make_strategies(&["a", "b", "c", "d"]);
         let mut rng = fastrand::Rng::new();
 

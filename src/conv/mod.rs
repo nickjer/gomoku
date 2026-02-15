@@ -4,7 +4,6 @@ mod params;
 mod select;
 mod strategy;
 mod symmetry;
-mod weights;
+pub mod weights;
 
-pub use strategy::{ConvSmall, ConvStrategy, ConvTiny};
-pub use weights::ConvWeights;
+pub use strategy::{ConvSmall, ConvTiny};

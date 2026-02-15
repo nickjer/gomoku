@@ -91,7 +91,7 @@ impl<B: Backend> InteractiveStrategy<B> {
 }
 
 fn move_cursor(cursor: PositionId, offset: Offset) -> PositionId {
-    cursor.from_offset(offset).unwrap_or(cursor)
+    cursor.offset(offset).unwrap_or(cursor)
 }
 
 #[cfg(test)]

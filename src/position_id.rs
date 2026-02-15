@@ -52,7 +52,7 @@ impl PositionId {
     ///
     /// Panics if board width exceeds `isize::MAX` or if delta arithmetic overflows.
     #[must_use]
-    pub fn from_offset(self, offset: Offset) -> Option<Self> {
+    pub fn offset(self, offset: Offset) -> Option<Self> {
         // Check column bounds to detect wraparound (requires modulo, but no division)
         let col = self.index % Self::WIDTH;
         let new_col = col.checked_add_signed(offset.col_delta())?;
@@ -65,10 +65,10 @@ impl PositionId {
         let row_delta_scaled = offset
             .row_delta()
             .checked_mul(width_signed)
-            .expect("from_offset: row delta overflow");
+            .expect("offset: row delta overflow");
         let delta = row_delta_scaled
             .checked_add(offset.col_delta())
-            .expect("from_offset: delta overflow");
+            .expect("offset: delta overflow");
         let new_index = self.index.checked_add_signed(delta)?;
 
         if new_index >= Self::COUNT {
@@ -82,7 +82,7 @@ impl PositionId {
     pub fn neighbor_count(self, offsets: &[Offset]) -> usize {
         offsets
             .iter()
-            .filter(|&&offset| self.from_offset(offset).is_some())
+            .filter(|&&offset| self.offset(offset).is_some())
             .count()
     }
 
@@ -217,50 +217,50 @@ mod tests {
     }
 
     #[test]
-    fn from_offset_returns_valid_position() {
+    fn offset_returns_valid_position() {
         let center = PositionId::center();
         let offset = Offset::new(1, 1);
 
-        let result = center.from_offset(offset);
+        let result = center.offset(offset);
 
         assert_eq!(result, Some(pos(8, 8)));
     }
 
     #[test]
-    fn from_offset_returns_none_when_out_of_bounds() {
+    fn offset_returns_none_when_out_of_bounds() {
         let corner = pos(0, 0);
         let offset = Offset::new(-1, 0);
 
-        let result = corner.from_offset(offset);
+        let result = corner.offset(offset);
 
         assert_eq!(result, None);
     }
 
     #[test]
-    fn from_offset_detects_right_column_wraparound() {
+    fn offset_detects_right_column_wraparound() {
         // Position (0, 14) going right would wrap to (1, 0) without bounds check
         let right_edge = pos(0, 14);
         let offset = Offset::new(0, 1);
 
-        assert_eq!(right_edge.from_offset(offset), None);
+        assert_eq!(right_edge.offset(offset), None);
     }
 
     #[test]
-    fn from_offset_detects_left_column_wraparound() {
+    fn offset_detects_left_column_wraparound() {
         // Position (1, 0) going left would wrap to (0, 14) without bounds check
         let left_edge = pos(1, 0);
         let offset = Offset::new(0, -1);
 
-        assert_eq!(left_edge.from_offset(offset), None);
+        assert_eq!(left_edge.offset(offset), None);
     }
 
     #[test]
-    fn from_offset_allows_valid_edge_moves() {
+    fn offset_allows_valid_edge_moves() {
         // Ensure we didn't over-restrict - valid moves near edges should work
-        assert_eq!(pos(0, 13).from_offset(Offset::new(0, 1)), Some(pos(0, 14)));
-        assert_eq!(pos(1, 1).from_offset(Offset::new(0, -1)), Some(pos(1, 0)));
-        assert_eq!(pos(13, 7).from_offset(Offset::new(1, 0)), Some(pos(14, 7)));
-        assert_eq!(pos(1, 7).from_offset(Offset::new(-1, 0)), Some(pos(0, 7)));
+        assert_eq!(pos(0, 13).offset(Offset::new(0, 1)), Some(pos(0, 14)));
+        assert_eq!(pos(1, 1).offset(Offset::new(0, -1)), Some(pos(1, 0)));
+        assert_eq!(pos(13, 7).offset(Offset::new(1, 0)), Some(pos(14, 7)));
+        assert_eq!(pos(1, 7).offset(Offset::new(-1, 0)), Some(pos(0, 7)));
     }
 
     #[test]

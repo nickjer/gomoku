@@ -2,7 +2,7 @@ mod standing;
 mod swiss;
 
 pub use standing::Standing;
-pub use swiss::{Swiss, total_rounds};
+pub use swiss::Swiss;
 
 use enum_dispatch::enum_dispatch;
 
@@ -107,7 +107,7 @@ mod tests {
     #[test]
     fn swiss_variant_runs_tournament() {
         let game: Game = Scripted::new().add("a", "b", Some("a")).into();
-        let tournament: Tournament = Swiss::new().into();
+        let tournament: Tournament = Swiss.into();
         let strategies = vec![StubStrategy::new("a"), StubStrategy::new("b")];
         let mut rng = fastrand::Rng::with_seed(42);
 

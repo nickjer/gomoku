@@ -28,7 +28,7 @@ fn gather_workspace<const K: usize>(
                 let col_offset = isize::try_from(kc).expect("kernel size too large") - pad;
                 let offset = Offset::new(row_offset, col_offset);
 
-                if let Some(neighbor) = pos.from_offset(offset) {
+                if let Some(neighbor) = pos.offset(offset) {
                     let channels = input.get(neighbor);
                     for (in_ch, &val) in channels.iter().enumerate() {
                         padded_input[in_ch * K * K + kr * K + kc] = val;
@@ -174,7 +174,7 @@ mod tests {
 
             let output = conv(input.as_view(), params);
 
-            assert_eq!(output.as_slice().len(), 4 * PositionId::COUNT);
+            assert_eq!(output.stride(), 4);
         }
 
         #[test]
@@ -186,7 +186,7 @@ mod tests {
 
             let output = conv(input.as_view(), params);
 
-            assert_eq!(output.as_slice().len(), PositionId::COUNT);
+            assert_eq!(output.stride(), 1);
         }
 
         #[test]

@@ -3,7 +3,8 @@
 use std::cell::Cell;
 
 use crate::board::Board;
-use crate::conv::{ConvTiny, ConvWeights};
+use crate::conv::ConvTiny;
+use crate::conv::weights::ConvWeights;
 use crate::evolution::fitness_score::FitnessScore;
 use crate::evolution::selection::HasFitness;
 use crate::position::Position;

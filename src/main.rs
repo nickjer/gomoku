@@ -1,9 +1,29 @@
+#![warn(clippy::as_conversions)]
+
+mod board;
+mod cli;
+mod conv;
+mod evolution;
+mod game;
+mod interactive_strategy;
+mod match_result;
+mod offset;
+mod outcome;
+mod position;
+mod position_id;
+mod position_map;
+mod stone;
+mod strategy;
+mod threat;
+mod tournament;
+
+#[cfg(test)]
+mod test_utils;
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use gomoku::cli::{
-    EvolveCommand, InteractiveArgs, PlayArgs, run_evolve, run_interactive, run_play,
-};
+use crate::cli::{EvolveCommand, InteractiveArgs, PlayArgs, run_evolve, run_interactive, run_play};
 
 #[derive(Parser)]
 #[command(name = "gomoku")]
