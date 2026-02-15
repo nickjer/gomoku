@@ -93,10 +93,14 @@ impl Evolver {
     }
 
     /// Runs the evolutionary algorithm and returns the final population.
+    ///
+    /// The `on_generation` callback is invoked after each generation completes,
+    /// receiving the new population. This can be used for checkpointing.
     pub fn evolve<S: EvolvableStrategy>(
         &self,
         strategies: Vec<S>,
         rng: &mut fastrand::Rng,
+        on_generation: impl Fn(&Population<S>),
     ) -> Population<S> {
         let individuals = self.evaluate_and_sort(strategies, rng);
         let mut population = Population::new(individuals);
@@ -106,10 +110,8 @@ impl Evolver {
             let _guard = span.enter();
             let new_strategies = self.create_next_generation(&population, rng);
             let new_individuals = self.evaluate_and_sort(new_strategies, rng);
-            let champion = new_individuals[0].strategy().label();
-            let champion_is_elite = champion.contains("elite");
-            info!(champion, champion_is_elite, "Generation complete");
             population = population.next_generation(new_individuals);
+            on_generation(&population);
         }
 
         population
@@ -166,7 +168,6 @@ impl Evolver {
         population: &Population<S>,
         rng: &mut fastrand::Rng,
     ) -> Vec<S> {
-        let generation = population.generation() + 1;
         let individuals = population.individuals();
         let population_size = individuals.len();
         let mut new_strategies = Vec::with_capacity(population_size);
@@ -174,13 +175,12 @@ impl Evolver {
         // Elitism: keep top performers
         for (i, individual) in individuals.iter().take(self.elitism).enumerate() {
             let genes = individual.strategy().genes().clone();
-            new_strategies.push(S::from_genes(format!("gen{generation}_elite{i}"), genes));
+            new_strategies.push(S::from_genes(format!("elite{i}"), genes));
         }
 
         // Fill rest with offspring
         new_strategies.extend(
-            (self.elitism..population_size)
-                .map(|i| self.create_offspring(individuals, generation, i, rng)),
+            (self.elitism..population_size).map(|i| self.create_offspring(individuals, i, rng)),
         );
 
         new_strategies
@@ -190,7 +190,6 @@ impl Evolver {
     fn create_offspring<S: EvolvableStrategy>(
         &self,
         individuals: &[Individual<S>],
-        generation: u32,
         index: usize,
         rng: &mut fastrand::Rng,
     ) -> S {
@@ -220,8 +219,7 @@ impl Evolver {
             }
         });
 
-        debug_span!("from_genes")
-            .in_scope(|| S::from_genes(format!("gen{generation}_{index}"), child_genes))
+        debug_span!("from_genes").in_scope(|| S::from_genes(format!("{index}"), child_genes))
     }
 }
 
@@ -264,7 +262,7 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(42);
         let strategies = make_strategies(&mut rng, 4);
 
-        let population = evolver.evolve(strategies, &mut rng);
+        let population = evolver.evolve(strategies, &mut rng, |_| {});
 
         assert_eq!(population.individuals().len(), 4);
     }
@@ -275,7 +273,7 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(42);
         let strategies = make_strategies(&mut rng, 4);
 
-        let population = evolver.evolve(strategies, &mut rng);
+        let population = evolver.evolve(strategies, &mut rng, |_| {});
 
         assert_eq!(population.generation(), 0);
     }
@@ -286,7 +284,7 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(42);
         let strategies = make_strategies(&mut rng, 4);
 
-        let population = evolver.evolve(strategies, &mut rng);
+        let population = evolver.evolve(strategies, &mut rng, |_| {});
 
         assert_eq!(population.generation(), 3);
     }
@@ -298,11 +296,11 @@ mod tests {
 
         let mut rng1 = fastrand::Rng::with_seed(42);
         let strategies1 = make_strategies(&mut rng1, 4);
-        let pop1 = evolver1.evolve(strategies1, &mut rng1);
+        let pop1 = evolver1.evolve(strategies1, &mut rng1, |_| {});
 
         let mut rng2 = fastrand::Rng::with_seed(42);
         let strategies2 = make_strategies(&mut rng2, 4);
-        let pop2 = evolver2.evolve(strategies2, &mut rng2);
+        let pop2 = evolver2.evolve(strategies2, &mut rng2, |_| {});
 
         let labels1: Vec<_> = pop1
             .individuals()
@@ -327,7 +325,7 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(42);
         let strategies = make_strategies(&mut rng, 4);
 
-        let population = evolver.evolve(strategies, &mut rng);
+        let population = evolver.evolve(strategies, &mut rng, |_| {});
 
         // With InputOrderTournament, gen0_0 and gen0_1 have highest fitness
         // They should be preserved as elites in gen1
@@ -392,7 +390,7 @@ mod tests {
             .generations(1)
             .crossover_rate(0.0)
             .mutation_rate(0.0)
-            .evolve(strategies, &mut rng);
+            .evolve(strategies, &mut rng, |_| {});
 
         // Every offspring should have genes identical to some parent
         for individual in gen1.individuals() {
@@ -420,7 +418,7 @@ mod tests {
             .generations(1)
             .crossover_rate(0.0)
             .mutation_rate(1.0)
-            .evolve(strategies, &mut rng);
+            .evolve(strategies, &mut rng, |_| {});
 
         // At least one offspring should have different genes than all parents
         let any_mutated = gen1.individuals().iter().any(|individual| {
@@ -429,5 +427,23 @@ mod tests {
         });
 
         assert!(any_mutated, "some offspring should have mutated genes");
+    }
+
+    #[test]
+    fn on_generation_called_for_each_generation() {
+        use std::cell::Cell;
+
+        let evolver = Evolver::new().generations(3);
+        let mut rng = fastrand::Rng::with_seed(42);
+        let strategies = make_strategies(&mut rng, 4);
+
+        let generations_seen = Cell::new(Vec::new());
+        evolver.evolve(strategies, &mut rng, |population| {
+            let mut seen = generations_seen.take();
+            seen.push(population.generation());
+            generations_seen.set(seen);
+        });
+
+        assert_eq!(generations_seen.into_inner(), vec![1, 2, 3]);
     }
 }

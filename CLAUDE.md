@@ -50,7 +50,7 @@ The `Tournament` enum manages competition formats using `enum_dispatch`:
 - Test-only variants: `InputOrder`, `Scripted`
 
 ### Evolution
-The `Evolver` orchestrates the genetic algorithm. Call `evolve(strategies, rng)` with initial strategies.
+The `Evolver` orchestrates the genetic algorithm. Call `evolve(strategies, rng, on_generation)` with initial strategies and a per-generation callback.
 
 - **Fitness**: Weighted combination of tournament ranking and threat defense evaluation
 - **Selection** enum: `TournamentWithReplacement`, `TournamentWithoutReplacement`
@@ -72,20 +72,23 @@ cargo run --release -- evolve conv-tiny -p 16 -o tmp/output -g 10 --seed 42
 # Evolve ConvSmall CNN strategies
 cargo run --release -- evolve conv-small -p 8 -o tmp/output -g 20 --seed 42
 
-# Continue evolving from saved strategies
-cargo run --release -- evolve conv-small -i tmp/output -o tmp/output2 -g 50
+# Evolve with checkpoints every 5 generations
+cargo run --release -- evolve conv-small -p 8 -o tmp/output -g 20 --checkpoint-every 5 --seed 42
+
+# Continue evolving from a checkpoint
+cargo run --release -- evolve conv-small -i tmp/output/gen_05 -o tmp/output2 -g 50
 
 # Play a game between two strategies
-cargo run --release -- play tmp/output/1_*.bin tmp/output/2_*.bin
+cargo run --release -- play tmp/output/gen_20/1_*.bin tmp/output/gen_20/2_*.bin
 
 # Play interactively against a strategy (TUI)
-cargo run --release -- interactive tmp/output/1_*.bin
-cargo run --release -- interactive tmp/output/1_*.bin --play-as white
+cargo run --release -- interactive tmp/output/gen_20/1_*.bin
+cargo run --release -- interactive tmp/output/gen_20/1_*.bin --play-as white
 ```
 
 **Interactive controls:** Arrow keys/hjkl to move cursor, Enter/Space to place stone, q/Esc to quit.
 
-**Output format:** Each strategy is saved as an individual binary file `{rank}_{label}.bin` using postcard serialization.
+**Output format:** The output directory contains `gen_NNN/` sub-directories (zero-padded). Each sub-directory holds individual binary files `{rank}_{label}.bin` using postcard serialization. The final generation is always saved; intermediate checkpoints are controlled by `--checkpoint-every`.
 
 **Evolve options:**
 - `-p/--population` (required without `-i`): Number of random strategies to generate
@@ -96,6 +99,7 @@ cargo run --release -- interactive tmp/output/1_*.bin --play-as white
 - `--crossover-rate` [0.8]: Crossover probability
 - `--mutation-rate` [0.1]: Mutation probability
 - `--sigma` [0.01]: Gaussian mutation sigma
+- `--checkpoint-every` [0]: Save a checkpoint every N generations (0 to disable)
 - `--tournament-weight` [1.0]: Tournament evaluator weight (0 to disable)
 - `--defense-weight` [0.0]: Threat defense evaluator weight (0 to disable)
 - `--seed`: RNG seed for reproducibility

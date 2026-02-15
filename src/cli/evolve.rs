@@ -1,8 +1,8 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
 use clap::{Args, Subcommand};
-use tracing::info;
+use tracing::{info, warn};
 
 use super::evolvable_strategies::{
     EvolvableStrategies, load_strategies_from_directory, save_strategies_to_directory,
@@ -69,6 +69,10 @@ pub struct CommonArgs {
     #[arg(long, default_value = "0.0")]
     pub defense_weight: f32,
 
+    /// Save a checkpoint every N generations (0 to disable)
+    #[arg(long, default_value = "0", value_name = "N")]
+    pub checkpoint_every: u32,
+
     /// Log level (error, warn, info, debug, trace)
     #[arg(short, long, value_name = "LEVEL")]
     pub log_level: Option<String>,
@@ -123,12 +127,48 @@ fn run_conv<S: EvolvableStrategy>(
         Crossover::Uniform,
         Mutation::Gaussian { sigma: args.sigma },
     );
-    let population: Population<S> = evolver.evolve(strategies, &mut rng);
+
+    let output = &args.common.output;
+    let generations = args.common.generations;
+    let checkpoint_every = args.common.checkpoint_every;
+    let gen_width = generations.max(1).to_string().len();
+
+    let population: Population<S> = evolver.evolve(strategies, &mut rng, |population| {
+        let generation = population.generation();
+        if checkpoint_every > 0 && generation % checkpoint_every == 0 {
+            let dir = output.join(format!("gen_{generation:0gen_width$}"));
+            if let Err(err) = save_population(&dir, population, wrap) {
+                warn!(%err, "Failed to save checkpoint");
+            }
+        }
+    });
     info!(generation = population.generation(), "Evolution complete");
 
-    save_strategies_to_directory(&args.common.output, &wrap(population.into_strategies()))?;
-    info!(path = %args.common.output.display(), "Saved strategies");
+    let final_gen = population.generation();
+    let already_checkpointed = checkpoint_every > 0 && final_gen.is_multiple_of(checkpoint_every);
+    if !already_checkpointed {
+        let dir = output.join(format!("gen_{final_gen:0gen_width$}"));
+        save_population(&dir, &population, wrap)?;
+    }
 
+    Ok(())
+}
+
+fn save_population<S: EvolvableStrategy>(
+    dir: &Path,
+    population: &Population<S>,
+    wrap: fn(Vec<S>) -> EvolvableStrategies,
+) -> Result<()> {
+    let strategies: Vec<S> = population
+        .individuals()
+        .iter()
+        .map(|ind| {
+            let strategy = ind.strategy();
+            S::from_genes(strategy.label().to_string(), strategy.genes().clone())
+        })
+        .collect();
+    save_strategies_to_directory(dir, &wrap(strategies))?;
+    info!(path = %dir.display(), "Saved strategies");
     Ok(())
 }
 
@@ -177,7 +217,7 @@ fn load_or_generate<S: EvolvableStrategy>(
 
 fn generate_random<S: EvolvableStrategy>(population: usize, rng: &mut fastrand::Rng) -> Vec<S> {
     (0..population)
-        .map(|i| S::random(format!("gen0_{i}"), rng))
+        .map(|i| S::random(format!("{i}"), rng))
         .collect()
 }
 
