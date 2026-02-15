@@ -155,7 +155,14 @@ mod tests {
             kernel_size: usize,
             out_channels: usize,
         ) -> usize {
-            weight_index(in_ch, kernel_size / 2, kernel_size / 2, out_ch, kernel_size, out_channels)
+            weight_index(
+                in_ch,
+                kernel_size / 2,
+                kernel_size / 2,
+                out_ch,
+                kernel_size,
+                out_channels,
+            )
         }
 
         #[test]

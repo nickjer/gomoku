@@ -29,31 +29,10 @@ pub struct ConvWeights<const K: usize, const C: usize, const L: usize, const R: 
 }
 
 impl<const K: usize, const C: usize, const L: usize, const R: usize> ConvWeights<K, C, L, R> {
-    // First conv layer: INPUT_CHANNELS -> C, K×K kernel
-    const FIRST_CONV_WEIGHTS: usize = INPUT_CHANNELS * C * K * K;
-    const FIRST_CONV_BIAS: usize = C;
-    const FIRST_CONV_TOTAL: usize = Self::FIRST_CONV_WEIGHTS + Self::FIRST_CONV_BIAS;
-
-    // Hidden conv layers: C -> C, K×K kernel (L-1 layers)
-    const HIDDEN_CONV_WEIGHTS: usize = C * C * K * K;
-    const HIDDEN_CONV_BIAS: usize = C;
-    const HIDDEN_CONV_TOTAL: usize = Self::HIDDEN_CONV_WEIGHTS + Self::HIDDEN_CONV_BIAS;
-    const ALL_HIDDEN_TOTAL: usize = (L - 1) * Self::HIDDEN_CONV_TOTAL;
-
-    // Final conv layer: C -> 1, 1×1 kernel
-    const FINAL_CONV_WEIGHTS: usize = C;
-    const FINAL_CONV_BIAS: usize = 1;
-    const FINAL_CONV_TOTAL: usize = Self::FINAL_CONV_WEIGHTS + Self::FINAL_CONV_BIAS;
-
-    /// Total number of weights in the network.
-    pub const TOTAL: usize =
-        Self::FIRST_CONV_TOTAL + Self::ALL_HIDDEN_TOTAL + Self::FINAL_CONV_TOTAL;
-
-    // Offset calculations for slice accessors
-    const FIRST_WEIGHTS_START: usize = 0;
-    const FIRST_BIAS_START: usize = Self::FIRST_CONV_WEIGHTS;
-    const HIDDEN_START: usize = Self::FIRST_CONV_TOTAL;
-    const FINAL_START: usize = Self::FIRST_CONV_TOTAL + Self::ALL_HIDDEN_TOTAL;
+    /// Total number of parameters in the network.
+    pub const TOTAL: usize = layer_params(INPUT_CHANNELS, C, K)
+        + (L - 1) * layer_params(C, C, K)
+        + layer_params(C, 1, 1);
 
     /// Creates weights initialized using He initialization.
     ///
@@ -71,19 +50,19 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> ConvWeights
 
         // First conv: He init with n_in = INPUT_CHANNELS * K * K
         let first_std = he_std(INPUT_CHANNELS * K * K);
-        data.extend((0..Self::FIRST_CONV_WEIGHTS).map(|_| rng.f32_normal(0.0, first_std)));
-        data.resize(data.len() + Self::FIRST_CONV_BIAS, 0.0); // Biases initialized to zero
+        data.extend((0..INPUT_CHANNELS * C * K * K).map(|_| rng.f32_normal(0.0, first_std)));
+        data.resize(data.len() + C, 0.0); // Biases initialized to zero
 
         // Hidden convs: He init with n_in = C * K * K
         let hidden_std = he_std(C * K * K);
         for _ in 0..(L - 1) {
-            data.extend((0..Self::HIDDEN_CONV_WEIGHTS).map(|_| rng.f32_normal(0.0, hidden_std)));
-            data.resize(data.len() + Self::HIDDEN_CONV_BIAS, 0.0);
+            data.extend((0..C * C * K * K).map(|_| rng.f32_normal(0.0, hidden_std)));
+            data.resize(data.len() + C, 0.0);
         }
 
         // Final conv: He init with n_in = C (1×1 kernel)
         let final_std = he_std(C);
-        data.extend((0..Self::FINAL_CONV_WEIGHTS).map(|_| rng.f32_normal(0.0, final_std)));
+        data.extend((0..C).map(|_| rng.f32_normal(0.0, final_std)));
         data.push(0.0); // Final bias
 
         debug_assert_eq!(data.len(), Self::TOTAL);
@@ -109,36 +88,10 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> ConvWeights
         Self { data }
     }
 
-    // ===== Layer accessors =====
-
-    /// First conv layer parameters: `INPUT_CHANNELS` → `C`, K×K kernel.
+    /// Returns a cursor for sequentially reading layer parameters.
     #[must_use]
-    pub fn first_conv(&self) -> ConvParams<'_, { INPUT_CHANNELS }, C, K> {
-        let weights = &self.data[Self::FIRST_WEIGHTS_START..][..Self::FIRST_CONV_WEIGHTS];
-        let bias = &self.data[Self::FIRST_BIAS_START..][..Self::FIRST_CONV_BIAS];
-        ConvParams::new(weights, bias)
-    }
-
-    /// Hidden conv layer parameters for layer `index` (0-indexed): `C` → `C`, K×K kernel.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `index >= L - 1`.
-    #[must_use]
-    pub fn hidden_conv(&self, index: usize) -> ConvParams<'_, C, C, K> {
-        assert!(index < L - 1, "hidden layer index out of bounds");
-        let start = Self::HIDDEN_START + index * Self::HIDDEN_CONV_TOTAL;
-        let weights = &self.data[start..][..Self::HIDDEN_CONV_WEIGHTS];
-        let bias = &self.data[start + Self::HIDDEN_CONV_WEIGHTS..][..Self::HIDDEN_CONV_BIAS];
-        ConvParams::new(weights, bias)
-    }
-
-    /// Final conv layer parameters: `C` → 1, 1×1 kernel.
-    #[must_use]
-    pub fn final_conv(&self) -> ConvParams<'_, C, 1, 1> {
-        let weights = &self.data[Self::FINAL_START..][..Self::FINAL_CONV_WEIGHTS];
-        let bias = &self.data[Self::FINAL_START + Self::FINAL_CONV_WEIGHTS..][..Self::FINAL_CONV_BIAS];
-        ConvParams::new(weights, bias)
+    pub fn cursor(&self) -> SliceCursor<'_> {
+        SliceCursor::new(&self.data)
     }
 }
 
@@ -196,6 +149,57 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> EvolvableGe
                 Self::from_vec(gaussian_mutate(self.as_ref(), sigma, rng))
             }
         }
+    }
+}
+
+/// Total number of parameters for a single convolutional layer.
+///
+/// Weights: `in_c * k * k * out_c`, bias: `out_c`.
+const fn layer_params(in_c: usize, out_c: usize, k: usize) -> usize {
+    in_c * k * k * out_c + out_c
+}
+
+/// A sequential cursor over a float slice, used to safely partition arena memory
+/// into typed [`ConvParams`] views without manual offset arithmetic.
+pub struct SliceCursor<'a> {
+    data: &'a [f32],
+}
+
+impl<'a> SliceCursor<'a> {
+    const fn new(data: &'a [f32]) -> Self {
+        Self { data }
+    }
+
+    fn take(&mut self, count: usize) -> &'a [f32] {
+        let (chunk, rest) = self.data.split_at(count);
+        self.data = rest;
+        chunk
+    }
+
+    /// Takes the next layer's weights and bias as a [`ConvParams`].
+    ///
+    /// Advances the cursor by `IN_C * K * K * OUT_C + OUT_C` elements.
+    pub fn take_params<const IN_C: usize, const OUT_C: usize, const K: usize>(
+        &mut self,
+    ) -> ConvParams<'a, IN_C, OUT_C, K> {
+        let weight_count = IN_C
+            .checked_mul(K)
+            .and_then(|n| n.checked_mul(K))
+            .and_then(|n| n.checked_mul(OUT_C))
+            .expect("weight count overflow");
+        let weights = self.take(weight_count);
+        let bias = self.take(OUT_C);
+        ConvParams::new(weights, bias)
+    }
+
+    /// Advances past the next layer's parameters without returning them.
+    pub fn skip_params<const IN_C: usize, const OUT_C: usize, const K: usize>(&mut self) {
+        let _ = self.take_params::<IN_C, OUT_C, K>();
+    }
+
+    /// Returns `true` if all data has been consumed.
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
     }
 }
 
@@ -278,37 +282,41 @@ mod tests {
     }
 
     #[test]
-    fn layer_accessors_have_correct_lengths() {
+    fn cursor_takes_params_with_correct_lengths() {
         let mut rng = fastrand::Rng::with_seed(42);
         let weights = TestWeights::random(&mut rng);
+        let mut cursor = weights.cursor();
 
-        let first = weights.first_conv();
-        assert_eq!(first.weights().len(), 2 * 8 * 3 * 3);
-        assert_eq!(first.bias().len(), 8);
+        let first_conv = cursor.take_params::<{ INPUT_CHANNELS }, 8, 3>();
+        assert_eq!(first_conv.weights().len(), 2 * 8 * 3 * 3);
+        assert_eq!(first_conv.bias().len(), 8);
 
-        let hidden = weights.hidden_conv(0);
-        assert_eq!(hidden.weights().len(), 8 * 8 * 3 * 3);
-        assert_eq!(hidden.bias().len(), 8);
+        let hidden_conv = cursor.take_params::<8, 8, 3>();
+        assert_eq!(hidden_conv.weights().len(), 8 * 8 * 3 * 3);
+        assert_eq!(hidden_conv.bias().len(), 8);
 
-        let final_layer = weights.final_conv();
-        assert_eq!(final_layer.weights().len(), 8);
-        assert_eq!(final_layer.bias().len(), 1);
+        let final_conv = cursor.take_params::<8, 1, 1>();
+        assert_eq!(final_conv.weights().len(), 8);
+        assert_eq!(final_conv.bias().len(), 1);
+
+        assert!(cursor.is_empty());
     }
 
     #[test]
-    fn layer_accessors_are_non_overlapping() {
+    fn cursor_produces_non_overlapping_params() {
         let data: Vec<f32> = (0..TestWeights::TOTAL as u32).map(|i| i as f32).collect();
         let weights = TestWeights::from_vec(data);
+        let mut cursor = weights.cursor();
 
-        // Check that each accessor returns sequential, non-overlapping data
-        let first = weights.first_conv();
-        let first_w_end = first.weights().last().unwrap();
-        let first_b_start = first.bias().first().unwrap();
+        // Check that each take_params returns sequential, non-overlapping data
+        let first_conv = cursor.take_params::<{ INPUT_CHANNELS }, 8, 3>();
+        let first_w_end = first_conv.weights().last().unwrap();
+        let first_b_start = first_conv.bias().first().unwrap();
         assert_eq!(*first_w_end + 1.0, *first_b_start);
 
-        let first_b_end = first.bias().last().unwrap();
-        let hidden = weights.hidden_conv(0);
-        let hidden_w_start = hidden.weights().first().unwrap();
+        let first_b_end = first_conv.bias().last().unwrap();
+        let hidden_conv = cursor.take_params::<8, 8, 3>();
+        let hidden_w_start = hidden_conv.weights().first().unwrap();
         assert_eq!(*first_b_end + 1.0, *hidden_w_start);
     }
 
@@ -316,9 +324,11 @@ mod tests {
     fn he_initialization_has_reasonable_distribution() {
         let mut rng = fastrand::Rng::with_seed(42);
         let weights = TestWeights::random(&mut rng);
+        let mut cursor = weights.cursor();
 
         // Check first conv weights have reasonable variance
-        let first_weights = weights.first_conv().weights();
+        let first_conv = cursor.take_params::<{ INPUT_CHANNELS }, 8, 3>();
+        let first_weights = first_conv.weights();
         let mean: f32 = first_weights.iter().sum::<f32>() / first_weights.len() as f32;
         let variance: f32 = first_weights
             .iter()
@@ -339,19 +349,15 @@ mod tests {
     fn biases_initialized_to_zero() {
         let mut rng = fastrand::Rng::with_seed(42);
         let weights = TestWeights::random(&mut rng);
+        let mut cursor = weights.cursor();
 
-        assert!(weights.first_conv().bias().iter().all(|&b| b == 0.0));
-        assert!(weights.hidden_conv(0).bias().iter().all(|&b| b == 0.0));
-        assert!(weights.final_conv().bias().iter().all(|&b| b == 0.0));
-    }
+        let first_conv = cursor.take_params::<{ INPUT_CHANNELS }, 8, 3>();
+        let hidden_conv = cursor.take_params::<8, 8, 3>();
+        let final_conv = cursor.take_params::<8, 1, 1>();
 
-    #[test]
-    #[should_panic(expected = "hidden layer index out of bounds")]
-    fn hidden_conv_panics_on_invalid_index() {
-        let mut rng = fastrand::Rng::with_seed(42);
-        let weights = TestWeights::random(&mut rng);
-        // TestWeights has L=2, so only 1 hidden layer (index 0)
-        let _ = weights.hidden_conv(1);
+        assert!(first_conv.bias().iter().all(|&b| b == 0.0));
+        assert!(hidden_conv.bias().iter().all(|&b| b == 0.0));
+        assert!(final_conv.bias().iter().all(|&b| b == 0.0));
     }
 
     #[test]

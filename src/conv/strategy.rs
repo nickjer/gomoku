@@ -45,19 +45,24 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> ConvStrateg
         // First layer needs INPUT_CHANNELS * K * K, hidden layers need C * K * K
         let workspace_size = PositionId::COUNT * max(INPUT_CHANNELS, C) * K * K;
         let mut workspace = vec![0.0f32; workspace_size];
+        let mut cursor = self.weights.cursor();
 
         // First conv: INPUT_CHANNELS -> C channels
-        let mut x = conv2d(input, self.weights.first_conv(), &mut workspace);
-        relu_inplace(x.as_mut_slice());
+        let first_conv = cursor.take_params::<{ INPUT_CHANNELS }, C, K>();
+        let mut activations = conv2d(input, first_conv, &mut workspace);
+        relu_inplace(activations.as_mut_slice());
 
         // Hidden convs: C -> C channels
-        for i in 0..(L - 1) {
-            x = conv2d(x.as_view(), self.weights.hidden_conv(i), &mut workspace);
-            relu_inplace(x.as_mut_slice());
+        for _ in 0..(L - 1) {
+            let hidden_conv = cursor.take_params::<C, C, K>();
+            activations = conv2d(activations.as_view(), hidden_conv, &mut workspace);
+            relu_inplace(activations.as_mut_slice());
         }
 
         // Final conv: C -> 1 channel (1×1 kernel)
-        conv2d(x.as_view(), self.weights.final_conv(), &mut workspace)
+        let final_conv = cursor.take_params::<C, 1, 1>();
+        assert!(cursor.is_empty());
+        conv2d(activations.as_view(), final_conv, &mut workspace)
     }
 }
 
