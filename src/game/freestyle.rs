@@ -12,10 +12,8 @@ use super::Play;
 pub struct Freestyle;
 
 impl Freestyle {
-    #[allow(clippy::unused_self)]
     #[instrument(level = "debug", skip_all, fields(black = black_strategy.label(), white = white_strategy.label()))]
     fn run_internal(
-        self,
         black_strategy: &dyn Strategy,
         white_strategy: &dyn Strategy,
         rng: &mut fastrand::Rng,
@@ -57,7 +55,7 @@ impl Play for Freestyle {
         white_strategy: &dyn Strategy,
         rng: &mut fastrand::Rng,
     ) -> MatchResult {
-        self.run_internal(black_strategy, white_strategy, rng)
+        Self::run_internal(black_strategy, white_strategy, rng)
     }
 }
 
