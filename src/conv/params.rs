@@ -49,12 +49,14 @@ impl<'a, const IN_C: usize, const OUT_C: usize, const K: usize> ConvParams<'a, I
     /// Returns the weight slice in `[IN_C * K * K][OUT_C]` layout.
     #[must_use]
     pub const fn weights(&self) -> &'a [f32] {
+        assert!(self.weights.len() == Self::EXPECTED_WEIGHTS);
         self.weights
     }
 
     /// Returns the bias slice of length `OUT_C`.
     #[must_use]
     pub const fn bias(&self) -> &'a [f32] {
+        assert!(self.bias.len() == OUT_C);
         self.bias
     }
 }
