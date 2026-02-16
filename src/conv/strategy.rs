@@ -7,7 +7,6 @@ use crate::stone::Stone;
 use crate::strategy::{EvolvableStrategy, Strategy};
 
 use super::encoding::{INPUT_CHANNELS, encode_board};
-use super::layer::{conv2d, relu_inplace};
 use super::select::select_best_position;
 use super::symmetry::D8Transform;
 use super::weights::ConvWeights;
@@ -47,17 +46,19 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> ConvStrateg
         let mut workspace = vec![0.0f32; workspace_size];
 
         // First conv: INPUT_CHANNELS -> C channels
-        let mut activations = conv2d(input, self.weights.first(), &mut workspace);
+        let mut activations = self.weights.first().conv2d(input, &mut workspace);
         relu_inplace(activations.as_mut_slice());
 
         // Hidden convs: C -> C channels
         for hidden in self.weights.hidden() {
-            activations = conv2d(activations.as_view(), hidden, &mut workspace);
+            activations = hidden.conv2d(activations.as_view(), &mut workspace);
             relu_inplace(activations.as_mut_slice());
         }
 
         // Final conv: C -> 1 channel (1×1 kernel)
-        conv2d(activations.as_view(), self.weights.last(), &mut workspace)
+        self.weights
+            .last()
+            .conv2d(activations.as_view(), &mut workspace)
     }
 }
 
@@ -122,6 +123,13 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> EvolvableSt
             label: label.into(),
             weights: genes,
         }
+    }
+}
+
+/// Applies `ReLU` activation in-place: `x = max(0, x)`.
+fn relu_inplace(data: &mut [f32]) {
+    for val in data.iter_mut() {
+        *val = val.max(0.0);
     }
 }
 
@@ -318,6 +326,45 @@ mod tests {
                     "seed {seed}: position {chosen:?} is not empty"
                 );
             }
+        }
+    }
+
+    mod relu_tests {
+        use super::*;
+
+        #[test]
+        fn positive_values_unchanged() {
+            let mut data = vec![1.0, 2.5, 0.001];
+            relu_inplace(&mut data);
+            assert_eq!(data, vec![1.0, 2.5, 0.001]);
+        }
+
+        #[test]
+        fn negative_values_become_zero() {
+            let mut data = vec![-1.0, -0.001, -100.0];
+            relu_inplace(&mut data);
+            assert_eq!(data, vec![0.0, 0.0, 0.0]);
+        }
+
+        #[test]
+        fn zero_unchanged() {
+            let mut data = vec![0.0];
+            relu_inplace(&mut data);
+            assert_eq!(data, vec![0.0]);
+        }
+
+        #[test]
+        fn mixed_values() {
+            let mut data = vec![-2.0, 0.0, 3.0, -0.5, 1.0];
+            relu_inplace(&mut data);
+            assert_eq!(data, vec![0.0, 0.0, 3.0, 0.0, 1.0]);
+        }
+
+        #[test]
+        fn empty_slice() {
+            let mut data: Vec<f32> = vec![];
+            relu_inplace(&mut data);
+            assert!(data.is_empty());
         }
     }
 }

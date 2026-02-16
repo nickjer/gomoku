@@ -168,4 +168,10 @@ cargo install flamegraph
 cargo flamegraph --release -o tmp/flamegraph.svg -- evolve conv-small -p 4 -o tmp/profile -g 1
 ```
 
-**Key optimization insight:** The conv layers gather zero-padded neighborhoods into a workspace buffer (per-position layout), then compute dot products against transposed weights (`[IN_C * K * K][OUT_C]` layout). The workspace eliminates bounds checks from the hot convolution loop.
+**Key optimization insights:**
+
+The conv layers gather zero-padded neighborhoods into a workspace buffer (per-position layout), then compute dot products against transposed weights (`[IN_C * K * K][OUT_C]` layout). The workspace eliminates bounds checks from the hot convolution loop.
+
+**LLVM alias analysis and `&self`:** Hot compute functions must NOT take `&self`. LLVM treats pointers loaded from a struct (e.g., `self.weights.ptr`) as "MayAlias" with fresh heap allocations (like the output buffer), which blocks auto-vectorization. The fix is to extract `&[f32]` slices in the caller and pass them as separate function parameters — LLVM's alias analysis can prove that function-parameter pointers don't alias with in-function allocations. See `ConvParams::conv2d` (extracts slices) calling `ConvParams::conv2d_from_workspace` (associated function, no `&self`).
+
+**`assert!` for slice lengths in accessors:** `ConvParams::weights()` and `ConvParams::bias()` assert the Vec length equals the expected compile-time constant (e.g., `assert!(self.weights.len() == Self::EXPECTED_WEIGHTS)`). This tells LLVM the exact slice length, enabling it to eliminate bounds checks and fully unroll/vectorize loops that index into these slices.

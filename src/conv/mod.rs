@@ -1,5 +1,4 @@
 mod encoding;
-mod layer;
 mod params;
 mod select;
 mod strategy;

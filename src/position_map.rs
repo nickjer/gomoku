@@ -118,12 +118,6 @@ impl<'a, T> PositionMapView<'a, T> {
         }
     }
 
-    /// Returns the stride (number of elements per position).
-    #[must_use]
-    pub const fn stride(&self) -> usize {
-        self.stride
-    }
-
     /// Returns a reference to the elements at the given position.
     ///
     /// # Panics
@@ -228,18 +222,18 @@ mod tests {
         let mut map = PositionMap::new(0.0f32, 2);
         map.get_mut(pos(3, 4)).copy_from_slice(&[1.0, 2.0]);
 
-        let slice = map.as_view();
+        let view = map.as_view();
 
-        assert_eq!(slice.stride(), 2);
-        assert_eq!(slice.get(pos(3, 4)), &[1.0, 2.0]);
+        assert_eq!(view.get(pos(3, 4)), &[1.0, 2.0]);
+        assert_eq!(view.get(pos(0, 0)), &[0.0, 0.0]);
     }
 
     #[test]
     fn stride_map_from_converts_to_stride_slice() {
         let map = PositionMap::new(0.0f32, 2);
-        let slice: PositionMapView<'_, f32> = (&map).into();
+        let view: PositionMapView<'_, f32> = (&map).into();
 
-        assert_eq!(slice.stride(), 2);
+        assert_eq!(view.get(pos(0, 0)), &[0.0, 0.0]);
     }
 
     // ── PositionMapView stride=1 tests ─────────────────────────────────
@@ -255,11 +249,11 @@ mod tests {
     }
 
     #[test]
-    fn stride_slice_stride_returns_stride() {
+    fn stride_slice_get_returns_single_element() {
         let data = vec![0i32; PositionId::COUNT];
         let slice = PositionMapView::new(&data, 1);
 
-        assert_eq!(slice.stride(), 1);
+        assert_eq!(slice.get(pos(0, 0)).len(), 1);
     }
 
     #[test]
@@ -303,7 +297,6 @@ mod tests {
         let data: Vec<f32> = (0..PositionId::COUNT * 2).map(|idx| idx as f32).collect();
         let slice = PositionMapView::new(&data, 2);
 
-        assert_eq!(slice.stride(), 2);
         assert_eq!(slice.get(pos(0, 0)), &[0.0, 1.0]);
         assert_eq!(slice.get(pos(0, 1)), &[2.0, 3.0]);
         assert_eq!(slice.get(pos(1, 0)), &[30.0, 31.0]);

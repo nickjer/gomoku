@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::evolution::crossover::uniform_crossover;
 use crate::evolution::mutation::gaussian_mutate;
+use crate::offset::Offset;
+use crate::position_id::PositionId;
+use crate::position_map::{PositionMap, PositionMapView, PositionMapViewMut};
 
 /// A single convolutional layer's parameters (weights + bias).
 ///
@@ -24,7 +27,7 @@ pub struct ConvParams<const IN_C: usize, const OUT_C: usize, const K: usize> {
 
 impl<const IN_C: usize, const OUT_C: usize, const K: usize> ConvParams<IN_C, OUT_C, K> {
     /// Workspace stride: number of elements per position in the gathered neighborhood.
-    pub const STRIDE: usize = IN_C
+    const STRIDE: usize = IN_C
         .checked_mul(K)
         .expect("STRIDE overflow")
         .checked_mul(K)
@@ -86,6 +89,31 @@ impl<const IN_C: usize, const OUT_C: usize, const K: usize> ConvParams<IN_C, OUT
         &self.bias
     }
 
+    /// Applies a 2D convolution to the input using workspace-based neighborhood gathering.
+    ///
+    /// All dimensions (`IN_C`, `OUT_C`, `K`) are encoded in `Self`, ensuring separate
+    /// monomorphizations for each layer configuration.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the workspace is too small.
+    #[must_use]
+    pub fn conv2d(
+        &self,
+        input: PositionMapView<'_, f32>,
+        workspace: &mut [f32],
+    ) -> PositionMap<f32> {
+        assert!(
+            workspace.len() >= Self::STRIDE * PositionId::COUNT,
+            "workspace too small: expected at least {}, got {}",
+            Self::STRIDE * PositionId::COUNT,
+            workspace.len()
+        );
+
+        Self::gather_workspace(input, workspace);
+        Self::conv2d_from_workspace(self.weights(), self.bias(), workspace)
+    }
+
     /// Performs uniform crossover with another set of parameters.
     #[must_use]
     pub fn uniform_crossover(&self, other: &Self, rng: &mut fastrand::Rng) -> Self {
@@ -103,6 +131,65 @@ impl<const IN_C: usize, const OUT_C: usize, const K: usize> ConvParams<IN_C, OUT
             bias: gaussian_mutate(&self.bias, sigma, rng),
         }
     }
+
+    /// Gathers zero-padded input neighborhoods into the workspace buffer.
+    ///
+    /// For each board position, collects the K×K neighborhood across all input channels
+    /// into a contiguous slice. Out-of-bounds positions are zero-padded.
+    ///
+    /// The workspace stride must equal `Self::STRIDE` (i.e., `IN_C * K * K`).
+    fn gather_workspace(input: PositionMapView<'_, f32>, workspace: &mut [f32]) {
+        let mut workspace = PositionMapViewMut::new(workspace, Self::STRIDE);
+        let pad = isize::try_from(K / 2).expect("kernel size too large");
+
+        for pos in PositionId::iter() {
+            let padded_input = workspace.get_mut(pos);
+            padded_input.fill(0.0);
+
+            for kr in 0..K {
+                for kc in 0..K {
+                    let row_offset = isize::try_from(kr).expect("kernel size too large") - pad;
+                    let col_offset = isize::try_from(kc).expect("kernel size too large") - pad;
+                    let offset = Offset::new(row_offset, col_offset);
+
+                    if let Some(neighbor) = pos.offset(offset) {
+                        let channels = input.get(neighbor);
+                        for (in_ch, &val) in channels.iter().enumerate() {
+                            padded_input[in_ch * K * K + kr * K + kc] = val;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Convolution using pre-gathered workspace data.
+    ///
+    /// This is an associated function (no `&self`) so that `weights` and `bias` arrive
+    /// as independent `&[f32]` parameters. All three const generics (`IN_C`, `OUT_C`, `K`)
+    /// are used: the stride is computed as `IN_C * K * K`, producing distinct
+    /// monomorphizations per layer configuration.
+    #[must_use]
+    fn conv2d_from_workspace(weights: &[f32], bias: &[f32], workspace: &[f32]) -> PositionMap<f32> {
+        let workspace = PositionMapView::new(workspace, Self::STRIDE);
+        let mut output = PositionMap::new(0.0, OUT_C);
+
+        for pos in PositionId::iter() {
+            let out = output.get_mut(pos);
+            let input = workspace.get(pos);
+            for k in 0..Self::STRIDE {
+                let val = input[k];
+                let weight_row = &weights[k * OUT_C..][..OUT_C];
+                for out_ch in 0..OUT_C {
+                    out[out_ch] += val * weight_row[out_ch];
+                }
+            }
+            for out_ch in 0..OUT_C {
+                out[out_ch] += bias[out_ch];
+            }
+        }
+        output
+    }
 }
 
 /// Computes He initialization standard deviation: `√(2/n_in)`.
@@ -115,6 +202,30 @@ fn he_std(n_in: usize) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::position::Position;
+    use crate::position_id::PositionId;
+    use crate::position_map::PositionMap;
+
+    fn pos(row: usize, col: usize) -> PositionId {
+        PositionId::from_position(Position::new(row, col))
+    }
+
+    /// Helper to run conv2d with automatic workspace allocation.
+    fn conv<const IN_C: usize, const OUT_C: usize, const K: usize>(
+        input: PositionMapView<'_, f32>,
+        params: &ConvParams<IN_C, OUT_C, K>,
+    ) -> PositionMap<f32> {
+        let workspace_size = PositionId::COUNT * ConvParams::<IN_C, OUT_C, K>::STRIDE;
+        let mut workspace = vec![0.0f32; workspace_size];
+        params.conv2d(input, &mut workspace)
+    }
+
+    /// Creates input with a single non-zero value at the given position in channel 0.
+    fn single_value_input(channels: usize, position: PositionId, value: f32) -> PositionMap<f32> {
+        let mut input = PositionMap::new(0.0, channels);
+        input.get_mut(position)[0] = value;
+        input
+    }
 
     #[test]
     fn valid_params_construction() {
@@ -214,5 +325,271 @@ mod tests {
 
         let changed = result.weights().iter().filter(|&&val| val != 0.0).count();
         assert!(changed > 0, "some weights should change");
+    }
+
+    mod conv2d_tests {
+        use super::*;
+
+        /// Computes weight index in `[stride][out_channels]` layout.
+        const fn weight_index(
+            in_ch: usize,
+            kr: usize,
+            kc: usize,
+            out_ch: usize,
+            kernel_size: usize,
+            out_channels: usize,
+        ) -> usize {
+            let patch_idx = in_ch * kernel_size * kernel_size + kr * kernel_size + kc;
+            patch_idx * out_channels + out_ch
+        }
+
+        /// Shorthand for center kernel position (kr=K/2, kc=K/2).
+        const fn center_weight_index(
+            in_ch: usize,
+            out_ch: usize,
+            kernel_size: usize,
+            out_channels: usize,
+        ) -> usize {
+            weight_index(
+                in_ch,
+                kernel_size / 2,
+                kernel_size / 2,
+                out_ch,
+                kernel_size,
+                out_channels,
+            )
+        }
+
+        #[test]
+        fn output_has_correct_shape_3x3_kernel() {
+            let input = PositionMap::new(0.0f32, 2);
+            let weights = vec![0.0f32; 4 * 2 * 3 * 3];
+            let bias = vec![0.0f32; 4];
+            let params = ConvParams::<2, 4, 3>::new(weights, bias);
+
+            let output = conv(input.as_view(), &params);
+
+            assert_eq!(output.stride(), 4);
+        }
+
+        #[test]
+        fn output_has_correct_shape_1x1_kernel() {
+            let input = PositionMap::new(0.0f32, 8);
+            let weights = vec![0.0f32; 1 * 8 * 1 * 1];
+            let bias = vec![0.0f32; 1];
+            let params = ConvParams::<8, 1, 1>::new(weights, bias);
+
+            let output = conv(input.as_view(), &params);
+
+            assert_eq!(output.stride(), 1);
+        }
+
+        #[test]
+        fn bias_only_produces_constant_output() {
+            let input = PositionMap::new(0.0f32, 1);
+            let weights = vec![0.0f32; 2 * 1 * 3 * 3];
+            let bias = vec![1.5, -0.5];
+            let params = ConvParams::<1, 2, 3>::new(weights, bias);
+
+            let output = conv(input.as_view(), &params);
+
+            for pos in PositionId::iter() {
+                assert_eq!(output.get(pos), &[1.5, -0.5]);
+            }
+        }
+
+        #[test]
+        fn identity_kernel_copies_input() {
+            let center = PositionId::center();
+            let input = single_value_input(1, center, 7.0);
+
+            let mut weights = vec![0.0f32; 1 * 1 * 3 * 3];
+            weights[4] = 1.0;
+            let bias = vec![0.0f32; 1];
+            let params = ConvParams::<1, 1, 3>::new(weights, bias);
+
+            let output = conv(input.as_view(), &params);
+
+            assert_eq!(output.get(center), &[7.0]);
+            assert_eq!(output.get(pos(0, 0)), &[0.0]);
+        }
+
+        #[test]
+        fn shift_kernel_moves_value() {
+            let input_pos = pos(5, 5);
+            let input = single_value_input(1, input_pos, 3.0);
+
+            let mut weights = vec![0.0f32; 1 * 1 * 3 * 3];
+            weights[0] = 1.0;
+            let bias = vec![0.0f32; 1];
+            let params = ConvParams::<1, 1, 3>::new(weights, bias);
+
+            let output = conv(input.as_view(), &params);
+
+            let output_pos = pos(6, 6);
+            assert_eq!(output.get(output_pos), &[3.0]);
+            assert_eq!(output.get(input_pos), &[0.0]);
+        }
+
+        #[test]
+        fn summing_kernel_sums_neighbors() {
+            let mut input = PositionMap::new(0.0f32, 1);
+            let positions = [pos(7, 7), pos(7, 8), pos(8, 7), pos(8, 8)];
+            for &p in &positions {
+                input.get_mut(p)[0] = 1.0;
+            }
+
+            let weights = vec![1.0f32; 1 * 1 * 3 * 3];
+            let bias = vec![0.0f32; 1];
+            let params = ConvParams::<1, 1, 3>::new(weights, bias);
+
+            let output = conv(input.as_view(), &params);
+
+            assert_eq!(output.get(pos(7, 7)), &[4.0]);
+            assert_eq!(output.get(pos(6, 6)), &[1.0]);
+            assert_eq!(output.get(pos(9, 9)), &[1.0]);
+        }
+
+        #[test]
+        fn multiple_input_channels_are_summed() {
+            let center = PositionId::center();
+            let mut input = PositionMap::new(0.0f32, 2);
+            input.get_mut(center).copy_from_slice(&[2.0, 3.0]);
+
+            let mut weights = vec![0.0f32; 1 * 2 * 3 * 3];
+            weights[4] = 1.0;
+            weights[9 + 4] = 1.0;
+            let bias = vec![0.0f32; 1];
+            let params = ConvParams::<2, 1, 3>::new(weights, bias);
+
+            let output = conv(input.as_view(), &params);
+
+            assert_eq!(output.get(center), &[5.0]);
+        }
+
+        #[test]
+        fn edge_position_uses_zero_padding() {
+            let corner = pos(0, 0);
+            let input = single_value_input(1, corner, 9.0);
+
+            let weights = vec![1.0f32; 1 * 1 * 3 * 3];
+            let bias = vec![0.0f32; 1];
+            let params = ConvParams::<1, 1, 3>::new(weights, bias);
+
+            let output = conv(input.as_view(), &params);
+
+            assert_eq!(output.get(corner), &[9.0]);
+            assert_eq!(output.get(pos(1, 1)), &[9.0]);
+            assert_eq!(output.get(pos(0, 1)), &[9.0]);
+        }
+
+        #[test]
+        fn weighted_kernel_applies_correctly() {
+            let mut input = PositionMap::new(0.0f32, 1);
+            input.get_mut(pos(7, 7))[0] = 2.0;
+            input.get_mut(pos(7, 8))[0] = 3.0;
+
+            let mut weights = vec![0.0f32; 1 * 1 * 3 * 3];
+            weights[4] = 2.0;
+            weights[5] = 3.0;
+            let bias = vec![1.0f32; 1];
+            let params = ConvParams::<1, 1, 3>::new(weights, bias);
+
+            let output = conv(input.as_view(), &params);
+
+            assert_eq!(output.get(pos(7, 7)), &[14.0]);
+            assert_eq!(output.get(pos(7, 8)), &[7.0]);
+        }
+
+        #[test]
+        fn one_by_one_kernel_acts_as_pointwise() {
+            let center = PositionId::center();
+            let mut input = PositionMap::new(0.0f32, 2);
+            input.get_mut(center).copy_from_slice(&[3.0, 4.0]);
+
+            let weights = vec![2.0, 0.5];
+            let bias = vec![1.0];
+            let params = ConvParams::<2, 1, 1>::new(weights, bias);
+
+            let output = conv(input.as_view(), &params);
+
+            assert_eq!(output.get(center), &[9.0]);
+            assert_eq!(output.get(pos(0, 0)), &[1.0]);
+        }
+
+        #[test]
+        fn multiple_output_channels() {
+            let center = PositionId::center();
+            let input = single_value_input(1, center, 5.0);
+
+            let mut weights = vec![0.0f32; 2 * 1 * 3 * 3];
+            weights[center_weight_index(0, 0, 3, 2)] = 1.0;
+            weights[center_weight_index(0, 1, 3, 2)] = 2.0;
+            let bias = vec![0.0, 10.0];
+            let params = ConvParams::<1, 2, 3>::new(weights, bias);
+
+            let output = conv(input.as_view(), &params);
+
+            assert_eq!(output.get(center), &[5.0, 20.0]);
+        }
+
+        #[test]
+        fn different_input_output_channels() {
+            let center = PositionId::center();
+            let mut input = PositionMap::new(0.0f32, 2);
+            input.get_mut(center).copy_from_slice(&[1.0, 2.0]);
+
+            let mut weights = vec![0.0f32; 3 * 2 * 3 * 3];
+            weights[center_weight_index(0, 0, 3, 3)] = 1.0;
+            weights[center_weight_index(1, 0, 3, 3)] = 1.0;
+            weights[center_weight_index(0, 1, 3, 3)] = 2.0;
+            weights[center_weight_index(1, 2, 3, 3)] = 3.0;
+            let bias = vec![0.0, 0.0, 0.0];
+            let params = ConvParams::<2, 3, 3>::new(weights, bias);
+
+            let output = conv(input.as_view(), &params);
+
+            assert_eq!(output.get(center), &[3.0, 2.0, 6.0]);
+        }
+
+        #[test]
+        fn all_corners_use_zero_padding() {
+            let mut input = PositionMap::new(0.0f32, 1);
+            input.get_mut(pos(0, 0))[0] = 1.0;
+            input.get_mut(pos(0, 14))[0] = 1.0;
+            input.get_mut(pos(14, 0))[0] = 1.0;
+            input.get_mut(pos(14, 14))[0] = 1.0;
+
+            let weights = vec![1.0f32; 9];
+            let bias = vec![0.0f32];
+            let params = ConvParams::<1, 1, 3>::new(weights, bias);
+
+            let output = conv(input.as_view(), &params);
+
+            assert_eq!(output.get(pos(0, 0)), &[1.0]);
+            assert_eq!(output.get(pos(0, 14)), &[1.0]);
+            assert_eq!(output.get(pos(14, 0)), &[1.0]);
+            assert_eq!(output.get(pos(14, 14)), &[1.0]);
+        }
+
+        #[test]
+        fn workspace_reuse_does_not_leak_state() {
+            let workspace_size = PositionId::COUNT * 2 * 3 * 3;
+            let mut workspace = vec![99.0f32; workspace_size];
+
+            let input1 = single_value_input(2, PositionId::center(), 5.0);
+            let mut weights = vec![0.0f32; 1 * 2 * 3 * 3];
+            weights[4] = 1.0;
+            let bias = vec![0.0];
+            let params = ConvParams::<2, 1, 3>::new(weights, bias);
+
+            let output1 = params.conv2d(input1.as_view(), &mut workspace);
+
+            let input2 = PositionMap::new(0.0f32, 2);
+            let output2 = params.conv2d(input2.as_view(), &mut workspace);
+
+            assert_eq!(output1.get(PositionId::center()), &[5.0]);
+            assert_eq!(output2.get(PositionId::center()), &[0.0]);
+        }
     }
 }
