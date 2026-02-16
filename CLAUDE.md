@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Path Style
+
+Always use relative paths from the project root. Never use absolute paths in commands, tool calls, or file references.
+
 ## Project Overview
 
 Gomoku is a genetic algorithm tool that evolves neural network strategies to play Gomoku (five in a row).
