@@ -123,21 +123,25 @@ impl<const IN_C: usize, const OUT_C: usize, const K: usize> ConvParams<IN_C, OUT
     /// For each board position, collects the K×K neighborhood across all input channels
     /// into a contiguous slice. Out-of-bounds positions are zero-padded.
     fn gather_workspace(input: PositionMapView<'_, f32>, workspace: &mut PositionMap<f32>) {
-        let pad = isize::try_from(K / 2).expect("kernel size too large");
+        let half_kernel = isize::try_from(K / 2).expect("kernel size too large");
 
         for pos in PositionId::iter() {
-            let padded_input = workspace.get_mut(pos);
+            let neighborhood = workspace.get_mut(pos);
 
-            for kr in 0..K {
-                for kc in 0..K {
-                    let row_offset = isize::try_from(kr).expect("kernel size too large") - pad;
-                    let col_offset = isize::try_from(kc).expect("kernel size too large") - pad;
+            for kernel_row in 0..K {
+                for kernel_col in 0..K {
+                    let row_offset =
+                        isize::try_from(kernel_row).expect("kernel size too large") - half_kernel;
+                    let col_offset =
+                        isize::try_from(kernel_col).expect("kernel size too large") - half_kernel;
                     let offset = Offset::new(row_offset, col_offset);
 
                     if let Some(neighbor) = pos.offset(offset) {
                         let channels = input.get(neighbor);
-                        for (in_ch, &val) in channels.iter().enumerate() {
-                            padded_input[in_ch * K * K + kr * K + kc] = val;
+                        for (&channel_val, kernel_plane) in
+                            channels.iter().zip(neighborhood.chunks_exact_mut(K * K))
+                        {
+                            kernel_plane[kernel_row * K + kernel_col] = channel_val;
                         }
                     }
                 }
@@ -160,17 +164,15 @@ impl<const IN_C: usize, const OUT_C: usize, const K: usize> ConvParams<IN_C, OUT
         let mut output = PositionMap::new(0.0, OUT_C);
 
         for pos in PositionId::iter() {
-            let out = output.get_mut(pos);
-            let input = workspace.get(pos);
-            for k in 0..Self::STRIDE {
-                let val = input[k];
-                let weight_row = &weights[k * OUT_C..][..OUT_C];
-                for out_ch in 0..OUT_C {
-                    out[out_ch] += val * weight_row[out_ch];
+            let output_channels = output.get_mut(pos);
+            let neighborhood = workspace.get(pos);
+            for (&input_val, weight_row) in neighborhood.iter().zip(weights.chunks_exact(OUT_C)) {
+                for (out_ch, &weight) in output_channels.iter_mut().zip(weight_row) {
+                    *out_ch += input_val * weight;
                 }
             }
-            for out_ch in 0..OUT_C {
-                out[out_ch] += bias[out_ch];
+            for (out_ch, &bias_val) in output_channels.iter_mut().zip(bias) {
+                *out_ch += bias_val;
             }
         }
         output
