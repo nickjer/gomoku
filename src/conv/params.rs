@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 use crate::evolution::crossover::uniform_crossover;
 use crate::evolution::mutation::gaussian_mutate;
 use crate::offset::Offset;
-use crate::position_id::PositionId;
 use crate::position_map::{PositionMap, PositionMapView};
 
 /// A single convolutional layer's parameters (weights + bias).
@@ -95,8 +94,7 @@ impl<const IN_C: usize, const OUT_C: usize, const K: usize> ConvParams<IN_C, OUT
     /// monomorphizations for each layer configuration.
     #[must_use]
     pub fn conv2d(&self, input: PositionMapView<'_, f32>) -> PositionMap<f32> {
-        let mut workspace = PositionMap::new(0.0f32, Self::STRIDE);
-        Self::gather_workspace(input, &mut workspace);
+        let workspace = Self::gather_workspace(input);
         Self::conv2d_from_workspace(self.weights(), self.bias(), workspace.as_view())
     }
 
@@ -122,12 +120,10 @@ impl<const IN_C: usize, const OUT_C: usize, const K: usize> ConvParams<IN_C, OUT
     ///
     /// For each board position, collects the K×K neighborhood across all input channels
     /// into a contiguous slice. Out-of-bounds positions are zero-padded.
-    fn gather_workspace(input: PositionMapView<'_, f32>, workspace: &mut PositionMap<f32>) {
+    fn gather_workspace(input: PositionMapView<'_, f32>) -> PositionMap<f32> {
         let half_kernel = isize::try_from(K / 2).expect("kernel size too large");
 
-        for pos in PositionId::iter() {
-            let neighborhood = workspace.get_mut(pos);
-
+        PositionMap::from_fn(0.0, Self::STRIDE, |pos, neighborhood| {
             for kernel_row in 0..K {
                 for kernel_col in 0..K {
                     let row_offset =
@@ -146,7 +142,7 @@ impl<const IN_C: usize, const OUT_C: usize, const K: usize> ConvParams<IN_C, OUT
                     }
                 }
             }
-        }
+        })
     }
 
     /// Convolution using pre-gathered workspace data.
@@ -161,10 +157,7 @@ impl<const IN_C: usize, const OUT_C: usize, const K: usize> ConvParams<IN_C, OUT
         bias: &[f32],
         workspace: PositionMapView<'_, f32>,
     ) -> PositionMap<f32> {
-        let mut output = PositionMap::new(0.0, OUT_C);
-
-        for pos in PositionId::iter() {
-            let output_channels = output.get_mut(pos);
+        PositionMap::from_fn(0.0, OUT_C, |pos, output_channels| {
             let neighborhood = workspace.get(pos);
             for (&input_val, weight_row) in neighborhood.iter().zip(weights.chunks_exact(OUT_C)) {
                 for (out_ch, &weight) in output_channels.iter_mut().zip(weight_row) {
@@ -174,8 +167,7 @@ impl<const IN_C: usize, const OUT_C: usize, const K: usize> ConvParams<IN_C, OUT
             for (out_ch, &bias_val) in output_channels.iter_mut().zip(bias) {
                 *out_ch += bias_val;
             }
-        }
-        output
+        })
     }
 }
 

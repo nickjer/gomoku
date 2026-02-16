@@ -29,6 +29,23 @@ impl<T: Clone> PositionMap<T> {
     }
 }
 
+impl<T: Clone> PositionMap<T> {
+    /// Creates a map pre-filled with `fill`, then calls `f` for each position
+    /// with a mutable slice of `stride` elements for in-place modification.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `PositionId::COUNT * stride` overflows.
+    #[must_use]
+    pub fn from_fn(fill: T, stride: usize, mut f: impl FnMut(PositionId, &mut [T])) -> Self {
+        let mut map = Self::new(fill, stride);
+        for pos in PositionId::iter() {
+            f(pos, map.get_mut(pos));
+        }
+        map
+    }
+}
+
 impl<T> PositionMap<T> {
     /// Returns the stride (number of elements per position).
     #[must_use]
@@ -182,6 +199,66 @@ mod tests {
         let view: PositionMapView<'_, f32> = (&map).into();
 
         assert_eq!(view.get(pos(0, 0)), &[0.0, 0.0]);
+    }
+
+    // ── PositionMap::from_fn tests ─────────────────────────────────────
+
+    #[test]
+    fn from_fn_produces_correct_stride() {
+        let map = PositionMap::from_fn(0i32, 3, |_, _| {});
+
+        assert_eq!(map.stride(), 3);
+    }
+
+    #[test]
+    fn from_fn_unmodified_positions_retain_fill_value() {
+        let map = PositionMap::from_fn(42i32, 2, |_, _| {});
+
+        assert_eq!(map.get(pos(0, 0)), &[42, 42]);
+        assert_eq!(map.get(pos(14, 14)), &[42, 42]);
+    }
+
+    #[test]
+    fn from_fn_closure_can_overwrite_values() {
+        let map = PositionMap::from_fn(0.0f32, 2, |position, slice| {
+            let idx = usize::from(position);
+            slice[0] = idx as f32;
+            slice[1] = idx as f32 * 10.0;
+        });
+
+        assert_eq!(map.get(pos(0, 0)), &[0.0, 0.0]);
+        assert_eq!(map.get(pos(0, 1)), &[1.0, 10.0]);
+        assert_eq!(map.get(pos(1, 0)), &[15.0, 150.0]);
+    }
+
+    #[test]
+    fn from_fn_closure_receives_correct_position() {
+        let map = PositionMap::from_fn(0usize, 1, |position, slice| {
+            slice[0] = usize::from(position);
+        });
+
+        for position in PositionId::iter() {
+            assert_eq!(map.get(position), &[usize::from(position)]);
+        }
+    }
+
+    #[test]
+    fn from_fn_matches_manual_construction() {
+        let mut expected = PositionMap::new(0.0f32, 2);
+        expected.get_mut(pos(3, 4)).copy_from_slice(&[1.0, 2.0]);
+        expected.get_mut(pos(7, 7)).copy_from_slice(&[3.0, 4.0]);
+
+        let actual = PositionMap::from_fn(0.0f32, 2, |position, slice| {
+            if position == pos(3, 4) {
+                slice.copy_from_slice(&[1.0, 2.0]);
+            } else if position == pos(7, 7) {
+                slice.copy_from_slice(&[3.0, 4.0]);
+            }
+        });
+
+        for position in PositionId::iter() {
+            assert_eq!(actual.get(position), expected.get(position));
+        }
     }
 
     // ── PositionMapView stride=1 tests ─────────────────────────────────
