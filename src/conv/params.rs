@@ -95,7 +95,7 @@ impl<const IN_C: usize, const OUT_C: usize, const K: usize> ConvParams<IN_C, OUT
     #[must_use]
     pub fn conv2d(&self, input: PositionMapView<'_, f32>) -> PositionMap<f32> {
         let workspace = Self::gather_workspace(input);
-        Self::conv2d_from_workspace(self.weights(), self.bias(), workspace.as_view())
+        Self::conv2d_from_workspace(self.weights(), self.bias(), &workspace)
     }
 
     /// Performs uniform crossover with another set of parameters.
@@ -155,7 +155,7 @@ impl<const IN_C: usize, const OUT_C: usize, const K: usize> ConvParams<IN_C, OUT
     fn conv2d_from_workspace(
         weights: &[f32],
         bias: &[f32],
-        workspace: PositionMapView<'_, f32>,
+        workspace: &PositionMap<f32>,
     ) -> PositionMap<f32> {
         PositionMap::from_fn(0.0, OUT_C, |pos, output_channels| {
             let neighborhood = workspace.get(pos);
