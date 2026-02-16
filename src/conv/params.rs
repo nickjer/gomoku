@@ -24,10 +24,16 @@ pub struct ConvParams<const IN_C: usize, const OUT_C: usize, const K: usize> {
 
 impl<const IN_C: usize, const OUT_C: usize, const K: usize> ConvParams<IN_C, OUT_C, K> {
     /// Workspace stride: number of elements per position in the gathered neighborhood.
-    pub const STRIDE: usize = IN_C * K * K;
+    pub const STRIDE: usize = IN_C
+        .checked_mul(K)
+        .expect("STRIDE overflow")
+        .checked_mul(K)
+        .expect("STRIDE overflow");
 
     /// Expected weights length: `IN_C * K * K * OUT_C`.
-    const EXPECTED_WEIGHTS: usize = Self::STRIDE * OUT_C;
+    const EXPECTED_WEIGHTS: usize = Self::STRIDE
+        .checked_mul(OUT_C)
+        .expect("EXPECTED_WEIGHTS overflow");
 
     /// Creates a new `ConvParams` with validated dimensions.
     ///
@@ -58,7 +64,7 @@ impl<const IN_C: usize, const OUT_C: usize, const K: usize> ConvParams<IN_C, OUT
     /// Biases are initialized to zero.
     #[must_use]
     pub fn random(rng: &mut fastrand::Rng) -> Self {
-        let std = he_std(IN_C * K * K);
+        let std = he_std(Self::STRIDE);
         let weights: Vec<f32> = (0..Self::EXPECTED_WEIGHTS)
             .map(|_| rng.f32_normal(0.0, std))
             .collect();
