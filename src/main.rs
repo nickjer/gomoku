@@ -2,6 +2,7 @@
 
 mod board;
 mod cli;
+mod cluster;
 mod conv;
 mod evolution;
 mod game;
