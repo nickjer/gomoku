@@ -45,20 +45,19 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> ConvStrateg
         // First layer needs INPUT_CHANNELS * K * K, hidden layers need C * K * K
         let workspace_size = PositionId::COUNT * max(INPUT_CHANNELS, C) * K * K;
         let mut workspace = vec![0.0f32; workspace_size];
-        let (first_conv, hidden_convs, final_conv) = self.weights.layers();
 
         // First conv: INPUT_CHANNELS -> C channels
-        let mut activations = conv2d(input, first_conv, &mut workspace);
+        let mut activations = conv2d(input, self.weights.first(), &mut workspace);
         relu_inplace(activations.as_mut_slice());
 
         // Hidden convs: C -> C channels
-        for hidden_conv in hidden_convs {
-            activations = conv2d(activations.as_view(), hidden_conv, &mut workspace);
+        for hidden in self.weights.hidden() {
+            activations = conv2d(activations.as_view(), hidden, &mut workspace);
             relu_inplace(activations.as_mut_slice());
         }
 
         // Final conv: C -> 1 channel (1×1 kernel)
-        conv2d(activations.as_view(), final_conv, &mut workspace)
+        conv2d(activations.as_view(), self.weights.last(), &mut workspace)
     }
 }
 
@@ -213,7 +212,7 @@ mod tests {
         let reconstructed = TestStrategy::from_genes("reconstructed", genes);
 
         assert_eq!(reconstructed.label(), "reconstructed");
-        assert_eq!(reconstructed.genes().as_ref(), original.genes().as_ref());
+        assert_eq!(reconstructed.genes(), original.genes());
     }
 
     #[test]

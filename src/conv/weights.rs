@@ -1,8 +1,8 @@
-use fastrand_contrib::RngExt;
+use serde::{Deserialize, Serialize};
 
-use crate::evolution::crossover::{Crossover, uniform_crossover};
+use crate::evolution::crossover::Crossover;
 use crate::evolution::genes::EvolvableGenes;
-use crate::evolution::mutation::{Mutation, gaussian_mutate};
+use crate::evolution::mutation::Mutation;
 
 use super::encoding::INPUT_CHANNELS;
 use super::params::ConvParams;
@@ -23,17 +23,14 @@ use super::params::ConvParams;
 /// # Weight Layout
 /// Weights are stored in `[IN_C * K * K][OUT_C]` layout (transposed from the standard
 /// `[OUT_C][IN_C * K * K]`). This allows efficient dot products against the workspace buffer.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ConvWeights<const K: usize, const C: usize, const L: usize, const R: usize> {
-    data: Vec<f32>,
+    first: ConvParams<{ INPUT_CHANNELS }, C, K>,
+    hidden: Vec<ConvParams<C, C, K>>,
+    last: ConvParams<C, 1, 1>,
 }
 
 impl<const K: usize, const C: usize, const L: usize, const R: usize> ConvWeights<K, C, L, R> {
-    /// Total number of parameters in the network.
-    pub const TOTAL: usize = layer_params(INPUT_CHANNELS, C, K)
-        + (L - 1) * layer_params(C, C, K)
-        + layer_params(C, 1, 1);
-
     /// Creates weights initialized using He initialization.
     ///
     /// Uses `N(0, √(2/n_in))` for each layer, which is optimal for `ReLU` networks.
@@ -46,108 +43,29 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> ConvWeights
         assert!(L >= 1, "must have at least 1 layer");
         assert!(R == 0, "residual blocks not yet implemented");
 
-        let mut data = Vec::with_capacity(Self::TOTAL);
-
-        // First conv: He init with n_in = INPUT_CHANNELS * K * K
-        let first_std = he_std(INPUT_CHANNELS * K * K);
-        data.extend((0..INPUT_CHANNELS * C * K * K).map(|_| rng.f32_normal(0.0, first_std)));
-        data.extend(std::iter::repeat_n(0.0, C)); // Biases initialized to zero
-
-        // Hidden convs: He init with n_in = C * K * K
-        let hidden_std = he_std(C * K * K);
-        for _ in 0..(L - 1) {
-            data.extend((0..C * C * K * K).map(|_| rng.f32_normal(0.0, hidden_std)));
-            data.extend(std::iter::repeat_n(0.0, C));
+        Self {
+            first: ConvParams::random(rng),
+            hidden: (0..(L - 1)).map(|_| ConvParams::random(rng)).collect(),
+            last: ConvParams::random(rng),
         }
-
-        // Final conv: He init with n_in = C (1×1 kernel)
-        let final_std = he_std(C);
-        data.extend((0..C).map(|_| rng.f32_normal(0.0, final_std)));
-        data.push(0.0); // Final bias
-
-        debug_assert_eq!(data.len(), Self::TOTAL);
-        Self { data }
     }
 
-    /// Creates weights from a pre-existing vector.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `data.len() != Self::TOTAL`, `L < 1`, or `R > 0`.
+    /// Returns a reference to the first conv layer parameters.
     #[must_use]
-    pub fn from_vec(data: Vec<f32>) -> Self {
-        assert!(L >= 1, "must have at least 1 layer");
-        assert!(R == 0, "residual blocks not yet implemented");
-        assert_eq!(
-            data.len(),
-            Self::TOTAL,
-            "expected {} weights, got {}",
-            Self::TOTAL,
-            data.len()
-        );
-        Self { data }
+    pub fn first(&self) -> &ConvParams<{ INPUT_CHANNELS }, C, K> {
+        &self.first
     }
 
-    /// Returns type-safe views of all layer parameters.
-    ///
-    /// The const generics are locked to the struct's architecture, making
-    /// dimension mismatches impossible.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the internal data length doesn't match the expected total
-    /// (indicates a bug in weight construction).
+    /// Returns the hidden conv layer parameters.
     #[must_use]
-    pub fn layers(
-        &self,
-    ) -> (
-        ConvParams<'_, { INPUT_CHANNELS }, C, K>,
-        Vec<ConvParams<'_, C, C, K>>,
-        ConvParams<'_, C, 1, 1>,
-    ) {
-        let mut cursor = SliceCursor::new(&self.data);
-        let first = cursor.take_params();
-        let hidden = (0..(L - 1)).map(|_| cursor.take_params()).collect();
-        let final_layer = cursor.take_params();
-        assert!(cursor.is_empty());
-        (first, hidden, final_layer)
+    pub fn hidden(&self) -> &[ConvParams<C, C, K>] {
+        &self.hidden
     }
-}
 
-impl<const K: usize, const C: usize, const L: usize, const R: usize> AsRef<[f32]>
-    for ConvWeights<K, C, L, R>
-{
-    fn as_ref(&self) -> &[f32] {
-        &self.data
-    }
-}
-
-impl<const K: usize, const C: usize, const L: usize, const R: usize> AsMut<[f32]>
-    for ConvWeights<K, C, L, R>
-{
-    fn as_mut(&mut self) -> &mut [f32] {
-        &mut self.data
-    }
-}
-
-impl<const K: usize, const C: usize, const L: usize, const R: usize> From<ConvWeights<K, C, L, R>>
-    for Vec<f32>
-{
-    fn from(weights: ConvWeights<K, C, L, R>) -> Self {
-        weights.data
-    }
-}
-
-impl<const K: usize, const C: usize, const L: usize, const R: usize> From<Vec<f32>>
-    for ConvWeights<K, C, L, R>
-{
-    /// Creates weights from a vector.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `data.len() != Self::TOTAL`, `L < 1`, or `R > 0`.
-    fn from(data: Vec<f32>) -> Self {
-        Self::from_vec(data)
+    /// Returns a reference to the final conv layer parameters.
+    #[must_use]
+    pub fn last(&self) -> &ConvParams<C, 1, 1> {
+        &self.last
     }
 }
 
@@ -156,73 +74,32 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> EvolvableGe
 {
     fn crossover(&self, other: &Self, crossover: Crossover, rng: &mut fastrand::Rng) -> Self {
         match crossover {
-            Crossover::Uniform => {
-                Self::from_vec(uniform_crossover(self.as_ref(), other.as_ref(), rng))
-            }
+            Crossover::Uniform => Self {
+                first: self.first.uniform_crossover(&other.first, rng),
+                hidden: self
+                    .hidden
+                    .iter()
+                    .zip(&other.hidden)
+                    .map(|(a, b)| a.uniform_crossover(b, rng))
+                    .collect(),
+                last: self.last.uniform_crossover(&other.last, rng),
+            },
         }
     }
 
     fn mutate(&self, mutation: Mutation, rng: &mut fastrand::Rng) -> Self {
         match mutation {
-            Mutation::Gaussian { sigma } => {
-                Self::from_vec(gaussian_mutate(self.as_ref(), sigma, rng))
-            }
+            Mutation::Gaussian { sigma } => Self {
+                first: self.first.gaussian_mutate(sigma, rng),
+                hidden: self
+                    .hidden
+                    .iter()
+                    .map(|layer| layer.gaussian_mutate(sigma, rng))
+                    .collect(),
+                last: self.last.gaussian_mutate(sigma, rng),
+            },
         }
     }
-}
-
-/// Total number of parameters for a single convolutional layer.
-///
-/// Weights: `in_c * k * k * out_c`, bias: `out_c`.
-const fn layer_params(in_c: usize, out_c: usize, k: usize) -> usize {
-    in_c * k * k * out_c + out_c
-}
-
-/// A sequential cursor over a float slice, used to safely partition arena memory
-/// into typed [`ConvParams`] views without manual offset arithmetic.
-struct SliceCursor<'a> {
-    data: &'a [f32],
-}
-
-impl<'a> SliceCursor<'a> {
-    const fn new(data: &'a [f32]) -> Self {
-        Self { data }
-    }
-
-    fn take(&mut self, count: usize) -> &'a [f32] {
-        let (chunk, rest) = self.data.split_at(count);
-        self.data = rest;
-        chunk
-    }
-
-    /// Takes the next layer's weights and bias as a [`ConvParams`].
-    ///
-    /// Advances the cursor by `IN_C * K * K * OUT_C + OUT_C` elements.
-    fn take_params<const IN_C: usize, const OUT_C: usize, const K: usize>(
-        &mut self,
-    ) -> ConvParams<'a, IN_C, OUT_C, K> {
-        let weight_count = IN_C
-            .checked_mul(K)
-            .and_then(|n| n.checked_mul(K))
-            .and_then(|n| n.checked_mul(OUT_C))
-            .expect("weight count overflow");
-        let weights = self.take(weight_count);
-        let bias = self.take(OUT_C);
-        ConvParams::new(weights, bias)
-    }
-
-    fn is_empty(&self) -> bool {
-        self.data.is_empty()
-    }
-}
-
-/// Computes He initialization standard deviation: `√(2/n_in)`.
-fn he_std(n_in: usize) -> f32 {
-    // f32 represents integers exactly up to 2^24 (~16M).
-    // n_in is small for any reasonable architecture (e.g., 32 * 3 * 3 = 288).
-    #[allow(clippy::cast_precision_loss, clippy::as_conversions)]
-    let n_in_f32 = n_in as f32;
-    (2.0 / n_in_f32).sqrt()
 }
 
 #[cfg(test)]
@@ -233,57 +110,31 @@ mod tests {
     type TestWeights = ConvWeights<3, 8, 2, 0>;
 
     #[test]
-    fn total_size_calculation() {
-        // First: 2 * 8 * 3 * 3 = 144 weights + 8 bias = 152
-        // Hidden: (2-1) * (8 * 8 * 3 * 3 + 8) = 1 * (576 + 8) = 584
-        // Final: 8 weights + 1 bias = 9
-        // Total: 152 + 584 + 9 = 745
-        assert_eq!(TestWeights::TOTAL, 745);
-    }
-
-    #[test]
-    fn total_size_single_layer() {
-        // L=1 means no hidden layers
-        type SingleLayer = ConvWeights<3, 8, 1, 0>;
-        // First: 144 + 8 = 152
-        // Hidden: 0
-        // Final: 8 + 1 = 9
-        // Total: 161
-        assert_eq!(SingleLayer::TOTAL, 161);
-    }
-
-    #[test]
-    fn total_size_conv_tiny() {
-        // ConvTiny: K=3, C=32, L=2, R=0
-        type ConvTiny = ConvWeights<3, 32, 2, 0>;
-        // First: 2 * 32 * 9 = 576 + 32 = 608
-        // Hidden: 1 * (32 * 32 * 9 + 32) = 9216 + 32 = 9248
-        // Final: 32 + 1 = 33
-        // Total: 608 + 9248 + 33 = 9889
-        assert_eq!(ConvTiny::TOTAL, 9889);
-    }
-
-    #[test]
-    fn random_creates_correct_length() {
+    fn random_creates_correct_structure() {
         let mut rng = fastrand::Rng::with_seed(42);
         let weights = TestWeights::random(&mut rng);
 
-        assert_eq!(weights.as_ref().len(), TestWeights::TOTAL);
+        // First: IN_C=2, OUT_C=8, K=3
+        assert_eq!(weights.first().weights().len(), 2 * 8 * 3 * 3);
+        assert_eq!(weights.first().bias().len(), 8);
+
+        // Hidden: L-1 = 1 layer, IN_C=8, OUT_C=8, K=3
+        assert_eq!(weights.hidden().len(), 1);
+        assert_eq!(weights.hidden()[0].weights().len(), 8 * 8 * 3 * 3);
+        assert_eq!(weights.hidden()[0].bias().len(), 8);
+
+        // Last: IN_C=8, OUT_C=1, K=1
+        assert_eq!(weights.last().weights().len(), 8);
+        assert_eq!(weights.last().bias().len(), 1);
     }
 
     #[test]
-    fn from_vec_accepts_correct_length() {
-        let data = vec![0.0f32; TestWeights::TOTAL];
-        let weights = TestWeights::from_vec(data);
+    fn random_single_layer() {
+        type SingleLayer = ConvWeights<3, 8, 1, 0>;
+        let mut rng = fastrand::Rng::with_seed(42);
+        let weights = SingleLayer::random(&mut rng);
 
-        assert_eq!(weights.as_ref().len(), TestWeights::TOTAL);
-    }
-
-    #[test]
-    #[should_panic(expected = "expected 745 weights")]
-    fn from_vec_rejects_wrong_length() {
-        let data = vec![0.0f32; 100];
-        let _ = TestWeights::from_vec(data);
+        assert!(weights.hidden().is_empty());
     }
 
     #[test]
@@ -295,89 +146,13 @@ mod tests {
     }
 
     #[test]
-    fn layers_have_correct_lengths() {
-        let mut rng = fastrand::Rng::with_seed(42);
-        let weights = TestWeights::random(&mut rng);
-        let (first_conv, hidden_convs, final_conv) = weights.layers();
-
-        assert_eq!(first_conv.weights().len(), 2 * 8 * 3 * 3);
-        assert_eq!(first_conv.bias().len(), 8);
-
-        assert_eq!(hidden_convs.len(), 1);
-        assert_eq!(hidden_convs[0].weights().len(), 8 * 8 * 3 * 3);
-        assert_eq!(hidden_convs[0].bias().len(), 8);
-
-        assert_eq!(final_conv.weights().len(), 8);
-        assert_eq!(final_conv.bias().len(), 1);
-    }
-
-    #[test]
-    fn layers_produce_non_overlapping_params() {
-        let data: Vec<f32> = (0..TestWeights::TOTAL as u32).map(|i| i as f32).collect();
-        let weights = TestWeights::from_vec(data);
-        let (first_conv, hidden_convs, _) = weights.layers();
-
-        // Check that each layer's data is sequential and non-overlapping
-        let first_w_end = first_conv.weights().last().unwrap();
-        let first_b_start = first_conv.bias().first().unwrap();
-        assert_eq!(*first_w_end + 1.0, *first_b_start);
-
-        let first_b_end = first_conv.bias().last().unwrap();
-        let hidden_w_start = hidden_convs[0].weights().first().unwrap();
-        assert_eq!(*first_b_end + 1.0, *hidden_w_start);
-    }
-
-    #[test]
-    fn he_initialization_has_reasonable_distribution() {
-        let mut rng = fastrand::Rng::with_seed(42);
-        let weights = TestWeights::random(&mut rng);
-        let (first_conv, _, _) = weights.layers();
-
-        // Check first conv weights have reasonable variance
-        let first_weights = first_conv.weights();
-        let mean: f32 = first_weights.iter().sum::<f32>() / first_weights.len() as f32;
-        let variance: f32 = first_weights
-            .iter()
-            .map(|&x| (x - mean).powi(2))
-            .sum::<f32>()
-            / first_weights.len() as f32;
-        let std_dev = variance.sqrt();
-
-        // Expected std: sqrt(2 / (2 * 9)) = sqrt(1/9) ≈ 0.333
-        let expected_std = he_std(2 * 3 * 3);
-        assert!(
-            (std_dev - expected_std).abs() < 0.1,
-            "std_dev {std_dev} not close to expected {expected_std}"
-        );
-    }
-
-    #[test]
     fn biases_initialized_to_zero() {
         let mut rng = fastrand::Rng::with_seed(42);
         let weights = TestWeights::random(&mut rng);
-        let (first_conv, hidden_convs, final_conv) = weights.layers();
 
-        assert!(first_conv.bias().iter().all(|&b| b == 0.0));
-        assert!(hidden_convs[0].bias().iter().all(|&b| b == 0.0));
-        assert!(final_conv.bias().iter().all(|&b| b == 0.0));
-    }
-
-    #[test]
-    fn into_vec_returns_data() {
-        let original: Vec<f32> = (0..TestWeights::TOTAL).map(|i| i as f32).collect();
-        let weights = TestWeights::from_vec(original.clone());
-        let recovered: Vec<f32> = weights.into();
-
-        assert_eq!(recovered, original);
-    }
-
-    #[test]
-    fn as_mut_allows_modification() {
-        let mut weights = TestWeights::from_vec(vec![0.0f32; TestWeights::TOTAL]);
-
-        weights.as_mut()[0] = 42.0;
-
-        assert_eq!(weights.as_ref()[0], 42.0);
+        assert!(weights.first().bias().iter().all(|&b| b == 0.0));
+        assert!(weights.hidden()[0].bias().iter().all(|&b| b == 0.0));
+        assert!(weights.last().bias().iter().all(|&b| b == 0.0));
     }
 
     #[test]
@@ -388,21 +163,31 @@ mod tests {
 
         let child = parent1.crossover(&parent2, Crossover::Uniform, &mut rng);
 
-        assert_eq!(child.as_ref().len(), TestWeights::TOTAL);
-        for (i, &val) in child.as_ref().iter().enumerate() {
-            assert!(val == parent1.as_ref()[i] || val == parent2.as_ref()[i]);
+        // Child should have same structure
+        assert_eq!(child.hidden().len(), parent1.hidden().len());
+
+        // Each weight comes from one parent
+        for (i, &val) in child.first().weights().iter().enumerate() {
+            assert!(val == parent1.first().weights()[i] || val == parent2.first().weights()[i]);
         }
     }
 
     #[test]
     fn mutate_with_gaussian_changes_values() {
-        let weights = TestWeights::from_vec(vec![0.0f32; TestWeights::TOTAL]);
         let mut rng = fastrand::Rng::with_seed(42);
+        let weights = TestWeights::random(&mut rng);
 
-        let result = weights.mutate(Mutation::Gaussian { sigma: 1.0 }, &mut rng);
+        let mutated = weights.mutate(Mutation::Gaussian { sigma: 1.0 }, &mut rng);
 
-        assert_eq!(result.as_ref().len(), TestWeights::TOTAL);
-        let changed = result.as_ref().iter().filter(|&&val| val != 0.0).count();
-        assert!(changed > 0, "some values should change");
+        assert_ne!(weights, mutated);
+    }
+
+    #[test]
+    fn clone_produces_equal_weights() {
+        let mut rng = fastrand::Rng::with_seed(42);
+        let weights = TestWeights::random(&mut rng);
+        let cloned = weights.clone();
+
+        assert_eq!(weights, cloned);
     }
 }

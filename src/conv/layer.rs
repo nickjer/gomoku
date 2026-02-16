@@ -81,7 +81,7 @@ fn conv2d_from_workspace<const OUT_C: usize>(
 /// Panics if the workspace is too small.
 pub fn conv2d<const IN_C: usize, const OUT_C: usize, const K: usize>(
     input: PositionMapView<'_, f32>,
-    params: ConvParams<'_, IN_C, OUT_C, K>,
+    params: &ConvParams<IN_C, OUT_C, K>,
     workspace: &mut [f32],
 ) -> PositionMap<f32> {
     let stride = IN_C * K * K;
@@ -118,7 +118,7 @@ mod tests {
     /// Helper to run conv2d with automatic workspace allocation.
     fn conv<const IN_C: usize, const OUT_C: usize, const K: usize>(
         input: PositionMapView<'_, f32>,
-        params: ConvParams<'_, IN_C, OUT_C, K>,
+        params: &ConvParams<IN_C, OUT_C, K>,
     ) -> PositionMap<f32> {
         let workspace_size = PositionId::COUNT * IN_C * K * K;
         let mut workspace = vec![0.0f32; workspace_size];
@@ -170,9 +170,9 @@ mod tests {
             let input = PositionMap::new(0.0f32, 2);
             let weights = vec![0.0f32; 4 * 2 * 3 * 3];
             let bias = vec![0.0f32; 4];
-            let params = ConvParams::<2, 4, 3>::new(&weights, &bias);
+            let params = ConvParams::<2, 4, 3>::new(weights, bias);
 
-            let output = conv(input.as_view(), params);
+            let output = conv(input.as_view(), &params);
 
             assert_eq!(output.stride(), 4);
         }
@@ -182,9 +182,9 @@ mod tests {
             let input = PositionMap::new(0.0f32, 8);
             let weights = vec![0.0f32; 1 * 8 * 1 * 1];
             let bias = vec![0.0f32; 1];
-            let params = ConvParams::<8, 1, 1>::new(&weights, &bias);
+            let params = ConvParams::<8, 1, 1>::new(weights, bias);
 
-            let output = conv(input.as_view(), params);
+            let output = conv(input.as_view(), &params);
 
             assert_eq!(output.stride(), 1);
         }
@@ -194,9 +194,9 @@ mod tests {
             let input = PositionMap::new(0.0f32, 1);
             let weights = vec![0.0f32; 2 * 1 * 3 * 3];
             let bias = vec![1.5, -0.5];
-            let params = ConvParams::<1, 2, 3>::new(&weights, &bias);
+            let params = ConvParams::<1, 2, 3>::new(weights, bias);
 
-            let output = conv(input.as_view(), params);
+            let output = conv(input.as_view(), &params);
 
             for pos in PositionId::iter() {
                 assert_eq!(output.get(pos), &[1.5, -0.5]);
@@ -211,9 +211,9 @@ mod tests {
             let mut weights = vec![0.0f32; 1 * 1 * 3 * 3];
             weights[4] = 1.0;
             let bias = vec![0.0f32; 1];
-            let params = ConvParams::<1, 1, 3>::new(&weights, &bias);
+            let params = ConvParams::<1, 1, 3>::new(weights, bias);
 
-            let output = conv(input.as_view(), params);
+            let output = conv(input.as_view(), &params);
 
             assert_eq!(output.get(center), &[7.0]);
             assert_eq!(output.get(pos(0, 0)), &[0.0]);
@@ -227,9 +227,9 @@ mod tests {
             let mut weights = vec![0.0f32; 1 * 1 * 3 * 3];
             weights[0] = 1.0;
             let bias = vec![0.0f32; 1];
-            let params = ConvParams::<1, 1, 3>::new(&weights, &bias);
+            let params = ConvParams::<1, 1, 3>::new(weights, bias);
 
-            let output = conv(input.as_view(), params);
+            let output = conv(input.as_view(), &params);
 
             let output_pos = pos(6, 6);
             assert_eq!(output.get(output_pos), &[3.0]);
@@ -246,9 +246,9 @@ mod tests {
 
             let weights = vec![1.0f32; 1 * 1 * 3 * 3];
             let bias = vec![0.0f32; 1];
-            let params = ConvParams::<1, 1, 3>::new(&weights, &bias);
+            let params = ConvParams::<1, 1, 3>::new(weights, bias);
 
-            let output = conv(input.as_view(), params);
+            let output = conv(input.as_view(), &params);
 
             assert_eq!(output.get(pos(7, 7)), &[4.0]);
             assert_eq!(output.get(pos(6, 6)), &[1.0]);
@@ -265,9 +265,9 @@ mod tests {
             weights[4] = 1.0;
             weights[9 + 4] = 1.0;
             let bias = vec![0.0f32; 1];
-            let params = ConvParams::<2, 1, 3>::new(&weights, &bias);
+            let params = ConvParams::<2, 1, 3>::new(weights, bias);
 
-            let output = conv(input.as_view(), params);
+            let output = conv(input.as_view(), &params);
 
             assert_eq!(output.get(center), &[5.0]);
         }
@@ -279,9 +279,9 @@ mod tests {
 
             let weights = vec![1.0f32; 1 * 1 * 3 * 3];
             let bias = vec![0.0f32; 1];
-            let params = ConvParams::<1, 1, 3>::new(&weights, &bias);
+            let params = ConvParams::<1, 1, 3>::new(weights, bias);
 
-            let output = conv(input.as_view(), params);
+            let output = conv(input.as_view(), &params);
 
             assert_eq!(output.get(corner), &[9.0]);
             assert_eq!(output.get(pos(1, 1)), &[9.0]);
@@ -298,9 +298,9 @@ mod tests {
             weights[4] = 2.0;
             weights[5] = 3.0;
             let bias = vec![1.0f32; 1];
-            let params = ConvParams::<1, 1, 3>::new(&weights, &bias);
+            let params = ConvParams::<1, 1, 3>::new(weights, bias);
 
-            let output = conv(input.as_view(), params);
+            let output = conv(input.as_view(), &params);
 
             assert_eq!(output.get(pos(7, 7)), &[14.0]);
             assert_eq!(output.get(pos(7, 8)), &[7.0]);
@@ -314,9 +314,9 @@ mod tests {
 
             let weights = vec![2.0, 0.5];
             let bias = vec![1.0];
-            let params = ConvParams::<2, 1, 1>::new(&weights, &bias);
+            let params = ConvParams::<2, 1, 1>::new(weights, bias);
 
-            let output = conv(input.as_view(), params);
+            let output = conv(input.as_view(), &params);
 
             assert_eq!(output.get(center), &[9.0]);
             assert_eq!(output.get(pos(0, 0)), &[1.0]);
@@ -331,9 +331,9 @@ mod tests {
             weights[center_weight_index(0, 0, 3, 2)] = 1.0;
             weights[center_weight_index(0, 1, 3, 2)] = 2.0;
             let bias = vec![0.0, 10.0];
-            let params = ConvParams::<1, 2, 3>::new(&weights, &bias);
+            let params = ConvParams::<1, 2, 3>::new(weights, bias);
 
-            let output = conv(input.as_view(), params);
+            let output = conv(input.as_view(), &params);
 
             assert_eq!(output.get(center), &[5.0, 20.0]);
         }
@@ -350,9 +350,9 @@ mod tests {
             weights[center_weight_index(0, 1, 3, 3)] = 2.0;
             weights[center_weight_index(1, 2, 3, 3)] = 3.0;
             let bias = vec![0.0, 0.0, 0.0];
-            let params = ConvParams::<2, 3, 3>::new(&weights, &bias);
+            let params = ConvParams::<2, 3, 3>::new(weights, bias);
 
-            let output = conv(input.as_view(), params);
+            let output = conv(input.as_view(), &params);
 
             assert_eq!(output.get(center), &[3.0, 2.0, 6.0]);
         }
@@ -367,9 +367,9 @@ mod tests {
 
             let weights = vec![1.0f32; 9];
             let bias = vec![0.0f32];
-            let params = ConvParams::<1, 1, 3>::new(&weights, &bias);
+            let params = ConvParams::<1, 1, 3>::new(weights, bias);
 
-            let output = conv(input.as_view(), params);
+            let output = conv(input.as_view(), &params);
 
             assert_eq!(output.get(pos(0, 0)), &[1.0]);
             assert_eq!(output.get(pos(0, 14)), &[1.0]);
@@ -386,12 +386,12 @@ mod tests {
             let mut weights = vec![0.0f32; 1 * 2 * 3 * 3];
             weights[4] = 1.0;
             let bias = vec![0.0];
-            let params = ConvParams::<2, 1, 3>::new(&weights, &bias);
+            let params = ConvParams::<2, 1, 3>::new(weights, bias);
 
-            let output1 = conv2d(input1.as_view(), params, &mut workspace);
+            let output1 = conv2d(input1.as_view(), &params, &mut workspace);
 
             let input2 = PositionMap::new(0.0f32, 2);
-            let output2 = conv2d(input2.as_view(), params, &mut workspace);
+            let output2 = conv2d(input2.as_view(), &params, &mut workspace);
 
             assert_eq!(output1.get(PositionId::center()), &[5.0]);
             assert_eq!(output2.get(PositionId::center()), &[0.0]);

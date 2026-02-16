@@ -4,14 +4,15 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
+use crate::conv::weights::ConvWeights;
 use crate::conv::{ConvSmall, ConvTiny};
 use crate::strategy::{EvolvableStrategy, Strategy};
 
-/// Binary-serializable strategy data (genes only, label comes from filename).
+/// Binary-serializable strategy data (weights only, label comes from filename).
 #[derive(Debug, Serialize, Deserialize)]
 pub enum StrategyData {
-    ConvTiny { genes: Vec<f32> },
-    ConvSmall { genes: Vec<f32> },
+    ConvTiny { weights: ConvWeights<3, 32, 2, 0> },
+    ConvSmall { weights: ConvWeights<3, 64, 4, 0> },
 }
 
 /// A homogeneous collection of strategies that can be evolved together.
@@ -33,27 +34,24 @@ pub fn save_strategies_to_directory(dir: &Path, strategies: &EvolvableStrategies
         .with_context(|| format!("Failed to create directory: {}", dir.display()))?;
 
     match strategies {
-        EvolvableStrategies::ConvTiny { strategies } => {
-            save_each(dir, strategies, |genes| StrategyData::ConvTiny { genes })
-        }
-        EvolvableStrategies::ConvSmall { strategies } => {
-            save_each(dir, strategies, |genes| StrategyData::ConvSmall { genes })
-        }
+        EvolvableStrategies::ConvTiny { strategies } => save_each(dir, strategies, |weights| {
+            StrategyData::ConvTiny { weights }
+        }),
+        EvolvableStrategies::ConvSmall { strategies } => save_each(dir, strategies, |weights| {
+            StrategyData::ConvSmall { weights }
+        }),
     }
 }
 
-fn save_each<S: EvolvableStrategy, T>(
+fn save_each<S: EvolvableStrategy>(
     dir: &Path,
     strategies: &[S],
-    wrap: fn(Vec<T>) -> StrategyData,
-) -> Result<()>
-where
-    S::Genes: Into<Vec<T>>,
-{
+    wrap: fn(S::Genes) -> StrategyData,
+) -> Result<()> {
     let width = strategies.len().to_string().len();
 
     for (i, strategy) in strategies.iter().enumerate() {
-        let data = wrap(strategy.genes().clone().into());
+        let data = wrap(strategy.genes().clone());
         let bytes = postcard::to_allocvec(&data).context("Failed to serialize strategy")?;
 
         let rank = i + 1;
@@ -73,8 +71,8 @@ pub fn load_strategy_from_file(path: &Path) -> Result<Box<dyn Strategy>> {
     let (label, data) = load_strategy_data(path)?;
 
     Ok(match data {
-        StrategyData::ConvTiny { genes } => Box::new(ConvTiny::from_genes(label, genes.into())),
-        StrategyData::ConvSmall { genes } => Box::new(ConvSmall::from_genes(label, genes.into())),
+        StrategyData::ConvTiny { weights } => Box::new(ConvTiny::from_genes(label, weights)),
+        StrategyData::ConvSmall { weights } => Box::new(ConvSmall::from_genes(label, weights)),
     })
 }
 
@@ -136,7 +134,7 @@ fn build_strategies(loaded: Vec<(String, StrategyData)>) -> Result<EvolvableStra
             strategies: loaded
                 .into_iter()
                 .map(|(label, data)| match data {
-                    StrategyData::ConvTiny { genes } => ConvTiny::from_genes(label, genes.into()),
+                    StrategyData::ConvTiny { weights } => ConvTiny::from_genes(label, weights),
                     StrategyData::ConvSmall { .. } => unreachable!(),
                 })
                 .collect(),
@@ -145,7 +143,7 @@ fn build_strategies(loaded: Vec<(String, StrategyData)>) -> Result<EvolvableStra
             strategies: loaded
                 .into_iter()
                 .map(|(label, data)| match data {
-                    StrategyData::ConvSmall { genes } => ConvSmall::from_genes(label, genes.into()),
+                    StrategyData::ConvSmall { weights } => ConvSmall::from_genes(label, weights),
                     StrategyData::ConvTiny { .. } => unreachable!(),
                 })
                 .collect(),
@@ -169,10 +167,7 @@ mod tests {
             ConvTiny::random("c0", &mut rng),
             ConvTiny::random("c1", &mut rng),
         ];
-        let original_genes: Vec<_> = strategies
-            .iter()
-            .map(|s| s.genes().as_ref().to_vec())
-            .collect();
+        let original_genes: Vec<_> = strategies.iter().map(|s| s.genes().clone()).collect();
         let original = EvolvableStrategies::ConvTiny { strategies };
 
         save_strategies_to_directory(dir.path(), &original).unwrap();
@@ -181,8 +176,8 @@ mod tests {
         match loaded {
             EvolvableStrategies::ConvTiny { strategies } => {
                 assert_eq!(strategies.len(), 2);
-                assert_eq!(strategies[0].genes().as_ref(), &original_genes[0][..]);
-                assert_eq!(strategies[1].genes().as_ref(), &original_genes[1][..]);
+                assert_eq!(strategies[0].genes(), &original_genes[0]);
+                assert_eq!(strategies[1].genes(), &original_genes[1]);
             }
             _ => panic!("Expected ConvTiny"),
         }

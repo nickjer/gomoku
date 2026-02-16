@@ -368,9 +368,9 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(42);
         let strategies = make_strategies(&mut rng, 4);
 
-        let parent_genes: Vec<Vec<f32>> = strategies
+        let parent_genes: Vec<_> = strategies
             .iter()
-            .map(|strat| strat.genes().as_ref().to_vec())
+            .map(|strat| strat.genes().clone())
             .collect();
 
         // Run one generation with no crossover, no mutation
@@ -383,9 +383,9 @@ mod tests {
 
         // Every offspring should have genes identical to some parent
         for individual in gen1.individuals() {
-            let genes: Vec<f32> = individual.strategy().genes().as_ref().to_vec();
+            let genes = individual.strategy().genes();
             assert!(
-                parent_genes.iter().any(|parent| *parent == genes),
+                parent_genes.iter().any(|parent| parent == genes),
                 "offspring genes should match a parent",
             );
         }
@@ -396,9 +396,9 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(42);
         let strategies = make_strategies(&mut rng, 4);
 
-        let parent_genes: Vec<Vec<f32>> = strategies
+        let parent_genes: Vec<_> = strategies
             .iter()
-            .map(|strat| strat.genes().as_ref().to_vec())
+            .map(|strat| strat.genes().clone())
             .collect();
 
         // Run one generation with no crossover but 100% mutation
@@ -411,8 +411,8 @@ mod tests {
 
         // At least one offspring should have different genes than all parents
         let any_mutated = gen1.individuals().iter().any(|individual| {
-            let genes: Vec<f32> = individual.strategy().genes().as_ref().to_vec();
-            !parent_genes.iter().any(|parent| *parent == genes)
+            let genes = individual.strategy().genes();
+            !parent_genes.iter().any(|parent| parent == genes)
         });
 
         assert!(any_mutated, "some offspring should have mutated genes");
