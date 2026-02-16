@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Gomoku is a genetic algorithm tool that evolves CNN-based strategies to play Gomoku (five in a row).
+Gomoku is a genetic algorithm tool that evolves neural network strategies to play Gomoku (five in a row).
 
 ## Build and Development Commands
 
@@ -25,10 +25,17 @@ cargo fmt                # Format code
 - **PositionId**: Encapsulates board positions (0-224), supports neighbor navigation
 - **Offset**: Direction vectors for neighbor calculations
 
+### Shared Neural Network Utilities (`src/nn/`)
+- **`encode_board()`**: Encodes board as 2-channel `PositionMap` (own stones, opponent stones)
+- **`select_best_position()`**: Argmax over empty positions with reservoir sampling for ties
+- **`he_std()`**: He initialization standard deviation
+- **`relu_inplace()`**: ReLU activation in-place
+
 ### Strategy
 Strategies implement the `Strategy` trait. Evolvable strategies additionally implement `EvolvableStrategy` with gene manipulation methods.
 
-- **Conv strategies (ConvTiny, ConvSmall)**: CNN-based policy networks with 3×3 kernels
+- **Conv strategies (`ConvTiny`, `ConvSmall`)**: CNN-based policy networks with 3×3 kernels in `src/conv/`
+- **Cluster strategies (`ClusterTiny`, `ClusterSmall`)**: D8-equivariant polynomial feature networks in `src/cluster/`
 - **InteractiveStrategy**: TUI-based human input, generic over `Backend` for testability
 
 Move selection for conv strategies:
@@ -37,6 +44,21 @@ Move selection for conv strategies:
 3. Forward pass through CNN layers
 4. Select position with highest policy output (reservoir sampling for ties)
 5. Apply inverse transform to get original coordinates
+
+Move selection for cluster strategies:
+1. Encode board as 2-channel tensor (own stones, opponent stones)
+2. Forward pass through cluster layers (no D8 augmentation — features are inherently D8-equivariant)
+3. Select position with highest policy output (reservoir sampling for ties)
+
+### Cluster Architecture
+Cluster layers replace linear 3×3 convolution with **D8-equivariant polynomial features** — sums of products of neighbor values grouped by geometric equivalence classes. This detects topological shapes (bridges, wedges, T-shapes) that linear kernels cannot express in a single layer.
+
+Each position's 8 neighbors are indexed clockwise (N, NE, E, SE, S, SW, W, NW). The 9 features (orders 0-2) are:
+- **Order 0**: Center value
+- **Order 1**: Ortho sum, Diag sum
+- **Order 2**: Wedge-45, Ortho-90, Wedge-135, Ortho-180, Diag-90, Diag-180
+
+**F-truncation**: Features are ordered by polynomial order. `ClusterParams<IN_C, OUT_C, F>` stores only the first F features per channel. Spatial layers use F=9 (all features), the last layer uses F=1 (pointwise — only the center value).
 
 ### Game
 The `Game` enum represents Gomoku rule variants using `enum_dispatch`:
@@ -63,7 +85,7 @@ The `Evolver` orchestrates the genetic algorithm. Call `evolve(strategies, rng, 
 
 **Subcommands:** `evolve`, `play`, `interactive`
 
-The `evolve` command has strategy-type subcommands: `conv-tiny`, `conv-small`.
+The `evolve` command has strategy-type subcommands: `conv-tiny`, `conv-small`, `cluster-tiny`, `cluster-small`.
 
 ```bash
 # Evolve ConvTiny CNN strategies
@@ -71,6 +93,12 @@ cargo run --release -- evolve conv-tiny -p 16 -o tmp/output -g 10 --seed 42
 
 # Evolve ConvSmall CNN strategies
 cargo run --release -- evolve conv-small -p 8 -o tmp/output -g 20 --seed 42
+
+# Evolve ClusterTiny strategies
+cargo run --release -- evolve cluster-tiny -p 16 -o tmp/output -g 10 --seed 42
+
+# Evolve ClusterSmall strategies
+cargo run --release -- evolve cluster-small -p 8 -o tmp/output -g 20 --seed 42
 
 # Evolve with checkpoints every 5 generations
 cargo run --release -- evolve conv-small -p 8 -o tmp/output -g 20 --checkpoint-every 5 --seed 42
@@ -170,8 +198,8 @@ cargo flamegraph --release -o tmp/flamegraph.svg -- evolve conv-small -p 4 -o tm
 
 **Key optimization insights:**
 
-The conv layers gather zero-padded neighborhoods into a workspace buffer (per-position layout), then compute dot products against transposed weights (`[IN_C * K * K][OUT_C]` layout). The workspace eliminates bounds checks from the hot convolution loop.
+Both conv and cluster layers use a two-phase workspace pattern: gather input data into a contiguous buffer (per-position layout), then compute dot products against transposed weights (`[STRIDE][OUT_C]` layout). The workspace eliminates bounds checks from the hot dot-product loop. For conv, the stride is `IN_C * K * K`; for cluster, it is `IN_C * F`.
 
-**LLVM alias analysis and `&self`:** Hot compute functions must NOT take `&self`. LLVM treats pointers loaded from a struct (e.g., `self.weights.ptr`) as "MayAlias" with fresh heap allocations (like the output buffer), which blocks auto-vectorization. The fix is to extract `&[f32]` slices in the caller and pass them as separate function parameters — LLVM's alias analysis can prove that function-parameter pointers don't alias with in-function allocations. See `ConvParams::conv2d` (extracts slices) calling `ConvParams::conv2d_from_workspace` (associated function, no `&self`).
+**LLVM alias analysis and `&self`:** Hot compute functions must NOT take `&self`. LLVM treats pointers loaded from a struct (e.g., `self.weights.ptr`) as "MayAlias" with fresh heap allocations (like the output buffer), which blocks auto-vectorization. The fix is to extract `&[f32]` slices in the caller and pass them as separate function parameters — LLVM's alias analysis can prove that function-parameter pointers don't alias with in-function allocations. See `ConvParams::conv2d_from_workspace` and `ClusterParams::cluster2d_from_workspace` (associated functions, no `&self`).
 
-**`assert!` for slice lengths in accessors:** `ConvParams::weights()` and `ConvParams::bias()` assert the Vec length equals the expected compile-time constant (e.g., `assert!(self.weights.len() == Self::EXPECTED_WEIGHTS)`). This tells LLVM the exact slice length, enabling it to eliminate bounds checks and fully unroll/vectorize loops that index into these slices.
+**`assert!` for slice lengths in accessors:** `ConvParams::weights()` / `ClusterParams::weights()` and their `bias()` methods assert the Vec length equals the expected compile-time constant (e.g., `assert!(self.weights.len() == Self::EXPECTED_WEIGHTS)`). This tells LLVM the exact slice length, enabling it to eliminate bounds checks and fully unroll/vectorize loops that index into these slices.

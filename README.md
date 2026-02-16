@@ -1,22 +1,20 @@
 # Gomoku
 
-An evolutionary genetic algorithm tool that optimizes CNN-based strategies for playing Gomoku (five in a row).
+An evolutionary genetic algorithm tool that optimizes neural network strategies for playing Gomoku (five in a row).
 
 ## Overview
 
-This tool uses genetic algorithms to evolve AI strategies for the classic board game Gomoku. Strategies are convolutional neural networks (CNNs) that evaluate board positions and select moves.
+This tool uses genetic algorithms to evolve AI strategies for the classic board game Gomoku. Two strategy families are available: convolutional (CNN-based) and cluster (D8-equivariant polynomial features).
 
 ### Strategy Types
 
-- **ConvTiny**: CNN with 3x3 kernels, 32 channels (~10K parameters)
-- **ConvSmall**: CNN with 3x3 kernels, 64 channels (~112K parameters)
+**Conv strategies** use standard 3x3 convolutions with random D8 data augmentation:
+- **ConvTiny**: 32 channels, 2 layers (~10K parameters)
+- **ConvSmall**: 64 channels, 4 layers (~112K parameters)
 
-Move selection:
-1. Encode board as 2-channel tensor (own stones, opponent stones)
-2. Apply random D8 symmetry transform for data augmentation
-3. Forward pass through CNN layers
-4. Select position with highest policy output (reservoir sampling for ties)
-5. Apply inverse transform to get original coordinates
+**Cluster strategies** use D8-equivariant polynomial features (sums of products of neighbor values grouped by geometric equivalence classes). Features are inherently D8-invariant, so no runtime augmentation is needed:
+- **ClusterTiny**: 32 channels, 2 layers (~10K parameters)
+- **ClusterSmall**: 64 channels, 4 layers (~112K parameters)
 
 ### Evolution Parameters
 
@@ -44,6 +42,12 @@ cargo run --release -- evolve conv-tiny -p 16 -o tmp/output -g 10 --seed 42
 
 # Evolve ConvSmall CNN strategies
 cargo run --release -- evolve conv-small -p 8 -o tmp/output -g 20 --seed 42
+
+# Evolve ClusterTiny strategies
+cargo run --release -- evolve cluster-tiny -p 16 -o tmp/output -g 10 --seed 42
+
+# Evolve ClusterSmall strategies
+cargo run --release -- evolve cluster-small -p 8 -o tmp/output -g 20 --seed 42
 
 # Continue evolving from saved strategies
 cargo run --release -- evolve conv-small -i tmp/output -o tmp/output2 -g 50
