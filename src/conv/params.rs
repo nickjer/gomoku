@@ -5,7 +5,7 @@ use crate::evolution::crossover::uniform_crossover;
 use crate::evolution::mutation::gaussian_mutate;
 use crate::offset::Offset;
 use crate::position_id::PositionId;
-use crate::position_map::{PositionMap, PositionMapView, PositionMapViewMut};
+use crate::position_map::{PositionMap, PositionMapView};
 
 /// A single convolutional layer's parameters (weights + bias).
 ///
@@ -93,25 +93,11 @@ impl<const IN_C: usize, const OUT_C: usize, const K: usize> ConvParams<IN_C, OUT
     ///
     /// All dimensions (`IN_C`, `OUT_C`, `K`) are encoded in `Self`, ensuring separate
     /// monomorphizations for each layer configuration.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the workspace is too small.
     #[must_use]
-    pub fn conv2d(
-        &self,
-        input: PositionMapView<'_, f32>,
-        workspace: &mut [f32],
-    ) -> PositionMap<f32> {
-        assert!(
-            workspace.len() >= Self::STRIDE * PositionId::COUNT,
-            "workspace too small: expected at least {}, got {}",
-            Self::STRIDE * PositionId::COUNT,
-            workspace.len()
-        );
-
-        Self::gather_workspace(input, workspace);
-        Self::conv2d_from_workspace(self.weights(), self.bias(), workspace)
+    pub fn conv2d(&self, input: PositionMapView<'_, f32>) -> PositionMap<f32> {
+        let mut workspace = PositionMap::new(0.0f32, Self::STRIDE);
+        Self::gather_workspace(input, &mut workspace);
+        Self::conv2d_from_workspace(self.weights(), self.bias(), workspace.as_view())
     }
 
     /// Performs uniform crossover with another set of parameters.
@@ -136,15 +122,11 @@ impl<const IN_C: usize, const OUT_C: usize, const K: usize> ConvParams<IN_C, OUT
     ///
     /// For each board position, collects the K×K neighborhood across all input channels
     /// into a contiguous slice. Out-of-bounds positions are zero-padded.
-    ///
-    /// The workspace stride must equal `Self::STRIDE` (i.e., `IN_C * K * K`).
-    fn gather_workspace(input: PositionMapView<'_, f32>, workspace: &mut [f32]) {
-        let mut workspace = PositionMapViewMut::new(workspace, Self::STRIDE);
+    fn gather_workspace(input: PositionMapView<'_, f32>, workspace: &mut PositionMap<f32>) {
         let pad = isize::try_from(K / 2).expect("kernel size too large");
 
         for pos in PositionId::iter() {
             let padded_input = workspace.get_mut(pos);
-            padded_input.fill(0.0);
 
             for kr in 0..K {
                 for kc in 0..K {
@@ -170,8 +152,11 @@ impl<const IN_C: usize, const OUT_C: usize, const K: usize> ConvParams<IN_C, OUT
     /// are used: the stride is computed as `IN_C * K * K`, producing distinct
     /// monomorphizations per layer configuration.
     #[must_use]
-    fn conv2d_from_workspace(weights: &[f32], bias: &[f32], workspace: &[f32]) -> PositionMap<f32> {
-        let workspace = PositionMapView::new(workspace, Self::STRIDE);
+    fn conv2d_from_workspace(
+        weights: &[f32],
+        bias: &[f32],
+        workspace: PositionMapView<'_, f32>,
+    ) -> PositionMap<f32> {
         let mut output = PositionMap::new(0.0, OUT_C);
 
         for pos in PositionId::iter() {
@@ -210,14 +195,12 @@ mod tests {
         PositionId::from_position(Position::new(row, col))
     }
 
-    /// Helper to run conv2d with automatic workspace allocation.
+    /// Helper to run conv2d.
     fn conv<const IN_C: usize, const OUT_C: usize, const K: usize>(
         input: PositionMapView<'_, f32>,
         params: &ConvParams<IN_C, OUT_C, K>,
     ) -> PositionMap<f32> {
-        let workspace_size = PositionId::COUNT * ConvParams::<IN_C, OUT_C, K>::STRIDE;
-        let mut workspace = vec![0.0f32; workspace_size];
-        params.conv2d(input, &mut workspace)
+        params.conv2d(input)
     }
 
     /// Creates input with a single non-zero value at the given position in channel 0.
@@ -573,20 +556,17 @@ mod tests {
         }
 
         #[test]
-        fn workspace_reuse_does_not_leak_state() {
-            let workspace_size = PositionId::COUNT * 2 * 3 * 3;
-            let mut workspace = vec![99.0f32; workspace_size];
-
+        fn successive_calls_produce_independent_results() {
             let input1 = single_value_input(2, PositionId::center(), 5.0);
             let mut weights = vec![0.0f32; 1 * 2 * 3 * 3];
             weights[4] = 1.0;
             let bias = vec![0.0];
             let params = ConvParams::<2, 1, 3>::new(weights, bias);
 
-            let output1 = params.conv2d(input1.as_view(), &mut workspace);
+            let output1 = params.conv2d(input1.as_view());
 
             let input2 = PositionMap::new(0.0f32, 2);
-            let output2 = params.conv2d(input2.as_view(), &mut workspace);
+            let output2 = params.conv2d(input2.as_view());
 
             assert_eq!(output1.get(PositionId::center()), &[5.0]);
             assert_eq!(output2.get(PositionId::center()), &[0.0]);

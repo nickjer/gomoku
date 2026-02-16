@@ -69,10 +69,7 @@ impl<T> PositionMap<T> {
     /// Returns a borrowed view of this map.
     #[must_use]
     pub fn as_view(&self) -> PositionMapView<'_, T> {
-        PositionMapView {
-            data: &self.data,
-            stride: self.stride,
-        }
+        PositionMapView::new(&self.data, self.stride)
     }
 }
 
@@ -129,55 +126,6 @@ impl<'a, T> PositionMapView<'a, T> {
             .checked_mul(self.stride)
             .expect("PositionMapView::get: offset overflow");
         &self.data[start..start + self.stride]
-    }
-}
-
-// ── PositionMapViewMut ────────────────────────────────────────────────
-
-/// A mutable borrowed view of position-indexed data with a runtime stride.
-///
-/// Each position holds `stride` contiguous elements. Use `get`/`get_mut` to access
-/// `&[T]`/`&mut [T]` per position and `stride()` to query the stride.
-#[derive(Debug)]
-pub struct PositionMapViewMut<'a, T> {
-    data: &'a mut [T],
-    stride: usize,
-}
-
-impl<'a, T> PositionMapViewMut<'a, T> {
-    /// Wraps a mutable slice with the given stride.
-    ///
-    /// Takes the first `PositionId::COUNT * stride` elements from the slice.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `data.len() < PositionId::COUNT * stride` or on overflow.
-    #[must_use]
-    pub fn new(data: &'a mut [T], stride: usize) -> Self {
-        let required = PositionId::COUNT
-            .checked_mul(stride)
-            .expect("PositionMapViewMut::new: stride overflow");
-        assert!(
-            data.len() >= required,
-            "PositionMapViewMut requires at least {required} elements (stride={stride}), got {}",
-            data.len(),
-        );
-        Self {
-            data: &mut data[..required],
-            stride,
-        }
-    }
-
-    /// Returns a mutable reference to the elements at the given position.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `position_id` is out of bounds or on offset overflow.
-    pub fn get_mut(&mut self, position_id: PositionId) -> &mut [T] {
-        let start = usize::from(position_id)
-            .checked_mul(self.stride)
-            .expect("PositionMapViewMut::get_mut: offset overflow");
-        &mut self.data[start..start + self.stride]
     }
 }
 
@@ -271,25 +219,6 @@ mod tests {
         assert_eq!(slice.get(pos(0, 0)), &[0]);
     }
 
-    // ── PositionMapViewMut stride=1 tests ───────────────────────────────
-
-    #[test]
-    fn stride_slice_mut_allows_mutation() {
-        let mut data = vec![0i32; PositionId::COUNT];
-        {
-            let mut slice = PositionMapViewMut::new(&mut data, 1);
-            slice.get_mut(pos(5, 5))[0] = 42;
-        }
-        assert_eq!(data[5 * 15 + 5], 42);
-    }
-
-    #[test]
-    #[should_panic(expected = "PositionMapViewMut requires at least")]
-    fn stride_slice_mut_panics_on_too_small_data() {
-        let mut data = vec![0i32; 100];
-        let _ = PositionMapViewMut::new(&mut data, 1);
-    }
-
     // ── PositionMapView stride=2 tests ─────────────────────────────────
 
     #[test]
@@ -307,28 +236,5 @@ mod tests {
     fn stride_slice_stride2_panics_on_too_small_data() {
         let data = vec![0.0f32; 100];
         let _ = PositionMapView::new(&data, 2);
-    }
-
-    // ── PositionMapViewMut stride=2 tests ───────────────────────────────
-
-    #[test]
-    fn stride_slice_mut_stride2_allows_mutation() {
-        let mut data = vec![0.0f32; PositionId::COUNT * 2];
-        {
-            let mut slice = PositionMapViewMut::new(&mut data, 2);
-            let channels = slice.get_mut(pos(5, 5));
-            channels[0] = 3.0;
-            channels[1] = 4.0;
-        }
-        let idx = (5 * 15 + 5) * 2;
-        assert_eq!(data[idx], 3.0);
-        assert_eq!(data[idx + 1], 4.0);
-    }
-
-    #[test]
-    #[should_panic(expected = "PositionMapViewMut requires at least")]
-    fn stride_slice_mut_stride2_panics_on_too_small_data() {
-        let mut data = vec![0.0f32; 100];
-        let _ = PositionMapViewMut::new(&mut data, 2);
     }
 }

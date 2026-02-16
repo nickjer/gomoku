@@ -6,12 +6,10 @@ use crate::position_map::{PositionMap, PositionMapView};
 use crate::stone::Stone;
 use crate::strategy::{EvolvableStrategy, Strategy};
 
-use super::encoding::{INPUT_CHANNELS, encode_board};
+use super::encoding::encode_board;
 use super::select::select_best_position;
 use super::symmetry::D8Transform;
 use super::weights::ConvWeights;
-
-use std::cmp::max;
 
 /// A convolutional neural network strategy for Gomoku.
 ///
@@ -40,25 +38,18 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> ConvStrateg
     /// Input: encoding with `INPUT_CHANNELS` channels per position.
     /// Output: [`PositionMap<f32>`] with policy logits for each position.
     fn forward(&self, input: PositionMapView<'_, f32>) -> PositionMap<f32> {
-        // Allocate workspace (reused across all layers)
-        // First layer needs INPUT_CHANNELS * K * K, hidden layers need C * K * K
-        let workspace_size = PositionId::COUNT * max(INPUT_CHANNELS, C) * K * K;
-        let mut workspace = vec![0.0f32; workspace_size];
-
         // First conv: INPUT_CHANNELS -> C channels
-        let mut activations = self.weights.first().conv2d(input, &mut workspace);
+        let mut activations = self.weights.first().conv2d(input);
         relu_inplace(activations.as_mut_slice());
 
         // Hidden convs: C -> C channels
         for hidden in self.weights.hidden() {
-            activations = hidden.conv2d(activations.as_view(), &mut workspace);
+            activations = hidden.conv2d(activations.as_view());
             relu_inplace(activations.as_mut_slice());
         }
 
         // Final conv: C -> 1 channel (1×1 kernel)
-        self.weights
-            .last()
-            .conv2d(activations.as_view(), &mut workspace)
+        self.weights.last().conv2d(activations.as_view())
     }
 }
 
@@ -150,6 +141,7 @@ fn transform_encoding(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::conv::encoding::INPUT_CHANNELS;
 
     // Use smaller config for faster tests: 3×3 kernel, 4 channels, 1 layer
     type TestStrategy = ConvStrategy<3, 4, 1, 0>;
