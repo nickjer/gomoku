@@ -2,7 +2,7 @@ use tracing::instrument;
 
 use crate::board::Board;
 use crate::position_id::PositionId;
-use crate::position_map::{PositionMap, PositionMapView};
+use crate::position_map::PositionMap;
 use crate::stone::Stone;
 use crate::strategy::{EvolvableStrategy, Strategy};
 
@@ -37,19 +37,19 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> ConvStrateg
     ///
     /// Input: encoding with `INPUT_CHANNELS` channels per position.
     /// Output: [`PositionMap<f32>`] with policy logits for each position.
-    fn forward(&self, input: PositionMapView<'_, f32>) -> PositionMap<f32> {
+    fn forward(&self, input: &PositionMap<f32>) -> PositionMap<f32> {
         // First conv: INPUT_CHANNELS -> C channels
         let mut activations = self.weights.first().conv2d(input);
         relu_inplace(activations.as_mut_slice());
 
         // Hidden convs: C -> C channels
         for hidden in self.weights.hidden() {
-            activations = hidden.conv2d(activations.as_view());
+            activations = hidden.conv2d(&activations);
             relu_inplace(activations.as_mut_slice());
         }
 
         // Final conv: C -> 1 channel (1×1 kernel)
-        self.weights.last().conv2d(activations.as_view())
+        self.weights.last().conv2d(&activations)
     }
 }
 
@@ -72,7 +72,7 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> Strategy
         let transformed_encoding = transform_encoding(&encoding, |pos| transform.apply(pos));
 
         // Forward pass
-        let policy = self.forward(transformed_encoding.as_view());
+        let policy = self.forward(&transformed_encoding);
 
         // Transform empty positions to transformed space
         let transformed_empty: Vec<PositionId> = board
@@ -82,7 +82,7 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> Strategy
             .collect();
 
         // Select best position in transformed space
-        let transformed_pos = select_best_position(&transformed_empty, policy.as_view(), rng);
+        let transformed_pos = select_best_position(&transformed_empty, &policy, rng);
 
         // Map selected position back to original orientation
         transform.apply_inverse(transformed_pos)
@@ -152,7 +152,7 @@ mod tests {
         let strategy = TestStrategy::random("test", &mut rng);
         let input = PositionMap::new(0.0f32, INPUT_CHANNELS);
 
-        let output = strategy.forward(input.as_view());
+        let output = strategy.forward(&input);
 
         assert_eq!(output.stride(), 1);
     }

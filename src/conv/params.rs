@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::evolution::crossover::uniform_crossover;
 use crate::evolution::mutation::gaussian_mutate;
 use crate::offset::Offset;
-use crate::position_map::{PositionMap, PositionMapView};
+use crate::position_map::PositionMap;
 
 /// A single convolutional layer's parameters (weights + bias).
 ///
@@ -93,7 +93,7 @@ impl<const IN_C: usize, const OUT_C: usize, const K: usize> ConvParams<IN_C, OUT
     /// All dimensions (`IN_C`, `OUT_C`, `K`) are encoded in `Self`, ensuring separate
     /// monomorphizations for each layer configuration.
     #[must_use]
-    pub fn conv2d(&self, input: PositionMapView<'_, f32>) -> PositionMap<f32> {
+    pub fn conv2d(&self, input: &PositionMap<f32>) -> PositionMap<f32> {
         let workspace = Self::gather_workspace(input);
         Self::conv2d_from_workspace(self.weights(), self.bias(), &workspace)
     }
@@ -120,7 +120,7 @@ impl<const IN_C: usize, const OUT_C: usize, const K: usize> ConvParams<IN_C, OUT
     ///
     /// For each board position, collects the K×K neighborhood across all input channels
     /// into a contiguous slice. Out-of-bounds positions are zero-padded.
-    fn gather_workspace(input: PositionMapView<'_, f32>) -> PositionMap<f32> {
+    fn gather_workspace(input: &PositionMap<f32>) -> PositionMap<f32> {
         let half_kernel = isize::try_from(K / 2).expect("kernel size too large");
 
         PositionMap::from_fn(0.0, Self::STRIDE, |pos, neighborhood| {
@@ -191,7 +191,7 @@ mod tests {
 
     /// Helper to run conv2d.
     fn conv<const IN_C: usize, const OUT_C: usize, const K: usize>(
-        input: PositionMapView<'_, f32>,
+        input: &PositionMap<f32>,
         params: &ConvParams<IN_C, OUT_C, K>,
     ) -> PositionMap<f32> {
         params.conv2d(input)
@@ -344,7 +344,7 @@ mod tests {
             let bias = vec![0.0f32; 4];
             let params = ConvParams::<2, 4, 3>::new(weights, bias);
 
-            let output = conv(input.as_view(), &params);
+            let output = conv(&input, &params);
 
             assert_eq!(output.stride(), 4);
         }
@@ -356,7 +356,7 @@ mod tests {
             let bias = vec![0.0f32; 1];
             let params = ConvParams::<8, 1, 1>::new(weights, bias);
 
-            let output = conv(input.as_view(), &params);
+            let output = conv(&input, &params);
 
             assert_eq!(output.stride(), 1);
         }
@@ -368,7 +368,7 @@ mod tests {
             let bias = vec![1.5, -0.5];
             let params = ConvParams::<1, 2, 3>::new(weights, bias);
 
-            let output = conv(input.as_view(), &params);
+            let output = conv(&input, &params);
 
             for pos in PositionId::iter() {
                 assert_eq!(output.get(pos), &[1.5, -0.5]);
@@ -385,7 +385,7 @@ mod tests {
             let bias = vec![0.0f32; 1];
             let params = ConvParams::<1, 1, 3>::new(weights, bias);
 
-            let output = conv(input.as_view(), &params);
+            let output = conv(&input, &params);
 
             assert_eq!(output.get(center), &[7.0]);
             assert_eq!(output.get(pos(0, 0)), &[0.0]);
@@ -401,7 +401,7 @@ mod tests {
             let bias = vec![0.0f32; 1];
             let params = ConvParams::<1, 1, 3>::new(weights, bias);
 
-            let output = conv(input.as_view(), &params);
+            let output = conv(&input, &params);
 
             let output_pos = pos(6, 6);
             assert_eq!(output.get(output_pos), &[3.0]);
@@ -420,7 +420,7 @@ mod tests {
             let bias = vec![0.0f32; 1];
             let params = ConvParams::<1, 1, 3>::new(weights, bias);
 
-            let output = conv(input.as_view(), &params);
+            let output = conv(&input, &params);
 
             assert_eq!(output.get(pos(7, 7)), &[4.0]);
             assert_eq!(output.get(pos(6, 6)), &[1.0]);
@@ -439,7 +439,7 @@ mod tests {
             let bias = vec![0.0f32; 1];
             let params = ConvParams::<2, 1, 3>::new(weights, bias);
 
-            let output = conv(input.as_view(), &params);
+            let output = conv(&input, &params);
 
             assert_eq!(output.get(center), &[5.0]);
         }
@@ -453,7 +453,7 @@ mod tests {
             let bias = vec![0.0f32; 1];
             let params = ConvParams::<1, 1, 3>::new(weights, bias);
 
-            let output = conv(input.as_view(), &params);
+            let output = conv(&input, &params);
 
             assert_eq!(output.get(corner), &[9.0]);
             assert_eq!(output.get(pos(1, 1)), &[9.0]);
@@ -472,7 +472,7 @@ mod tests {
             let bias = vec![1.0f32; 1];
             let params = ConvParams::<1, 1, 3>::new(weights, bias);
 
-            let output = conv(input.as_view(), &params);
+            let output = conv(&input, &params);
 
             assert_eq!(output.get(pos(7, 7)), &[14.0]);
             assert_eq!(output.get(pos(7, 8)), &[7.0]);
@@ -488,7 +488,7 @@ mod tests {
             let bias = vec![1.0];
             let params = ConvParams::<2, 1, 1>::new(weights, bias);
 
-            let output = conv(input.as_view(), &params);
+            let output = conv(&input, &params);
 
             assert_eq!(output.get(center), &[9.0]);
             assert_eq!(output.get(pos(0, 0)), &[1.0]);
@@ -505,7 +505,7 @@ mod tests {
             let bias = vec![0.0, 10.0];
             let params = ConvParams::<1, 2, 3>::new(weights, bias);
 
-            let output = conv(input.as_view(), &params);
+            let output = conv(&input, &params);
 
             assert_eq!(output.get(center), &[5.0, 20.0]);
         }
@@ -524,7 +524,7 @@ mod tests {
             let bias = vec![0.0, 0.0, 0.0];
             let params = ConvParams::<2, 3, 3>::new(weights, bias);
 
-            let output = conv(input.as_view(), &params);
+            let output = conv(&input, &params);
 
             assert_eq!(output.get(center), &[3.0, 2.0, 6.0]);
         }
@@ -541,7 +541,7 @@ mod tests {
             let bias = vec![0.0f32];
             let params = ConvParams::<1, 1, 3>::new(weights, bias);
 
-            let output = conv(input.as_view(), &params);
+            let output = conv(&input, &params);
 
             assert_eq!(output.get(pos(0, 0)), &[1.0]);
             assert_eq!(output.get(pos(0, 14)), &[1.0]);
@@ -557,10 +557,10 @@ mod tests {
             let bias = vec![0.0];
             let params = ConvParams::<2, 1, 3>::new(weights, bias);
 
-            let output1 = params.conv2d(input1.as_view());
+            let output1 = params.conv2d(&input1);
 
             let input2 = PositionMap::new(0.0f32, 2);
-            let output2 = params.conv2d(input2.as_view());
+            let output2 = params.conv2d(&input2);
 
             assert_eq!(output1.get(PositionId::center()), &[5.0]);
             assert_eq!(output2.get(PositionId::center()), &[0.0]);

@@ -1,5 +1,5 @@
 use crate::position_id::PositionId;
-use crate::position_map::PositionMapView;
+use crate::position_map::PositionMap;
 
 /// Selects the position with the highest policy value.
 ///
@@ -11,7 +11,7 @@ use crate::position_map::PositionMapView;
 /// Panics if `empty_positions` is empty.
 pub fn select_best_position(
     empty_positions: &[PositionId],
-    policy: PositionMapView<'_, f32>,
+    policy: &PositionMap<f32>,
     rng: &mut fastrand::Rng,
 ) -> PositionId {
     let (&first, rest) = empty_positions
@@ -65,7 +65,7 @@ mod tests {
         let policy = policy_with_values(&[(pos(0, 0), 1.0), (pos(0, 1), 5.0), (pos(0, 2), 3.0)]);
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let selected = select_best_position(&positions, policy.as_view(), &mut rng);
+        let selected = select_best_position(&positions, &policy, &mut rng);
 
         assert_eq!(selected, pos(0, 1));
     }
@@ -76,7 +76,7 @@ mod tests {
         let policy = policy_with_values(&[(pos(0, 0), -5.0), (pos(0, 1), -1.0), (pos(0, 2), -3.0)]);
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let selected = select_best_position(&positions, policy.as_view(), &mut rng);
+        let selected = select_best_position(&positions, &policy, &mut rng);
 
         assert_eq!(selected, pos(0, 1));
     }
@@ -87,7 +87,7 @@ mod tests {
         let policy = policy_with_values(&[(pos(0, 0), 5.0), (pos(0, 1), 5.0), (pos(0, 2), 1.0)]);
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let selected = select_best_position(&positions, policy.as_view(), &mut rng);
+        let selected = select_best_position(&positions, &policy, &mut rng);
 
         assert!(selected == pos(0, 0) || selected == pos(0, 1));
     }
@@ -100,7 +100,7 @@ mod tests {
         let mut counts = [0, 0];
         for seed in 0..1000 {
             let mut rng = fastrand::Rng::with_seed(seed);
-            let selected = select_best_position(&positions, policy.as_view(), &mut rng);
+            let selected = select_best_position(&positions, &policy, &mut rng);
 
             if selected == pos(0, 0) {
                 counts[0] += 1;
@@ -124,7 +124,7 @@ mod tests {
         let results: Vec<_> = (0..5)
             .map(|_| {
                 let mut rng = fastrand::Rng::with_seed(12345);
-                select_best_position(&positions, policy.as_view(), &mut rng)
+                select_best_position(&positions, &policy, &mut rng)
             })
             .collect();
 
@@ -138,7 +138,7 @@ mod tests {
         let policy = policy_with_values(&[(pos(0, 0), 100.0), (pos(0, 1), 5.0), (pos(0, 2), 3.0)]);
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let selected = select_best_position(&positions, policy.as_view(), &mut rng);
+        let selected = select_best_position(&positions, &policy, &mut rng);
 
         assert_eq!(selected, pos(0, 1));
     }
@@ -149,7 +149,7 @@ mod tests {
         let policy = policy_with_values(&[(pos(7, 7), 0.0)]);
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let selected = select_best_position(&positions, policy.as_view(), &mut rng);
+        let selected = select_best_position(&positions, &policy, &mut rng);
 
         assert_eq!(selected, pos(7, 7));
     }
@@ -161,6 +161,6 @@ mod tests {
         let policy = PositionMap::new(0.0f32, 1);
         let mut rng = fastrand::Rng::with_seed(42);
 
-        select_best_position(&positions, policy.as_view(), &mut rng);
+        select_best_position(&positions, &policy, &mut rng);
     }
 }

@@ -80,68 +80,6 @@ impl<T> PositionMap<T> {
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         &mut self.data
     }
-
-    /// Returns a borrowed view of this map.
-    #[must_use]
-    pub fn as_view(&self) -> PositionMapView<'_, T> {
-        PositionMapView::new(&self.data, self.stride)
-    }
-}
-
-impl<'a, T> From<&'a PositionMap<T>> for PositionMapView<'a, T> {
-    fn from(map: &'a PositionMap<T>) -> Self {
-        map.as_view()
-    }
-}
-
-// ── PositionMapView ───────────────────────────────────────────────────
-
-/// A borrowed view of position-indexed data with a runtime stride.
-///
-/// Each position holds `stride` contiguous elements. Use `get` to access
-/// `&[T]` per position and `stride()` to query the stride.
-#[derive(Debug, Clone, Copy)]
-pub struct PositionMapView<'a, T> {
-    data: &'a [T],
-    stride: usize,
-}
-
-impl<'a, T> PositionMapView<'a, T> {
-    /// Wraps a slice with the given stride.
-    ///
-    /// Takes the first `PositionId::COUNT * stride` elements from the slice.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `data.len() < PositionId::COUNT * stride` or on overflow.
-    #[must_use]
-    pub fn new(data: &'a [T], stride: usize) -> Self {
-        let required = PositionId::COUNT
-            .checked_mul(stride)
-            .expect("PositionMapView::new: stride overflow");
-        assert!(
-            data.len() >= required,
-            "PositionMapView requires at least {required} elements (stride={stride}), got {}",
-            data.len(),
-        );
-        Self {
-            data: &data[..required],
-            stride,
-        }
-    }
-
-    /// Returns a reference to the elements at the given position.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `position_id` is out of bounds or on offset overflow.
-    #[must_use]
-    pub fn get(&self, position_id: PositionId) -> &[T] {
-        let start = usize::from(position_id)
-            .checked_mul(self.stride)
-            .expect("PositionMapView::get: offset overflow");
-        &self.data[start..start + self.stride]
-    }
 }
 
 #[cfg(test)]
@@ -178,25 +116,6 @@ mod tests {
         let map = PositionMap::new(0i32, 3);
 
         assert_eq!(map.stride(), 3);
-    }
-
-    #[test]
-    fn stride_map_as_view_returns_view() {
-        let mut map = PositionMap::new(0.0f32, 2);
-        map.get_mut(pos(3, 4)).copy_from_slice(&[1.0, 2.0]);
-
-        let view = map.as_view();
-
-        assert_eq!(view.get(pos(3, 4)), &[1.0, 2.0]);
-        assert_eq!(view.get(pos(0, 0)), &[0.0, 0.0]);
-    }
-
-    #[test]
-    fn stride_map_from_converts_to_stride_slice() {
-        let map = PositionMap::new(0.0f32, 2);
-        let view: PositionMapView<'_, f32> = (&map).into();
-
-        assert_eq!(view.get(pos(0, 0)), &[0.0, 0.0]);
     }
 
     // ── PositionMap::from_fn tests ─────────────────────────────────────
@@ -257,59 +176,5 @@ mod tests {
         for position in PositionId::iter() {
             assert_eq!(actual.get(position), expected.get(position));
         }
-    }
-
-    // ── PositionMapView stride=1 tests ─────────────────────────────────
-
-    #[test]
-    fn stride_slice_get_returns_correct_value() {
-        let data: Vec<i32> = (0..PositionId::COUNT as i32).collect();
-        let slice = PositionMapView::new(&data, 1);
-
-        assert_eq!(slice.get(pos(0, 0)), &[0]);
-        assert_eq!(slice.get(pos(0, 1)), &[1]);
-        assert_eq!(slice.get(pos(1, 0)), &[15]);
-    }
-
-    #[test]
-    fn stride_slice_get_returns_single_element() {
-        let data = vec![0i32; PositionId::COUNT];
-        let slice = PositionMapView::new(&data, 1);
-
-        assert_eq!(slice.get(pos(0, 0)).len(), 1);
-    }
-
-    #[test]
-    #[should_panic(expected = "PositionMapView requires at least")]
-    fn stride_slice_panics_on_too_small_data() {
-        let data = vec![0i32; 100];
-        let _ = PositionMapView::new(&data, 1);
-    }
-
-    #[test]
-    fn stride_slice_accepts_oversized_data() {
-        let data = vec![0i32; PositionId::COUNT + 100];
-        let slice = PositionMapView::new(&data, 1);
-
-        assert_eq!(slice.get(pos(0, 0)), &[0]);
-    }
-
-    // ── PositionMapView stride=2 tests ─────────────────────────────────
-
-    #[test]
-    fn stride_slice_stride2_wraps_flat_data() {
-        let data: Vec<f32> = (0..PositionId::COUNT * 2).map(|idx| idx as f32).collect();
-        let slice = PositionMapView::new(&data, 2);
-
-        assert_eq!(slice.get(pos(0, 0)), &[0.0, 1.0]);
-        assert_eq!(slice.get(pos(0, 1)), &[2.0, 3.0]);
-        assert_eq!(slice.get(pos(1, 0)), &[30.0, 31.0]);
-    }
-
-    #[test]
-    #[should_panic(expected = "PositionMapView requires at least")]
-    fn stride_slice_stride2_panics_on_too_small_data() {
-        let data = vec![0.0f32; 100];
-        let _ = PositionMapView::new(&data, 2);
     }
 }
