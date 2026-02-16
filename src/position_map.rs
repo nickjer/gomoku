@@ -27,9 +27,7 @@ impl<T: Clone> PositionMap<T> {
             stride,
         }
     }
-}
 
-impl<T: Clone> PositionMap<T> {
     /// Creates a map pre-filled with `fill`, then calls `f` for each position
     /// with a mutable slice of `stride` elements for in-place modification.
     ///
