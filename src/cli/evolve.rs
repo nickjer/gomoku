@@ -8,6 +8,7 @@ use super::evolvable_strategies::{
     EvolvableStrategies, load_strategies_from_directory, save_strategies_to_directory,
 };
 use super::{create_rng, setup_logging};
+use crate::cluster::{ClusterSmall, ClusterTiny};
 use crate::conv::{ConvSmall, ConvTiny};
 use crate::evolution::crossover::Crossover;
 use crate::evolution::fitness_weight::FitnessWeight;
@@ -21,9 +22,13 @@ use crate::tournament::Swiss;
 #[derive(Debug, Subcommand)]
 pub enum EvolveCommand {
     /// Evolve `ConvTiny` strategies (CNN with 3x3 kernels, 32 channels, ~10K params)
-    ConvTiny(ConvArgs),
+    ConvTiny(EvolutionArgs),
     /// Evolve `ConvSmall` strategies (CNN with 3x3 kernels, 64 channels, ~112K params)
-    ConvSmall(ConvArgs),
+    ConvSmall(EvolutionArgs),
+    /// Evolve `ClusterTiny` strategies (cluster with 9 features, 32 channels, ~10K params)
+    ClusterTiny(EvolutionArgs),
+    /// Evolve `ClusterSmall` strategies (cluster with 9 features, 64 channels, ~112K params)
+    ClusterSmall(EvolutionArgs),
 }
 
 /// Common evolution parameters shared by all strategies.
@@ -78,9 +83,9 @@ pub struct CommonArgs {
     pub log_level: Option<String>,
 }
 
-/// Arguments for evolving convolutional strategies (`ConvTiny`, `ConvSmall`, etc.).
+/// Arguments for evolving strategies.
 #[derive(Debug, Args)]
-pub struct ConvArgs {
+pub struct EvolutionArgs {
     #[command(flatten)]
     pub common: CommonArgs,
 
@@ -98,16 +103,28 @@ pub struct ConvArgs {
 pub fn run_evolve(cmd: &EvolveCommand) -> Result<()> {
     match cmd {
         EvolveCommand::ConvTiny(args) => {
-            run_conv::<ConvTiny>(args, "ConvTiny", extract_conv_tiny, wrap_conv_tiny)
+            run_evolution::<ConvTiny>(args, "ConvTiny", extract_conv_tiny, wrap_conv_tiny)
         }
         EvolveCommand::ConvSmall(args) => {
-            run_conv::<ConvSmall>(args, "ConvSmall", extract_conv_small, wrap_conv_small)
+            run_evolution::<ConvSmall>(args, "ConvSmall", extract_conv_small, wrap_conv_small)
         }
+        EvolveCommand::ClusterTiny(args) => run_evolution::<ClusterTiny>(
+            args,
+            "ClusterTiny",
+            extract_cluster_tiny,
+            wrap_cluster_tiny,
+        ),
+        EvolveCommand::ClusterSmall(args) => run_evolution::<ClusterSmall>(
+            args,
+            "ClusterSmall",
+            extract_cluster_small,
+            wrap_cluster_small,
+        ),
     }
 }
 
-fn run_conv<S: EvolvableStrategy>(
-    args: &ConvArgs,
+fn run_evolution<S: EvolvableStrategy>(
+    args: &EvolutionArgs,
     type_name: &str,
     extract: fn(EvolvableStrategies) -> Result<Vec<S>>,
     wrap: fn(Vec<S>) -> EvolvableStrategies,
@@ -224,18 +241,28 @@ fn generate_random<S: EvolvableStrategy>(population: usize, rng: &mut fastrand::
 fn extract_conv_tiny(strategies: EvolvableStrategies) -> Result<Vec<ConvTiny>> {
     match strategies {
         EvolvableStrategies::ConvTiny { strategies } => Ok(strategies),
-        EvolvableStrategies::ConvSmall { .. } => {
-            bail!("Expected ConvTiny strategies, found different type")
-        }
+        _ => bail!("Expected ConvTiny strategies, found different type"),
     }
 }
 
 fn extract_conv_small(strategies: EvolvableStrategies) -> Result<Vec<ConvSmall>> {
     match strategies {
         EvolvableStrategies::ConvSmall { strategies } => Ok(strategies),
-        EvolvableStrategies::ConvTiny { .. } => {
-            bail!("Expected ConvSmall strategies, found different type")
-        }
+        _ => bail!("Expected ConvSmall strategies, found different type"),
+    }
+}
+
+fn extract_cluster_tiny(strategies: EvolvableStrategies) -> Result<Vec<ClusterTiny>> {
+    match strategies {
+        EvolvableStrategies::ClusterTiny { strategies } => Ok(strategies),
+        _ => bail!("Expected ClusterTiny strategies, found different type"),
+    }
+}
+
+fn extract_cluster_small(strategies: EvolvableStrategies) -> Result<Vec<ClusterSmall>> {
+    match strategies {
+        EvolvableStrategies::ClusterSmall { strategies } => Ok(strategies),
+        _ => bail!("Expected ClusterSmall strategies, found different type"),
     }
 }
 
@@ -245,4 +272,12 @@ fn wrap_conv_tiny(strategies: Vec<ConvTiny>) -> EvolvableStrategies {
 
 fn wrap_conv_small(strategies: Vec<ConvSmall>) -> EvolvableStrategies {
     EvolvableStrategies::ConvSmall { strategies }
+}
+
+fn wrap_cluster_tiny(strategies: Vec<ClusterTiny>) -> EvolvableStrategies {
+    EvolvableStrategies::ClusterTiny { strategies }
+}
+
+fn wrap_cluster_small(strategies: Vec<ClusterSmall>) -> EvolvableStrategies {
+    EvolvableStrategies::ClusterSmall { strategies }
 }

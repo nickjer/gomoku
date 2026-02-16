@@ -4,6 +4,8 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
+use crate::cluster::weights::ClusterWeights;
+use crate::cluster::{ClusterSmall, ClusterTiny};
 use crate::conv::weights::ConvWeights;
 use crate::conv::{ConvSmall, ConvTiny};
 use crate::strategy::{EvolvableStrategy, Strategy};
@@ -13,6 +15,8 @@ use crate::strategy::{EvolvableStrategy, Strategy};
 pub enum StrategyData {
     ConvTiny { weights: ConvWeights<3, 32, 2, 0> },
     ConvSmall { weights: ConvWeights<3, 64, 4, 0> },
+    ClusterTiny { weights: ClusterWeights<9, 32, 2> },
+    ClusterSmall { weights: ClusterWeights<9, 64, 4> },
 }
 
 /// A homogeneous collection of strategies that can be evolved together.
@@ -20,6 +24,8 @@ pub enum StrategyData {
 pub enum EvolvableStrategies {
     ConvTiny { strategies: Vec<ConvTiny> },
     ConvSmall { strategies: Vec<ConvSmall> },
+    ClusterTiny { strategies: Vec<ClusterTiny> },
+    ClusterSmall { strategies: Vec<ClusterSmall> },
 }
 
 /// Saves strategies to a directory as individual binary files.
@@ -39,6 +45,12 @@ pub fn save_strategies_to_directory(dir: &Path, strategies: &EvolvableStrategies
         }),
         EvolvableStrategies::ConvSmall { strategies } => save_each(dir, strategies, |weights| {
             StrategyData::ConvSmall { weights }
+        }),
+        EvolvableStrategies::ClusterTiny { strategies } => save_each(dir, strategies, |weights| {
+            StrategyData::ClusterTiny { weights }
+        }),
+        EvolvableStrategies::ClusterSmall { strategies } => save_each(dir, strategies, |weights| {
+            StrategyData::ClusterSmall { weights }
         }),
     }
 }
@@ -73,6 +85,10 @@ pub fn load_strategy_from_file(path: &Path) -> Result<Box<dyn Strategy>> {
     Ok(match data {
         StrategyData::ConvTiny { weights } => Box::new(ConvTiny::from_genes(label, weights)),
         StrategyData::ConvSmall { weights } => Box::new(ConvSmall::from_genes(label, weights)),
+        StrategyData::ClusterTiny { weights } => Box::new(ClusterTiny::from_genes(label, weights)),
+        StrategyData::ClusterSmall { weights } => {
+            Box::new(ClusterSmall::from_genes(label, weights))
+        }
     })
 }
 
@@ -135,7 +151,7 @@ fn build_strategies(loaded: Vec<(String, StrategyData)>) -> Result<EvolvableStra
                 .into_iter()
                 .map(|(label, data)| match data {
                     StrategyData::ConvTiny { weights } => ConvTiny::from_genes(label, weights),
-                    StrategyData::ConvSmall { .. } => unreachable!(),
+                    _ => unreachable!(),
                 })
                 .collect(),
         }),
@@ -144,7 +160,29 @@ fn build_strategies(loaded: Vec<(String, StrategyData)>) -> Result<EvolvableStra
                 .into_iter()
                 .map(|(label, data)| match data {
                     StrategyData::ConvSmall { weights } => ConvSmall::from_genes(label, weights),
-                    StrategyData::ConvTiny { .. } => unreachable!(),
+                    _ => unreachable!(),
+                })
+                .collect(),
+        }),
+        StrategyData::ClusterTiny { .. } => Ok(EvolvableStrategies::ClusterTiny {
+            strategies: loaded
+                .into_iter()
+                .map(|(label, data)| match data {
+                    StrategyData::ClusterTiny { weights } => {
+                        ClusterTiny::from_genes(label, weights)
+                    }
+                    _ => unreachable!(),
+                })
+                .collect(),
+        }),
+        StrategyData::ClusterSmall { .. } => Ok(EvolvableStrategies::ClusterSmall {
+            strategies: loaded
+                .into_iter()
+                .map(|(label, data)| match data {
+                    StrategyData::ClusterSmall { weights } => {
+                        ClusterSmall::from_genes(label, weights)
+                    }
+                    _ => unreachable!(),
                 })
                 .collect(),
         }),
