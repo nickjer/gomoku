@@ -120,19 +120,28 @@ impl<const IN_C: usize, const OUT_C: usize, const F: usize> ClusterParams<IN_C, 
     /// For each board position and input channel, fetches the center + 8 neighbors
     /// (zero-padded at edges), computes all 9 polynomial features, then stores
     /// the first `F` into the workspace (F-truncation).
+    ///
+    /// When `F == 1` (pointwise), only the center value is needed — neighbor
+    /// gathering and polynomial computation are skipped entirely.
     fn gather_features(input: &PositionMap<f32>) -> PositionMap<f32> {
+        if F == 1 {
+            // Pointwise: feature 0 is just the center value, no neighbors needed.
+            return PositionMap::from_fn(0.0, Self::STRIDE, |pos, workspace| {
+                workspace.copy_from_slice(input.get(pos));
+            });
+        }
         PositionMap::from_fn(0.0, Self::STRIDE, |pos, workspace| {
-            for channel in 0..IN_C {
-                let mut raw = [0.0f32; 9];
-                raw[0] = input.get(pos)[channel];
-                for (idx, &offset) in NEIGHBOR_OFFSETS.iter().enumerate() {
-                    if let Some(neighbor) = pos.offset(offset) {
-                        raw[idx + 1] = input.get(neighbor)[channel];
-                    }
+            let mut neighbors = [[0.0f32; IN_C]; 9];
+            neighbors[0].copy_from_slice(input.get(pos));
+            for (idx, offset) in NEIGHBOR_OFFSETS.iter().enumerate() {
+                if let Some(neighbor) = pos.offset(*offset) {
+                    neighbors[idx + 1].copy_from_slice(input.get(neighbor));
                 }
+            }
+            for channel in 0..IN_C {
+                let raw: [f32; 9] = std::array::from_fn(|i| neighbors[i][channel]);
                 let features = compute_features(&raw);
-                let start = channel * F;
-                workspace[start..start + F].copy_from_slice(&features[..F]);
+                workspace[channel * F..][..F].copy_from_slice(&features[..F]);
             }
         })
     }
