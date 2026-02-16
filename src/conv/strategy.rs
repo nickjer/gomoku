@@ -6,8 +6,8 @@ use crate::position_map::PositionMap;
 use crate::stone::Stone;
 use crate::strategy::{EvolvableStrategy, Strategy};
 
-use super::encoding::encode_board;
-use super::select::select_best_position;
+use crate::nn::{encode_board, relu_inplace, select_best_position};
+
 use super::symmetry::D8Transform;
 use super::weights::ConvWeights;
 
@@ -117,13 +117,6 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> EvolvableSt
     }
 }
 
-/// Applies `ReLU` activation in-place: `x = max(0, x)`.
-fn relu_inplace(data: &mut [f32]) {
-    for val in data.iter_mut() {
-        *val = val.max(0.0);
-    }
-}
-
 /// Transforms an encoding by applying a position transformation.
 ///
 /// For each position `p`, copies all channels from `encoding[p]` to `result[f(p)]`.
@@ -141,7 +134,7 @@ fn transform_encoding(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::conv::encoding::INPUT_CHANNELS;
+    use crate::nn::INPUT_CHANNELS;
 
     // Use smaller config for faster tests: 3×3 kernel, 4 channels, 1 layer
     type TestStrategy = ConvStrategy<3, 4, 1, 0>;

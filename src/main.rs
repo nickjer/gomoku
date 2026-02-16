@@ -7,6 +7,7 @@ mod evolution;
 mod game;
 mod interactive_strategy;
 mod match_result;
+mod nn;
 mod offset;
 mod outcome;
 mod position;

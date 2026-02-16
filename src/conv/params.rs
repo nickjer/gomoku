@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::evolution::crossover::uniform_crossover;
 use crate::evolution::mutation::gaussian_mutate;
+use crate::nn::he_std;
 use crate::offset::Offset;
 use crate::position_map::PositionMap;
 
@@ -169,13 +170,6 @@ impl<const IN_C: usize, const OUT_C: usize, const K: usize> ConvParams<IN_C, OUT
             }
         })
     }
-}
-
-/// Computes He initialization standard deviation: `√(2/n_in)`.
-fn he_std(n_in: usize) -> f32 {
-    // Safely downcast to u16 (valid up to 65,535), then losslessly convert to f32.
-    let n_in_u16 = u16::try_from(n_in).expect("n_in exceeds u16::MAX");
-    (2.0 / f32::from(n_in_u16)).sqrt()
 }
 
 #[cfg(test)]

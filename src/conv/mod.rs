@@ -1,6 +1,4 @@
-mod encoding;
 mod params;
-mod select;
 mod strategy;
 mod symmetry;
 pub mod weights;

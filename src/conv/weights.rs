@@ -4,7 +4,8 @@ use crate::evolution::crossover::Crossover;
 use crate::evolution::genes::EvolvableGenes;
 use crate::evolution::mutation::Mutation;
 
-use super::encoding::INPUT_CHANNELS;
+use crate::nn::INPUT_CHANNELS;
+
 use super::params::ConvParams;
 
 /// Weights for a convolutional neural network with const-generic architecture.
