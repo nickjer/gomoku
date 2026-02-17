@@ -159,14 +159,12 @@ impl<const IN_C: usize, const OUT_C: usize, const K: usize> ConvParams<IN_C, OUT
         workspace: &PositionMap<f32>,
     ) -> PositionMap<f32> {
         PositionMap::from_fn(0.0, OUT_C, |pos, output_channels| {
+            output_channels.copy_from_slice(bias);
             let neighborhood = workspace.get(pos);
             for (&input_val, weight_row) in neighborhood.iter().zip(weights.chunks_exact(OUT_C)) {
                 for (out_ch, &weight) in output_channels.iter_mut().zip(weight_row) {
                     *out_ch += input_val * weight;
                 }
-            }
-            for (out_ch, &bias_val) in output_channels.iter_mut().zip(bias) {
-                *out_ch += bias_val;
             }
         })
     }
