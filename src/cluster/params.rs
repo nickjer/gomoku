@@ -158,14 +158,14 @@ impl<const IN_C: usize, const OUT_C: usize, const F: usize> ClusterParams<IN_C, 
         workspace: &PositionMap<f32>,
     ) -> PositionMap<f32> {
         PositionMap::from_fn(0.0, OUT_C, |pos, output_channels| {
+            output_channels.copy_from_slice(bias);
             let features = workspace.get(pos);
+            assert!(features.len() == Self::STRIDE);
+
             for (&feature_val, weight_row) in features.iter().zip(weights.chunks_exact(OUT_C)) {
                 for (out_ch, &weight) in output_channels.iter_mut().zip(weight_row) {
                     *out_ch += feature_val * weight;
                 }
-            }
-            for (out_ch, &bias_val) in output_channels.iter_mut().zip(bias) {
-                *out_ch += bias_val;
             }
         })
     }
