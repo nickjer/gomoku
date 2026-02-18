@@ -2,22 +2,11 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-use serde::{Deserialize, Serialize};
 
-use crate::cluster::weights::ClusterWeights;
+use super::{StrategyData, load_strategy_data};
 use crate::cluster::{ClusterSmall, ClusterTiny};
-use crate::conv::weights::ConvWeights;
 use crate::conv::{ConvSmall, ConvTiny};
-use crate::strategy::{EvolvableStrategy, Strategy};
-
-/// Binary-serializable strategy data (weights only, label comes from filename).
-#[derive(Debug, Serialize, Deserialize)]
-pub enum StrategyData {
-    ConvTiny { weights: ConvWeights<3, 32, 2, 0> },
-    ConvSmall { weights: ConvWeights<3, 64, 4, 0> },
-    ClusterTiny { weights: ClusterWeights<9, 32, 2> },
-    ClusterSmall { weights: ClusterWeights<9, 64, 4> },
-}
+use crate::strategy::EvolvableStrategy;
 
 /// A homogeneous collection of strategies that can be evolved together.
 #[derive(Debug)]
@@ -74,24 +63,6 @@ fn save_each<S: EvolvableStrategy>(
     Ok(())
 }
 
-/// Loads a single strategy from a binary file.
-///
-/// # Errors
-///
-/// Returns an error if the file cannot be read or deserialization fails.
-pub fn load_strategy_from_file(path: &Path) -> Result<Box<dyn Strategy>> {
-    let (label, data) = load_strategy_data(path)?;
-
-    Ok(match data {
-        StrategyData::ConvTiny { weights } => Box::new(ConvTiny::from_genes(label, weights)),
-        StrategyData::ConvSmall { weights } => Box::new(ConvSmall::from_genes(label, weights)),
-        StrategyData::ClusterTiny { weights } => Box::new(ClusterTiny::from_genes(label, weights)),
-        StrategyData::ClusterSmall { weights } => {
-            Box::new(ClusterSmall::from_genes(label, weights))
-        }
-    })
-}
-
 /// Loads strategies from a directory of binary files.
 ///
 /// Reads all `.bin` files sorted by filename. Labels are derived from file paths.
@@ -118,22 +89,6 @@ pub fn load_strategies_from_directory(dir: &Path) -> Result<EvolvableStrategies>
     }
 
     build_strategies(loaded)
-}
-
-fn load_strategy_data(path: &Path) -> Result<(String, StrategyData)> {
-    let cwd = std::env::current_dir().unwrap_or_default();
-    let label = path
-        .strip_prefix(&cwd)
-        .unwrap_or(path)
-        .display()
-        .to_string();
-
-    let bytes = fs::read(path).with_context(|| format!("Failed to read: {}", path.display()))?;
-
-    let data: StrategyData = postcard::from_bytes(&bytes)
-        .with_context(|| format!("Failed to deserialize: {}", path.display()))?;
-
-    Ok((label, data))
 }
 
 fn build_strategies(loaded: Vec<(String, StrategyData)>) -> Result<EvolvableStrategies> {
@@ -192,6 +147,7 @@ fn build_strategies(loaded: Vec<(String, StrategyData)>) -> Result<EvolvableStra
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::strategy::EvolvableStrategy;
 
     fn temp_dir() -> tempfile::TempDir {
         tempfile::tempdir().unwrap()

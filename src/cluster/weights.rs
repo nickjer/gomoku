@@ -61,6 +61,33 @@ impl<const F: usize, const C: usize, const L: usize> ClusterWeights<F, C, L> {
     }
 }
 
+impl<const F: usize, const C: usize, const L: usize> std::fmt::Display for ClusterWeights<F, C, L> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(
+            formatter,
+            "ClusterWeights ({F} features, {C} channels, {L} layers)"
+        )?;
+        writeln!(formatter)?;
+        writeln!(formatter, "Layer 1 (first): {}", self.first)?;
+        for (idx, layer) in self.hidden.iter().enumerate() {
+            writeln!(formatter, "Layer {} (hidden): {layer}", idx + 2)?;
+        }
+        let last_idx = 2 + self.hidden.len();
+        writeln!(formatter, "Layer {last_idx} (last): {}", self.last)?;
+
+        let total: usize = self.first.weights().len()
+            + self.first.bias().len()
+            + self
+                .hidden
+                .iter()
+                .map(|layer| layer.weights().len() + layer.bias().len())
+                .sum::<usize>()
+            + self.last.weights().len()
+            + self.last.bias().len();
+        write!(formatter, "Total parameters: {total}")
+    }
+}
+
 impl<const F: usize, const C: usize, const L: usize> EvolvableGenes for ClusterWeights<F, C, L> {
     fn crossover(&self, other: &Self, crossover: Crossover, rng: &mut fastrand::Rng) -> Self {
         match crossover {

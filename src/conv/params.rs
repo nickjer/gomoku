@@ -170,6 +170,22 @@ impl<const IN_C: usize, const OUT_C: usize, const K: usize> ConvParams<IN_C, OUT
     }
 }
 
+impl<const IN_C: usize, const OUT_C: usize, const K: usize> std::fmt::Display
+    for ConvParams<IN_C, OUT_C, K>
+{
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::nn::format_slice_stats;
+
+        writeln!(formatter, "Conv {IN_C} -> {OUT_C}, {K}x{K}")?;
+        writeln!(
+            formatter,
+            "  Weights {}",
+            format_slice_stats(self.weights())
+        )?;
+        write!(formatter, "  Bias    {}", format_slice_stats(self.bias()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

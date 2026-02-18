@@ -8,6 +8,19 @@ use crate::offset::Offset;
 /// F=9 includes all 2nd order features.
 pub const FEATURE_COUNT: usize = 9;
 
+/// Human-readable names for each feature index.
+pub const FEATURE_NAMES: [&str; FEATURE_COUNT] = [
+    "Center",
+    "Ortho",
+    "Diag",
+    "Wedge-45",
+    "Ortho-90",
+    "Wedge-135",
+    "Ortho-180",
+    "Diag-90",
+    "Diag-180",
+];
+
 /// Offsets to the 8 neighbors, indexed clockwise from North.
 ///
 /// Even indices (0, 2, 4, 6) are orthogonal (distance 1).

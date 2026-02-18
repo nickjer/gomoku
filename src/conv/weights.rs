@@ -70,6 +70,35 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> ConvWeights
     }
 }
 
+impl<const K: usize, const C: usize, const L: usize, const R: usize> std::fmt::Display
+    for ConvWeights<K, C, L, R>
+{
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(
+            formatter,
+            "ConvWeights ({K}x{K} kernel, {C} channels, {L} layers)"
+        )?;
+        writeln!(formatter)?;
+        writeln!(formatter, "Layer 1 (first): {}", self.first)?;
+        for (idx, layer) in self.hidden.iter().enumerate() {
+            writeln!(formatter, "Layer {} (hidden): {layer}", idx + 2)?;
+        }
+        let last_idx = 2 + self.hidden.len();
+        writeln!(formatter, "Layer {last_idx} (last): {}", self.last)?;
+
+        let total: usize = self.first.weights().len()
+            + self.first.bias().len()
+            + self
+                .hidden
+                .iter()
+                .map(|layer| layer.weights().len() + layer.bias().len())
+                .sum::<usize>()
+            + self.last.weights().len()
+            + self.last.bias().len();
+        write!(formatter, "Total parameters: {total}")
+    }
+}
+
 impl<const K: usize, const C: usize, const L: usize, const R: usize> EvolvableGenes
     for ConvWeights<K, C, L, R>
 {

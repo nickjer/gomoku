@@ -3,8 +3,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Args, ValueEnum};
 
-use super::evolvable_strategies::load_strategy_from_file;
-use super::{create_rng, setup_logging};
+use super::{create_rng, load_strategy_from_file, setup_logging};
 use crate::game::{Freestyle, Play as GamePlay};
 use crate::interactive_strategy::InteractiveStrategy;
 use crate::outcome::Outcome;

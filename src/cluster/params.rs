@@ -171,6 +171,38 @@ impl<const IN_C: usize, const OUT_C: usize, const F: usize> ClusterParams<IN_C, 
     }
 }
 
+impl<const IN_C: usize, const OUT_C: usize, const F: usize> std::fmt::Display
+    for ClusterParams<IN_C, OUT_C, F>
+{
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use super::features::FEATURE_NAMES;
+        use crate::nn::format_slice_stats;
+
+        writeln!(formatter, "Cluster {IN_C} -> {OUT_C}, F={F}")?;
+
+        let weights = self.weights();
+        // Weights layout: [IN_C * F][OUT_C]. Gather per-feature stats across all
+        // input channels: feature f lives at rows ch*F + f for ch in 0..IN_C.
+        for feature_idx in 0..F {
+            let per_feature: Vec<f32> = (0..IN_C)
+                .flat_map(|ch| {
+                    let row = ch * F + feature_idx;
+                    let start = row * OUT_C;
+                    weights[start..start + OUT_C].iter().copied()
+                })
+                .collect();
+            let name = FEATURE_NAMES.get(feature_idx).unwrap_or(&"?");
+            writeln!(
+                formatter,
+                "  F{feature_idx} ({name:>9}) {}",
+                format_slice_stats(&per_feature)
+            )?;
+        }
+
+        write!(formatter, "  Bias            {}", format_slice_stats(self.bias()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

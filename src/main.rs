@@ -25,7 +25,10 @@ mod test_utils;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use crate::cli::{EvolveCommand, InteractiveArgs, PlayArgs, run_evolve, run_interactive, run_play};
+use crate::cli::{
+    EvolveCommand, InspectArgs, InteractiveArgs, PlayArgs, run_evolve, run_inspect,
+    run_interactive, run_play,
+};
 
 #[derive(Parser)]
 #[command(name = "gomoku")]
@@ -40,6 +43,8 @@ enum Commands {
     /// Evolve strategies using a genetic algorithm
     #[command(subcommand)]
     Evolve(EvolveCommand),
+    /// Print strategy summary statistics
+    Inspect(InspectArgs),
     /// Play interactively against a strategy
     Interactive(InteractiveArgs),
     /// Play a game between two strategies
@@ -51,6 +56,7 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::Evolve(ref args) => run_evolve(args),
+        Commands::Inspect(ref args) => run_inspect(args),
         Commands::Interactive(ref args) => run_interactive(args),
         Commands::Play(ref args) => run_play(args),
     }
