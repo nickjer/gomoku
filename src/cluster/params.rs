@@ -199,7 +199,11 @@ impl<const IN_C: usize, const OUT_C: usize, const F: usize> std::fmt::Display
             )?;
         }
 
-        write!(formatter, "  Bias            {}", format_slice_stats(self.bias()))
+        write!(
+            formatter,
+            "  Bias            {}",
+            format_slice_stats(self.bias())
+        )
     }
 }
 
