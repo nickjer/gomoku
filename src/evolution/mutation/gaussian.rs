@@ -5,7 +5,7 @@ use fastrand_contrib::RngExt;
 pub fn gaussian_mutate(weights: &[f32], sigma: f32, rng: &mut fastrand::Rng) -> Vec<f32> {
     weights
         .iter()
-        .map(|&weight| weight + rng.f32_normal(0.0, sigma))
+        .map(|&weight| (weight + rng.f32_normal(0.0, sigma)).clamp(-1.0, 1.0))
         .collect()
 }
 
@@ -36,7 +36,7 @@ mod tests {
 
     #[test]
     fn values_unchanged_with_zero_sigma() {
-        let weights = vec![1.0, 2.0, 3.0, 4.0];
+        let weights = vec![0.1, 0.2, 0.3, 0.4];
         let mut rng = fastrand::Rng::with_seed(42);
 
         let result = gaussian_mutate(&weights, 0.0, &mut rng);
@@ -63,6 +63,21 @@ mod tests {
 
         let mean: f32 = result.iter().sum::<f32>() / result.len() as f32;
         assert!(mean.abs() < 0.1, "mean should be close to 0, got {mean}");
+    }
+
+    #[test]
+    fn values_clamped_to_unit_range() {
+        let weights = vec![0.99, -0.99];
+        let mut rng = fastrand::Rng::with_seed(42);
+
+        let result = gaussian_mutate(&weights, 10.0, &mut rng);
+
+        for &value in &result {
+            assert!(
+                (-1.0..=1.0).contains(&value),
+                "value {value} is outside [-1, 1]"
+            );
+        }
     }
 
     #[test]
