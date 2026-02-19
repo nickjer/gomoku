@@ -3,18 +3,9 @@ use std::fmt;
 use anyhow::{Result, bail};
 
 use crate::bitboard::BitBoard;
-use crate::offset::Offset;
 use crate::outcome::Outcome;
 use crate::position_id::PositionId;
 use crate::stone::Stone;
-
-const WIN_LENGTH: usize = 5;
-const DIRECTIONS: [Offset; 4] = [
-    Offset::new(0, 1),
-    Offset::new(1, 0),
-    Offset::new(1, 1),
-    Offset::new(1, -1),
-];
 
 /// A Gomoku game board.
 #[derive(Debug, Clone)]
@@ -90,7 +81,8 @@ impl Board {
         self.bitboard_mut(stone).set(position_id);
         self.empty_position_ids.retain(|&id| id != position_id);
 
-        self.outcome = if self.check_winner(position_id, stone) {
+        let winner = self.bitboard(stone).has_five_in_a_row();
+        self.outcome = if winner {
             Some(match stone {
                 Stone::Black => Outcome::BlackWins,
                 Stone::White => Outcome::WhiteWins,
@@ -116,31 +108,6 @@ impl Board {
             Stone::Black => &mut self.black,
             Stone::White => &mut self.white,
         }
-    }
-
-    fn check_winner(&self, position_id: PositionId, stone: Stone) -> bool {
-        DIRECTIONS.iter().any(|&offset| {
-            let count = 1
-                + self.count_direction(position_id, offset, stone)
-                + self.count_direction(position_id, -offset, stone);
-            count >= WIN_LENGTH
-        })
-    }
-
-    fn count_direction(&self, start_id: PositionId, offset: Offset, stone: Stone) -> usize {
-        let bitboard = self.bitboard(stone);
-        let mut count = 0;
-        let mut current_id = start_id;
-
-        while let Some(next_id) = current_id.offset(offset) {
-            if !bitboard.is_set(next_id) {
-                break;
-            }
-            count += 1;
-            current_id = next_id;
-        }
-
-        count
     }
 
     fn stone_char(stone: Option<Stone>) -> char {
@@ -178,6 +145,7 @@ impl fmt::Display for Board {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::offset::Offset;
     use crate::position::Position;
 
     fn pos(row: usize, col: usize) -> PositionId {
