@@ -2,10 +2,10 @@ use std::fmt;
 
 use anyhow::{Result, bail};
 
+use crate::bitboard::BitBoard;
 use crate::offset::Offset;
 use crate::outcome::Outcome;
 use crate::position_id::PositionId;
-use crate::position_map::PositionMap;
 use crate::stone::Stone;
 
 const WIN_LENGTH: usize = 5;
@@ -19,7 +19,8 @@ const DIRECTIONS: [Offset; 4] = [
 /// A Gomoku game board.
 #[derive(Debug, Clone)]
 pub struct Board {
-    stones: PositionMap<Stone>,
+    black: BitBoard,
+    white: BitBoard,
     empty_position_ids: Vec<PositionId>,
     outcome: Option<Outcome>,
 }
@@ -28,15 +29,27 @@ impl Board {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            stones: PositionMap::new(Stone::Empty, 1),
+            black: BitBoard::EMPTY,
+            white: BitBoard::EMPTY,
             empty_position_ids: PositionId::iter().collect(),
             outcome: None,
         }
     }
 
     #[must_use]
-    pub fn stone(&self, position_id: PositionId) -> Stone {
-        self.stones.get(position_id)[0]
+    pub fn stone(&self, position_id: PositionId) -> Option<Stone> {
+        if self.black.is_set(position_id) {
+            Some(Stone::Black)
+        } else if self.white.is_set(position_id) {
+            Some(Stone::White)
+        } else {
+            None
+        }
+    }
+
+    #[must_use]
+    pub fn is_empty(&self, position_id: PositionId) -> bool {
+        !self.black.is_set(position_id) && !self.white.is_set(position_id)
     }
 
     #[must_use]
@@ -64,28 +77,23 @@ impl Board {
     /// # Errors
     ///
     /// Returns an error if:
-    /// - The stone is `Empty`
     /// - The game is already finished
     /// - The position is not empty
     pub fn place(&mut self, position_id: PositionId, stone: Stone) -> Result<()> {
-        if stone == Stone::Empty {
-            bail!("Cannot place empty stone");
-        }
         if self.is_finished() {
             bail!("Game is already finished");
         }
-        if self.stone(position_id) != Stone::Empty {
+        if !self.is_empty(position_id) {
             bail!("Position is not empty");
         }
 
-        self.stones.get_mut(position_id)[0] = stone;
+        self.bitboard_mut(stone).set(position_id);
         self.empty_position_ids.retain(|&id| id != position_id);
 
         self.outcome = if self.check_winner(position_id, stone) {
             Some(match stone {
                 Stone::Black => Outcome::BlackWins,
                 Stone::White => Outcome::WhiteWins,
-                Stone::Empty => unreachable!(),
             })
         } else if self.is_full() {
             Some(Outcome::Draw)
@@ -94,6 +102,20 @@ impl Board {
         };
 
         Ok(())
+    }
+
+    fn bitboard(&self, stone: Stone) -> &BitBoard {
+        match stone {
+            Stone::Black => &self.black,
+            Stone::White => &self.white,
+        }
+    }
+
+    fn bitboard_mut(&mut self, stone: Stone) -> &mut BitBoard {
+        match stone {
+            Stone::Black => &mut self.black,
+            Stone::White => &mut self.white,
+        }
     }
 
     fn check_winner(&self, position_id: PositionId, stone: Stone) -> bool {
@@ -106,11 +128,12 @@ impl Board {
     }
 
     fn count_direction(&self, start_id: PositionId, offset: Offset, stone: Stone) -> usize {
+        let bitboard = self.bitboard(stone);
         let mut count = 0;
         let mut current_id = start_id;
 
         while let Some(next_id) = current_id.offset(offset) {
-            if self.stone(next_id) != stone {
+            if !bitboard.is_set(next_id) {
                 break;
             }
             count += 1;
@@ -120,11 +143,11 @@ impl Board {
         count
     }
 
-    fn stone_char(stone: Stone) -> char {
+    fn stone_char(stone: Option<Stone>) -> char {
         match stone {
-            Stone::Black => 'X',
-            Stone::White => 'O',
-            Stone::Empty => '·',
+            Some(Stone::Black) => 'X',
+            Some(Stone::White) => 'O',
+            None => '·',
         }
     }
 }
@@ -178,10 +201,17 @@ mod tests {
     }
 
     #[test]
-    fn stone_returns_empty_initially() {
+    fn stone_returns_none_initially() {
         let board = Board::new();
 
-        assert_eq!(board.stone(pos(0, 0)), Stone::Empty);
+        assert_eq!(board.stone(pos(0, 0)), None);
+    }
+
+    #[test]
+    fn is_empty_returns_true_initially() {
+        let board = Board::new();
+
+        assert!(board.is_empty(pos(0, 0)));
     }
 
     #[test]
@@ -190,7 +220,8 @@ mod tests {
         let corner = pos(0, 0);
         board.place(corner, Stone::Black).unwrap();
 
-        assert_eq!(board.stone(corner), Stone::Black);
+        assert_eq!(board.stone(corner), Some(Stone::Black));
+        assert!(!board.is_empty(corner));
     }
 
     #[test]
@@ -300,14 +331,6 @@ mod tests {
         let after_win = pos(0, 5);
         let err = board.place(after_win, Stone::White).unwrap_err();
         assert_eq!(err.to_string(), "Game is already finished");
-    }
-
-    #[test]
-    fn returns_error_when_placing_empty_stone() {
-        let mut board = Board::new();
-
-        let err = board.place(pos(0, 0), Stone::Empty).unwrap_err();
-        assert_eq!(err.to_string(), "Cannot place empty stone");
     }
 
     #[test]

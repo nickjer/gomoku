@@ -12,17 +12,17 @@ pub const INPUT_CHANNELS: usize = 2;
 /// channel 0 is the current player's stones, channel 1 is the opponent's stones.
 /// Values are 1.0 (stone present) or 0.0.
 pub fn encode_board(board: &Board, current_stone: Stone) -> PositionMap<f32> {
-    debug_assert_ne!(current_stone, Stone::Empty, "current_stone cannot be Empty");
-
     let mut encoding = PositionMap::new(0.0, INPUT_CHANNELS);
 
     for pos in PositionId::iter() {
-        let stone = board.stone(pos);
-
-        if stone == current_stone {
-            encoding.get_mut(pos)[0] = 1.0;
-        } else if stone != Stone::Empty {
-            encoding.get_mut(pos)[1] = 1.0;
+        match board.stone(pos) {
+            Some(stone) if stone == current_stone => {
+                encoding.get_mut(pos)[0] = 1.0;
+            }
+            Some(_) => {
+                encoding.get_mut(pos)[1] = 1.0;
+            }
+            None => {}
         }
     }
 

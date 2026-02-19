@@ -76,7 +76,7 @@ impl<B: Backend> InteractiveStrategy<B> {
                         return None;
                     }
                     KeyCode::Enter | KeyCode::Char(' ') => {
-                        if state.stone(cursor) == Stone::Empty {
+                        if state.is_empty(cursor) {
                             return Some(cursor);
                         }
                     }
@@ -274,9 +274,9 @@ fn render_board(frame: &mut ratatui::Frame, area: Rect, state: &Board, cursor: P
                     let is_cursor = position_id == cursor;
 
                     let ch = match stone {
-                        Stone::Black => "X",
-                        Stone::White => "O",
-                        Stone::Empty => "·",
+                        Some(Stone::Black) => "X",
+                        Some(Stone::White) => "O",
+                        None => "·",
                     };
 
                     let style = if is_cursor {
@@ -286,9 +286,9 @@ fn render_board(frame: &mut ratatui::Frame, area: Rect, state: &Board, cursor: P
                             .add_modifier(Modifier::BOLD)
                     } else {
                         match stone {
-                            Stone::Black => Style::default().fg(Color::Cyan),
-                            Stone::White => Style::default().fg(Color::Magenta),
-                            Stone::Empty => Style::default().fg(Color::DarkGray),
+                            Some(Stone::Black) => Style::default().fg(Color::Cyan),
+                            Some(Stone::White) => Style::default().fg(Color::Magenta),
+                            None => Style::default().fg(Color::DarkGray),
                         }
                     };
 
@@ -312,7 +312,6 @@ fn render_status(frame: &mut ratatui::Frame, area: Rect, current_stone: Stone) {
     let stone_name = match current_stone {
         Stone::Black => "Black (X)",
         Stone::White => "White (O)",
-        Stone::Empty => "Unknown",
     };
     let text = format!("Your turn: {stone_name}");
     let paragraph = Paragraph::new(text).style(Style::default().fg(Color::Green));

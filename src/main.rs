@@ -1,5 +1,6 @@
 #![warn(clippy::as_conversions)]
 
+mod bitboard;
 mod board;
 mod cli;
 mod cluster;
