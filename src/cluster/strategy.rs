@@ -62,7 +62,8 @@ impl<const C: usize, const L: usize> Strategy for ClusterStrategy<C, L> {
     ) -> PositionId {
         let encoding = encode_board(board, current_stone);
         let policy = self.forward(&encoding);
-        select_best_position(board.empty_position_ids(), &policy, rng)
+        let empty = board.empty_position_ids();
+        select_best_position(&empty, &policy, rng)
     }
 
     fn label(&self) -> &str {

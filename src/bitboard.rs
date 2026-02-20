@@ -95,6 +95,11 @@ impl BitBoard {
         self.bits.set(usize::from(position_id), true);
     }
 
+    /// Clears the bit at the given position.
+    pub fn clear(&mut self, position_id: PositionId) {
+        self.bits.set(usize::from(position_id), false);
+    }
+
     /// Returns `true` if any bit is set.
     #[must_use]
     pub fn any(&self) -> bool {

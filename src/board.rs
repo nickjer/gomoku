@@ -12,7 +12,7 @@ use crate::stone::Stone;
 pub struct Board {
     black: BitBoard,
     white: BitBoard,
-    empty_position_ids: Vec<PositionId>,
+    move_count: usize,
     outcome: Option<Outcome>,
 }
 
@@ -22,7 +22,7 @@ impl Board {
         Self {
             black: BitBoard::EMPTY,
             white: BitBoard::EMPTY,
-            empty_position_ids: PositionId::iter().collect(),
+            move_count: 0,
             outcome: None,
         }
     }
@@ -49,8 +49,15 @@ impl Board {
     }
 
     #[must_use]
-    pub fn empty_position_ids(&self) -> &[PositionId] {
-        &self.empty_position_ids
+    pub fn move_count(&self) -> usize {
+        self.move_count
+    }
+
+    #[must_use]
+    pub fn empty_position_ids(&self) -> Vec<PositionId> {
+        PositionId::iter()
+            .filter(|&pos| self.is_empty(pos))
+            .collect()
     }
 
     #[must_use]
@@ -60,7 +67,7 @@ impl Board {
 
     #[must_use]
     pub fn is_full(&self) -> bool {
-        self.empty_position_ids.is_empty()
+        self.move_count == PositionId::COUNT
     }
 
     /// Places a stone at the given position.
@@ -79,7 +86,7 @@ impl Board {
         }
 
         self.bitboard_mut(stone).set(position_id);
-        self.empty_position_ids.retain(|&id| id != position_id);
+        self.move_count += 1;
 
         let winner = self.bitboard(stone).has_five_in_a_row();
         self.outcome = if winner {
@@ -96,7 +103,25 @@ impl Board {
         Ok(())
     }
 
-    fn bitboard(&self, stone: Stone) -> &BitBoard {
+    /// Undoes a previously placed stone at the given position.
+    pub fn undo(&mut self, position_id: PositionId, stone: Stone) {
+        self.bitboard_mut(stone).clear(position_id);
+        self.move_count -= 1;
+        self.outcome = None;
+    }
+
+    /// Returns `true` if placing a stone at the given position would win.
+    ///
+    /// Does not modify the board — checks a hypothetical placement using
+    /// a stack copy of the bitboard.
+    #[must_use]
+    pub fn would_win(&self, position_id: PositionId, stone: Stone) -> bool {
+        let mut bitboard = *self.bitboard(stone);
+        bitboard.set(position_id);
+        bitboard.has_five_in_a_row()
+    }
+
+    pub(crate) fn bitboard(&self, stone: Stone) -> &BitBoard {
         match stone {
             Stone::Black => &self.black,
             Stone::White => &self.white,
