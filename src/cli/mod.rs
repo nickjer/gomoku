@@ -21,6 +21,7 @@ use crate::cluster::weights::ClusterWeights;
 use crate::cluster::{ClusterSmall, ClusterTiny};
 use crate::conv::weights::ConvWeights;
 use crate::conv::{ConvSmall, ConvTiny};
+use crate::minimax::{DEFAULT_DEPTH, MinimaxStrategy};
 use crate::strategy::{EvolvableStrategy, Strategy};
 
 /// Sets up logging with the specified log level.
@@ -167,4 +168,21 @@ pub fn load_strategy_from_file(path: &Path) -> Result<Box<dyn Strategy>> {
             Box::new(ClusterSmall::from_genes(label, weights))
         }
     })
+}
+
+/// Loads a strategy from a specifier: `"minimax"` / `"minimax:DEPTH"` or a file path.
+///
+/// # Errors
+///
+/// Returns an error if the specifier is an invalid minimax depth or file loading fails.
+pub fn load_strategy(specifier: &Path) -> Result<Box<dyn Strategy>> {
+    let specifier_str = specifier.to_str().unwrap_or("");
+    if specifier_str == "minimax" {
+        return Ok(Box::new(MinimaxStrategy::new(DEFAULT_DEPTH)));
+    }
+    if let Some(depth_str) = specifier_str.strip_prefix("minimax:") {
+        let depth: u32 = depth_str.parse().context("Invalid minimax depth")?;
+        return Ok(Box::new(MinimaxStrategy::new(depth)));
+    }
+    load_strategy_from_file(specifier)
 }

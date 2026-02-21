@@ -8,7 +8,7 @@ use crate::position_id::PositionId;
 use crate::stone::Stone;
 
 /// A Gomoku game board.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Board {
     black: BitBoard,
     white: BitBoard,

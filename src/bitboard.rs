@@ -41,6 +41,10 @@ const NOT_LAST_COL: BitBoard = BitBoard::from_raw(build_exclude_columns_mask(1 <
 const NOT_LAST_2_COLS: BitBoard = BitBoard::from_raw(build_exclude_columns_mask(
     (1 << (WIDTH - 1)) | (1 << (WIDTH - 2)),
 ));
+// Shift by 3: exclude last 3 columns.
+const NOT_LAST_3_COLS: BitBoard = BitBoard::from_raw(build_exclude_columns_mask(
+    (1 << (WIDTH - 1)) | (1 << (WIDTH - 2)) | (1 << (WIDTH - 3)),
+));
 // Shift by 4: exclude last 4 columns.
 const NOT_LAST_4_COLS: BitBoard = BitBoard::from_raw(build_exclude_columns_mask(
     (1 << (WIDTH - 1)) | (1 << (WIDTH - 2)) | (1 << (WIDTH - 3)) | (1 << (WIDTH - 4)),
@@ -51,6 +55,9 @@ const NOT_LAST_4_COLS: BitBoard = BitBoard::from_raw(build_exclude_columns_mask(
 const NOT_FIRST_COL: BitBoard = BitBoard::from_raw(build_exclude_columns_mask(1));
 // Shift by 2: exclude first 2 columns.
 const NOT_FIRST_2_COLS: BitBoard = BitBoard::from_raw(build_exclude_columns_mask(1 | (1 << 1)));
+// Shift by 3: exclude first 3 columns.
+const NOT_FIRST_3_COLS: BitBoard =
+    BitBoard::from_raw(build_exclude_columns_mask(1 | (1 << 1) | (1 << 2)));
 // Shift by 4: exclude first 4 columns.
 const NOT_FIRST_4_COLS: BitBoard = BitBoard::from_raw(build_exclude_columns_mask(
     1 | (1 << 1) | (1 << 2) | (1 << 3),
@@ -106,6 +113,12 @@ impl BitBoard {
         self.bits.any()
     }
 
+    /// Returns the number of set bits.
+    #[must_use]
+    pub fn count_ones(self) -> usize {
+        self.bits.count_ones()
+    }
+
     /// Returns `true` if the bitboard contains five or more consecutive stones
     /// in any direction (horizontal, vertical, diagonal).
     #[must_use]
@@ -140,6 +153,127 @@ fn check_direction(
     fives.any()
 }
 
+// ── Pattern counting (shift-AND) ─────────────────────────────────────
+
+/// Counts of consecutive stone patterns by length and openness.
+#[derive(Debug, Default)]
+pub struct PatternCounts {
+    pub fives: usize,
+    pub open_fours: usize,
+    pub half_open_fours: usize,
+    pub open_threes: usize,
+    pub half_open_threes: usize,
+    pub open_twos: usize,
+    pub half_open_twos: usize,
+}
+
+/// Counts all consecutive stone patterns across all four directions.
+///
+/// For each direction, detects runs of exactly 2, 3, 4, and 5+ own stones
+/// and classifies them by openness (both ends empty, one end empty, or closed).
+pub fn count_all_patterns(own: BitBoard, opponent: BitBoard) -> PatternCounts {
+    let mut counts = PatternCounts::default();
+
+    // Horizontal: stride 1, col delta +1
+    count_direction_patterns(
+        own,
+        opponent,
+        1,
+        NOT_LAST_COL,
+        NOT_LAST_2_COLS,
+        NOT_LAST_3_COLS,
+        NOT_LAST_4_COLS,
+        NOT_FIRST_COL,
+        &mut counts,
+    );
+    // Vertical: stride WIDTH, col delta 0 (no wraparound possible)
+    count_direction_patterns(
+        own,
+        opponent,
+        WIDTH,
+        ALL_COLS,
+        ALL_COLS,
+        ALL_COLS,
+        ALL_COLS,
+        ALL_COLS,
+        &mut counts,
+    );
+    // Diagonal down-right: stride WIDTH+1, col delta +1
+    count_direction_patterns(
+        own,
+        opponent,
+        WIDTH + 1,
+        NOT_LAST_COL,
+        NOT_LAST_2_COLS,
+        NOT_LAST_3_COLS,
+        NOT_LAST_4_COLS,
+        NOT_FIRST_COL,
+        &mut counts,
+    );
+    // Diagonal down-left: stride WIDTH-1, col delta -1
+    count_direction_patterns(
+        own,
+        opponent,
+        WIDTH - 1,
+        NOT_FIRST_COL,
+        NOT_FIRST_2_COLS,
+        NOT_FIRST_3_COLS,
+        NOT_FIRST_4_COLS,
+        NOT_LAST_COL,
+        &mut counts,
+    );
+
+    counts
+}
+
+/// Counts patterns in a single direction using shift-AND.
+///
+/// Uses the same decomposition as `has_five_in_a_row`: consecutive runs via
+/// shift-AND, then filters by exact length and openness (empty cells at ends).
+#[allow(clippy::too_many_arguments)]
+fn count_direction_patterns(
+    own: BitBoard,
+    opponent: BitBoard,
+    stride: usize,
+    fwd1: BitBoard,
+    fwd2: BitBoard,
+    fwd3: BitBoard,
+    fwd4: BitBoard,
+    bwd1: BitBoard,
+    counts: &mut PatternCounts,
+) {
+    // Step 1: Consecutive runs (same decomposition as has_five_in_a_row)
+    let consecutive2 = own & ((own >> stride) & fwd1);
+    let consecutive3 = consecutive2 & ((own >> (2 * stride)) & fwd2);
+    let consecutive4 = consecutive2 & ((consecutive2 >> (2 * stride)) & fwd2);
+    let consecutive5 = consecutive4 & ((own >> (4 * stride)) & fwd4);
+
+    // Step 2: Run starts (position before is not our stone)
+    let not_preceded = !((own << stride) & bwd1);
+
+    // Step 3: Exact run lengths
+    let exact5 = consecutive5 & not_preceded;
+    let exact4 = (consecutive4 & !consecutive5) & not_preceded;
+    let exact3 = (consecutive3 & !consecutive4) & not_preceded;
+    let exact2 = (consecutive2 & !consecutive3) & not_preceded;
+
+    // Step 4: Openness (empty cell before/after the run)
+    let empty = !(own | opponent);
+    let open_before = (empty << stride) & bwd1;
+    let open_after_4 = (empty >> (4 * stride)) & fwd4;
+    let open_after_3 = (empty >> (3 * stride)) & fwd3;
+    let open_after_2 = (empty >> (2 * stride)) & fwd2;
+
+    // Step 5: Count patterns by length and openness
+    counts.fives += exact5.count_ones();
+    counts.open_fours += (exact4 & open_before & open_after_4).count_ones();
+    counts.half_open_fours += (exact4 & (open_before ^ open_after_4)).count_ones();
+    counts.open_threes += (exact3 & open_before & open_after_3).count_ones();
+    counts.half_open_threes += (exact3 & (open_before ^ open_after_3)).count_ones();
+    counts.open_twos += (exact2 & open_before & open_after_2).count_ones();
+    counts.half_open_twos += (exact2 & (open_before ^ open_after_2)).count_ones();
+}
+
 impl Default for BitBoard {
     fn default() -> Self {
         Self::EMPTY
@@ -164,6 +298,45 @@ impl ops::BitAnd for BitBoard {
         Self {
             bits: self.bits & rhs.bits,
         }
+    }
+}
+
+impl ops::BitOr for BitBoard {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self {
+        Self {
+            bits: self.bits | rhs.bits,
+        }
+    }
+}
+
+impl ops::BitXor for BitBoard {
+    type Output = Self;
+
+    fn bitxor(self, rhs: Self) -> Self {
+        Self {
+            bits: self.bits ^ rhs.bits,
+        }
+    }
+}
+
+impl ops::Not for BitBoard {
+    type Output = Self;
+
+    fn not(self) -> Self {
+        Self { bits: !self.bits }
+    }
+}
+
+impl ops::Shl<usize> for BitBoard {
+    type Output = Self;
+
+    fn shl(mut self, amount: usize) -> Self {
+        // bitvec's shift_right moves bits toward higher indices,
+        // matching arithmetic left-shift semantics.
+        self.bits.shift_right(amount);
+        self
     }
 }
 
@@ -354,5 +527,174 @@ mod tests {
     #[test]
     fn empty_board_has_no_five() {
         assert!(!BitBoard::EMPTY.has_five_in_a_row());
+    }
+
+    // ── New operator tests ─────────────────────────────────────────
+
+    #[test]
+    fn shl_shifts_bit_to_higher_index() {
+        let mut board = BitBoard::EMPTY;
+        board.set(pos(0, 4));
+
+        let shifted = board << 1;
+
+        assert!(shifted.is_set(pos(0, 5)));
+        assert!(!shifted.is_set(pos(0, 4)));
+    }
+
+    #[test]
+    fn bitor_combines_bits() {
+        let mut left = BitBoard::EMPTY;
+        left.set(pos(0, 0));
+        let mut right = BitBoard::EMPTY;
+        right.set(pos(0, 1));
+
+        let result = left | right;
+
+        assert!(result.is_set(pos(0, 0)));
+        assert!(result.is_set(pos(0, 1)));
+    }
+
+    #[test]
+    fn not_inverts_bits() {
+        let mut board = BitBoard::EMPTY;
+        board.set(pos(0, 0));
+
+        let inverted = !board;
+
+        assert!(!inverted.is_set(pos(0, 0)));
+        assert!(inverted.is_set(pos(0, 1)));
+    }
+
+    #[test]
+    fn bitxor_keeps_exclusive_bits() {
+        let mut left = BitBoard::EMPTY;
+        left.set(pos(0, 0));
+        left.set(pos(0, 1));
+        let mut right = BitBoard::EMPTY;
+        right.set(pos(0, 1));
+        right.set(pos(0, 2));
+
+        let result = left ^ right;
+
+        assert!(result.is_set(pos(0, 0)));
+        assert!(!result.is_set(pos(0, 1)));
+        assert!(result.is_set(pos(0, 2)));
+    }
+
+    #[test]
+    fn count_ones_counts_set_bits() {
+        let board = bitboard_from_positions(&[(0, 0), (3, 7), (14, 14)]);
+
+        assert_eq!(board.count_ones(), 3);
+    }
+
+    #[test]
+    fn count_ones_empty_board_is_zero() {
+        assert_eq!(BitBoard::EMPTY.count_ones(), 0);
+    }
+
+    // ── Pattern counting tests ─────────────────────────────────────
+
+    #[test]
+    fn empty_board_has_no_patterns() {
+        let counts = count_all_patterns(BitBoard::EMPTY, BitBoard::EMPTY);
+
+        assert_eq!(counts.fives, 0);
+        assert_eq!(counts.open_fours, 0);
+        assert_eq!(counts.half_open_fours, 0);
+        assert_eq!(counts.open_threes, 0);
+        assert_eq!(counts.half_open_threes, 0);
+        assert_eq!(counts.open_twos, 0);
+        assert_eq!(counts.half_open_twos, 0);
+    }
+
+    #[test]
+    fn five_in_a_row_counted() {
+        let own = bitboard_from_positions(&[(7, 5), (7, 6), (7, 7), (7, 8), (7, 9)]);
+        let counts = count_all_patterns(own, BitBoard::EMPTY);
+
+        assert_eq!(counts.fives, 1);
+    }
+
+    #[test]
+    fn open_four_counted() {
+        // Four in a row with empty cells on both sides
+        let own = bitboard_from_positions(&[(7, 5), (7, 6), (7, 7), (7, 8)]);
+        let counts = count_all_patterns(own, BitBoard::EMPTY);
+
+        assert_eq!(counts.open_fours, 1);
+    }
+
+    #[test]
+    fn half_open_four_with_opponent_block() {
+        // Four in a row, opponent blocks one end
+        let own = bitboard_from_positions(&[(7, 5), (7, 6), (7, 7), (7, 8)]);
+        let opponent = bitboard_from_positions(&[(7, 4)]);
+        let counts = count_all_patterns(own, opponent);
+
+        assert_eq!(counts.open_fours, 0);
+        assert_eq!(counts.half_open_fours, 1);
+    }
+
+    #[test]
+    fn open_three_counted() {
+        let own = bitboard_from_positions(&[(7, 5), (7, 6), (7, 7)]);
+        let counts = count_all_patterns(own, BitBoard::EMPTY);
+
+        assert_eq!(counts.open_threes, 1);
+    }
+
+    #[test]
+    fn open_two_counted() {
+        let own = bitboard_from_positions(&[(7, 5), (7, 6)]);
+        let counts = count_all_patterns(own, BitBoard::EMPTY);
+
+        assert_eq!(counts.open_twos, 1);
+    }
+
+    #[test]
+    fn closed_pattern_not_counted() {
+        // Three blocked on both sides
+        let own = bitboard_from_positions(&[(7, 5), (7, 6), (7, 7)]);
+        let opponent = bitboard_from_positions(&[(7, 4), (7, 8)]);
+        let counts = count_all_patterns(own, opponent);
+
+        assert_eq!(counts.open_threes, 0);
+        assert_eq!(counts.half_open_threes, 0);
+    }
+
+    #[test]
+    fn half_open_at_board_edge() {
+        // Three against left edge — edge counts as blocked
+        let own = bitboard_from_positions(&[(7, 0), (7, 1), (7, 2)]);
+        let counts = count_all_patterns(own, BitBoard::EMPTY);
+
+        assert_eq!(counts.open_threes, 0);
+        assert_eq!(counts.half_open_threes, 1);
+    }
+
+    #[test]
+    fn open_three_in_each_direction() {
+        // Horizontal
+        let horizontal = bitboard_from_positions(&[(7, 5), (7, 6), (7, 7)]);
+        let horizontal_counts = count_all_patterns(horizontal, BitBoard::EMPTY);
+
+        // Vertical
+        let vertical = bitboard_from_positions(&[(5, 7), (6, 7), (7, 7)]);
+        let vertical_counts = count_all_patterns(vertical, BitBoard::EMPTY);
+
+        // Diagonal down-right
+        let diag_right = bitboard_from_positions(&[(5, 5), (6, 6), (7, 7)]);
+        let diag_right_counts = count_all_patterns(diag_right, BitBoard::EMPTY);
+
+        // Diagonal down-left
+        let diag_left = bitboard_from_positions(&[(5, 9), (6, 8), (7, 7)]);
+        let diag_left_counts = count_all_patterns(diag_left, BitBoard::EMPTY);
+
+        assert_eq!(horizontal_counts.open_threes, 1);
+        assert_eq!(vertical_counts.open_threes, 1);
+        assert_eq!(diag_right_counts.open_threes, 1);
+        assert_eq!(diag_left_counts.open_threes, 1);
     }
 }

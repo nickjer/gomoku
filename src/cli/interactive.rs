@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Args, ValueEnum};
 
-use super::{create_rng, load_strategy_from_file, setup_logging};
+use super::{create_rng, load_strategy, setup_logging};
 use crate::game::{Freestyle, Play as GamePlay};
 use crate::interactive_strategy::InteractiveStrategy;
 use crate::outcome::Outcome;
@@ -19,7 +19,7 @@ pub enum PlayerColor {
 /// Arguments for the interactive subcommand.
 #[derive(Debug, Args)]
 pub struct InteractiveArgs {
-    /// Path to opponent strategy (.bin file).
+    /// Opponent strategy: path to .bin file, or "minimax" / "minimax:DEPTH".
     pub strategy: PathBuf,
 
     /// Which color to play as (black moves first).
@@ -44,7 +44,7 @@ pub fn run_interactive(args: &InteractiveArgs) -> Result<()> {
     setup_logging(args.log_level.as_deref())?;
 
     let mut rng = create_rng(args.seed);
-    let opponent = load_strategy_from_file(&args.strategy)?;
+    let opponent = load_strategy(&args.strategy)?;
 
     let terminal = ratatui::init();
     let human = InteractiveStrategy::new(terminal);

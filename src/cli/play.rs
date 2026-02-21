@@ -3,17 +3,17 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::Args;
 
-use super::{create_rng, load_strategy_from_file, setup_logging};
+use super::{create_rng, load_strategy, setup_logging};
 use crate::game::{Freestyle, Play as GamePlay};
 use crate::outcome::Outcome;
 
 /// Arguments for the play subcommand.
 #[derive(Debug, Args)]
 pub struct PlayArgs {
-    /// Path to black strategy (.bin file).
+    /// Black strategy: path to .bin file, or "minimax" / "minimax:DEPTH".
     pub black: PathBuf,
 
-    /// Path to white strategy (.bin file).
+    /// White strategy: path to .bin file, or "minimax" / "minimax:DEPTH".
     pub white: PathBuf,
 
     /// RNG seed for reproducibility.
@@ -35,8 +35,8 @@ pub fn run_play(args: &PlayArgs) -> Result<()> {
 
     let mut rng = create_rng(args.seed);
 
-    let black = load_strategy_from_file(&args.black)?;
-    let white = load_strategy_from_file(&args.white)?;
+    let black = load_strategy(&args.black)?;
+    let white = load_strategy(&args.white)?;
 
     let result = Freestyle.play(black.as_ref(), white.as_ref(), &mut rng);
 

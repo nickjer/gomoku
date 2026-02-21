@@ -1,8 +1,10 @@
+use derive_more::From;
+
 use crate::offset::Offset;
 use crate::position::Position;
 
 /// A board position represented as a single index (0-224).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, From)]
 pub struct PositionId {
     index: usize,
 }

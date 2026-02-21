@@ -9,6 +9,7 @@ mod evolution;
 mod game;
 mod interactive_strategy;
 mod match_result;
+mod minimax;
 mod nn;
 mod offset;
 mod outcome;

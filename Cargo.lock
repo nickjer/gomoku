@@ -570,6 +570,7 @@ dependencies = [
  "anyhow",
  "bitvec",
  "clap",
+ "derive_more",
  "enum_dispatch",
  "fastrand",
  "fastrand-contrib",
