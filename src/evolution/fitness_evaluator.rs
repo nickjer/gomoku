@@ -148,6 +148,7 @@ impl EvaluateFitness for MinimaxFitness {
 /// Enum for polymorphic fitness evaluator dispatch.
 #[enum_dispatch(EvaluateFitness)]
 #[derive(strum::Display)]
+#[allow(clippy::enum_variant_names)]
 pub enum FitnessEvaluator {
     TournamentFitness,
     ThreatDefenseFitness,

@@ -63,7 +63,15 @@ fn generate_candidates(board: &Board, stone: Stone, buf: &mut CandidateBuf) -> u
 }
 
 /// Finds the best move for `stone` using negamax with alpha-beta pruning.
-pub fn find_best_move(board: &mut Board, stone: Stone, depth: u32) -> PositionId {
+///
+/// When multiple moves share the best score, one is chosen uniformly at random
+/// via reservoir sampling.
+pub fn find_best_move(
+    board: &mut Board,
+    stone: Stone,
+    depth: u32,
+    rng: &mut fastrand::Rng,
+) -> PositionId {
     assert!(depth > 0, "find_best_move called with depth 0");
 
     let mut buf = [PositionId::default(); PositionId::COUNT];
@@ -75,7 +83,8 @@ pub fn find_best_move(board: &mut Board, stone: Stone, depth: u32) -> PositionId
     );
 
     let mut best_move = candidates[0];
-    let mut alpha = Score::MIN;
+    let mut best_score = Score::MIN;
+    let mut tie_count: u32 = 0;
     let beta = Score::MAX;
 
     for &candidate in candidates {
@@ -84,14 +93,20 @@ pub fn find_best_move(board: &mut Board, stone: Stone, depth: u32) -> PositionId
         let score = if board.is_finished() {
             Score::win_at_depth(board.move_count())
         } else {
-            -negamax(board, depth - 1, -beta, -alpha, stone.opponent())
+            -negamax(board, depth - 1, -beta, -best_score, stone.opponent())
         };
 
         board.undo(candidate, stone);
 
-        if score > alpha {
-            alpha = score;
+        if score > best_score {
+            best_score = score;
             best_move = candidate;
+            tie_count = 1;
+        } else if score == best_score {
+            tie_count += 1;
+            if rng.u32(0..tie_count) == 0 {
+                best_move = candidate;
+            }
         }
     }
 
@@ -155,8 +170,9 @@ mod tests {
     #[test]
     fn returns_center_on_empty_board() {
         let mut board = Board::new();
+        let mut rng = fastrand::Rng::with_seed(42);
 
-        let result = find_best_move(&mut board, Stone::Black, 4);
+        let result = find_best_move(&mut board, Stone::Black, 4, &mut rng);
 
         assert_eq!(result, PositionId::center());
     }
@@ -166,8 +182,9 @@ mod tests {
         let mut board = Board::new();
         place_stones(&mut board, Stone::Black, &[(7, 5), (7, 6), (7, 7), (7, 8)]);
         place_stones(&mut board, Stone::White, &[(8, 5), (8, 6), (8, 7)]);
+        let mut rng = fastrand::Rng::with_seed(42);
 
-        let result = find_best_move(&mut board, Stone::Black, 4);
+        let result = find_best_move(&mut board, Stone::Black, 4, &mut rng);
 
         assert!(
             result == pos(7, 4) || result == pos(7, 9),
@@ -180,14 +197,17 @@ mod tests {
     #[test]
     fn blocks_opponent_winning_move() {
         let mut board = Board::new();
+        // Half-open four: Black at (7,4) blocks one end, so (7,9) is the only block
         place_stones(&mut board, Stone::White, &[(7, 5), (7, 6), (7, 7), (7, 8)]);
-        place_stones(&mut board, Stone::Black, &[(8, 5), (8, 6), (8, 7)]);
+        place_stones(&mut board, Stone::Black, &[(7, 4), (8, 5), (8, 6)]);
+        let mut rng = fastrand::Rng::with_seed(42);
 
-        let result = find_best_move(&mut board, Stone::Black, 4);
+        let result = find_best_move(&mut board, Stone::Black, 4, &mut rng);
 
-        assert!(
-            result == pos(7, 4) || result == pos(7, 9),
-            "Expected blocking move at (7,4) or (7,9), got ({}, {})",
+        assert_eq!(
+            result,
+            pos(7, 9),
+            "Expected blocking move at (7,9), got ({}, {})",
             result.row(),
             result.col()
         );
@@ -198,14 +218,41 @@ mod tests {
         let mut board = Board::new();
         place_stones(&mut board, Stone::Black, &[(7, 5), (7, 6), (7, 7), (7, 8)]);
         place_stones(&mut board, Stone::White, &[(8, 5), (8, 6), (8, 7)]);
+        let mut rng = fastrand::Rng::with_seed(42);
 
-        let result = find_best_move(&mut board, Stone::Black, 4);
+        let result = find_best_move(&mut board, Stone::Black, 4, &mut rng);
 
         assert!(
             result == pos(7, 4) || result == pos(7, 9),
             "Expected immediate win, got ({}, {})",
             result.row(),
             result.col()
+        );
+    }
+
+    #[test]
+    fn equal_moves_are_selected_uniformly() {
+        // Open three: White has (7,6), (7,7), (7,8) with both ends open.
+        // Black stones are far away and symmetric, so blocking at (7,5) or
+        // (7,9) is equally good — both should appear.
+        let mut board = Board::new();
+        place_stones(&mut board, Stone::White, &[(7, 6), (7, 7), (7, 8)]);
+        place_stones(&mut board, Stone::Black, &[(2, 6), (2, 8)]);
+
+        let mut seen = std::collections::HashSet::new();
+        for seed in 0..100 {
+            let mut rng = fastrand::Rng::with_seed(seed);
+            let result = find_best_move(&mut board, Stone::Black, 2, &mut rng);
+            seen.insert(result);
+        }
+
+        assert!(
+            seen.contains(&pos(7, 5)),
+            "Expected (7,5) to appear at least once in 100 samples"
+        );
+        assert!(
+            seen.contains(&pos(7, 9)),
+            "Expected (7,9) to appear at least once in 100 samples"
         );
     }
 

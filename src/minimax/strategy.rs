@@ -26,10 +26,10 @@ impl Strategy for MinimaxStrategy {
         &self,
         current_stone: Stone,
         board: &Board,
-        _rng: &mut fastrand::Rng,
+        rng: &mut fastrand::Rng,
     ) -> PositionId {
         let mut board = *board;
-        find_best_move(&mut board, current_stone, self.depth)
+        find_best_move(&mut board, current_stone, self.depth, rng)
     }
 
     fn label(&self) -> &str {
@@ -84,13 +84,14 @@ mod tests {
     fn choose_move_blocks_opponent_threat() {
         let strategy = MinimaxStrategy::new(TEST_DEPTH);
         let mut board = Board::new();
+        // Half-open four: Black at (7,4) blocks one end, so (7,9) is the only block
         place_stones(&mut board, Stone::White, &[(7, 5), (7, 6), (7, 7), (7, 8)]);
-        place_stones(&mut board, Stone::Black, &[(8, 5), (8, 6), (8, 7)]);
+        place_stones(&mut board, Stone::Black, &[(7, 4), (8, 5), (8, 6)]);
         let mut rng = fastrand::Rng::with_seed(42);
 
         let result = strategy.choose_move(Stone::Black, &board, &mut rng);
 
-        assert!(result == pos(7, 4) || result == pos(7, 9));
+        assert_eq!(result, pos(7, 9));
     }
 
     #[test]
