@@ -1,16 +1,23 @@
 use std::ops;
 
-use bitvec::BitArr;
-use bitvec::array::BitArray;
-use bitvec::order::Lsb0;
-
 use crate::position_id::PositionId;
 
-/// Raw backing storage, sized to fit `PositionId::COUNT` bits.
-type Storage = [u64; PositionId::COUNT.div_ceil(64)];
+/// Number of `u64` words needed to store `PositionId::COUNT` bits.
+const WORD_COUNT: usize = PositionId::COUNT.div_ceil(64);
 
-/// Bit array type used internally.
-type Bits = BitArr!(for PositionId::COUNT, in u64, Lsb0);
+/// Number of valid bits in the last word (0 means the last word is fully used).
+const TAIL_BITS: usize = PositionId::COUNT % 64;
+
+/// Mask for valid bits in the last word. Prevents `Shl` from leaving dirty
+/// high bits that could leak back into valid positions on a subsequent `Shr`.
+const LAST_WORD_MASK: u64 = if TAIL_BITS == 0 {
+    u64::MAX
+} else {
+    (1u64 << TAIL_BITS) - 1
+};
+
+/// Raw backing storage, sized to fit `PositionId::COUNT` bits.
+type Storage = [u64; WORD_COUNT];
 
 const WIDTH: usize = PositionId::WIDTH;
 
@@ -67,56 +74,66 @@ const NOT_FIRST_4_COLS: BitBoard = BitBoard::from_raw(build_exclude_columns_mask
 
 /// A fixed-size bitboard for a Gomoku board.
 ///
-/// Wraps a bit array sized to `PositionId::COUNT` positions.
+/// Backed by `[u64; N]` where N is derived from `PositionId::COUNT`.
 /// Stack-allocated and `Copy`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BitBoard {
-    bits: Bits,
+    words: Storage,
 }
 
 impl BitBoard {
     /// An empty bitboard with all bits unset.
     pub const EMPTY: Self = Self {
-        bits: BitArray::ZERO,
+        words: [0; WORD_COUNT],
     };
 
-    /// Creates a bitboard from raw storage. Uses the same public-field
-    /// construction pattern as `BitArray::ZERO`.
+    /// Creates a bitboard from raw storage.
     const fn from_raw(data: Storage) -> Self {
-        Self {
-            bits: BitArray {
-                _ord: std::marker::PhantomData,
-                data,
-            },
-        }
+        Self { words: data }
     }
 
     /// Returns `true` if the bit at the given position is set.
     #[must_use]
     pub fn is_set(&self, position_id: PositionId) -> bool {
-        self.bits[usize::from(position_id)]
+        let index = usize::from(position_id);
+        (self.words[index / 64] >> (index % 64)) & 1 != 0
     }
 
     /// Sets the bit at the given position.
     pub fn set(&mut self, position_id: PositionId) {
-        self.bits.set(usize::from(position_id), true);
+        let index = usize::from(position_id);
+        self.words[index / 64] |= 1 << (index % 64);
     }
 
     /// Clears the bit at the given position.
     pub fn clear(&mut self, position_id: PositionId) {
-        self.bits.set(usize::from(position_id), false);
+        let index = usize::from(position_id);
+        self.words[index / 64] &= !(1 << (index % 64));
     }
 
     /// Returns `true` if any bit is set.
     #[must_use]
-    pub fn any(&self) -> bool {
-        self.bits.any()
+    pub fn any(self) -> bool {
+        let mut idx = 0;
+        while idx < WORD_COUNT {
+            if self.words[idx] != 0 {
+                return true;
+            }
+            idx += 1;
+        }
+        false
     }
 
     /// Returns the number of set bits.
     #[must_use]
     pub fn count_ones(self) -> usize {
-        self.bits.count_ones()
+        let mut count = 0;
+        let mut idx = 0;
+        while idx < WORD_COUNT {
+            count += usize::try_from(self.words[idx].count_ones()).expect("u32 fits in usize");
+            idx += 1;
+        }
+        count
     }
 
     /// Returns `true` if the bitboard contains five or more consecutive stones
@@ -283,11 +300,73 @@ impl Default for BitBoard {
 impl ops::Shr<usize> for BitBoard {
     type Output = Self;
 
-    fn shr(mut self, amount: usize) -> Self {
-        // bitvec uses positional naming: `shift_left` moves bits toward
-        // lower indices, which matches arithmetic right-shift semantics.
-        self.bits.shift_left(amount);
-        self
+    /// Shifts bits toward lower indices (arithmetic right-shift).
+    fn shr(self, amount: usize) -> Self {
+        if amount == 0 {
+            return self;
+        }
+        if amount >= PositionId::COUNT {
+            return Self::EMPTY;
+        }
+        let word_shift = amount / 64;
+        let bit_shift = amount % 64;
+        Self {
+            words: std::array::from_fn(|idx| {
+                let src = idx + word_shift;
+                if src >= WORD_COUNT {
+                    0
+                } else if bit_shift == 0 {
+                    self.words[src]
+                } else {
+                    let lo = self.words[src] >> bit_shift;
+                    let hi = if src + 1 < WORD_COUNT {
+                        self.words[src + 1] << (64 - bit_shift)
+                    } else {
+                        0
+                    };
+                    lo | hi
+                }
+            }),
+        }
+    }
+}
+
+impl ops::Shl<usize> for BitBoard {
+    type Output = Self;
+
+    /// Shifts bits toward higher indices (arithmetic left-shift).
+    /// Cleans unused high bits in the last word to prevent leakage.
+    fn shl(self, amount: usize) -> Self {
+        if amount == 0 {
+            return self;
+        }
+        if amount >= PositionId::COUNT {
+            return Self::EMPTY;
+        }
+        let word_shift = amount / 64;
+        let bit_shift = amount % 64;
+        let mut result = Self {
+            words: std::array::from_fn(|idx| {
+                if idx < word_shift {
+                    0
+                } else {
+                    let src = idx - word_shift;
+                    if bit_shift == 0 {
+                        self.words[src]
+                    } else {
+                        let hi = self.words[src] << bit_shift;
+                        let lo = if src > 0 {
+                            self.words[src - 1] >> (64 - bit_shift)
+                        } else {
+                            0
+                        };
+                        hi | lo
+                    }
+                }
+            }),
+        };
+        result.words[WORD_COUNT - 1] &= LAST_WORD_MASK;
+        result
     }
 }
 
@@ -296,7 +375,7 @@ impl ops::BitAnd for BitBoard {
 
     fn bitand(self, rhs: Self) -> Self {
         Self {
-            bits: self.bits & rhs.bits,
+            words: std::array::from_fn(|idx| self.words[idx] & rhs.words[idx]),
         }
     }
 }
@@ -306,7 +385,7 @@ impl ops::BitOr for BitBoard {
 
     fn bitor(self, rhs: Self) -> Self {
         Self {
-            bits: self.bits | rhs.bits,
+            words: std::array::from_fn(|idx| self.words[idx] | rhs.words[idx]),
         }
     }
 }
@@ -316,7 +395,7 @@ impl ops::BitXor for BitBoard {
 
     fn bitxor(self, rhs: Self) -> Self {
         Self {
-            bits: self.bits ^ rhs.bits,
+            words: std::array::from_fn(|idx| self.words[idx] ^ rhs.words[idx]),
         }
     }
 }
@@ -325,18 +404,9 @@ impl ops::Not for BitBoard {
     type Output = Self;
 
     fn not(self) -> Self {
-        Self { bits: !self.bits }
-    }
-}
-
-impl ops::Shl<usize> for BitBoard {
-    type Output = Self;
-
-    fn shl(mut self, amount: usize) -> Self {
-        // bitvec's shift_right moves bits toward higher indices,
-        // matching arithmetic left-shift semantics.
-        self.bits.shift_right(amount);
-        self
+        Self {
+            words: std::array::from_fn(|idx| !self.words[idx]),
+        }
     }
 }
 
