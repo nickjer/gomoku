@@ -128,10 +128,10 @@ impl EvaluateFitness for MinimaxFitness {
                 let result = self.game.play(&minimax, strategy, rng);
                 let move_count =
                     f32::from(u16::try_from(result.turn_count()).expect("turn count fits in u16"));
-                let win_bonus = if result.outcome() == Outcome::WhiteWins {
-                    1000.0
+                let score = if result.outcome() == Outcome::WhiteWins {
+                    10_000.0 - move_count
                 } else {
-                    0.0
+                    move_count
                 };
                 info!(
                     label = strategy.label(),
@@ -139,7 +139,7 @@ impl EvaluateFitness for MinimaxFitness {
                     outcome = ?result.outcome(),
                     "Minimax evaluation"
                 );
-                FitnessScore::new(move_count + win_bonus)
+                FitnessScore::new(score)
             })
             .collect()
     }
