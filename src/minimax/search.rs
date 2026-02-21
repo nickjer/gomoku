@@ -1,5 +1,6 @@
 use crate::board::Board;
 use crate::offset::Offset;
+use crate::outcome::Outcome;
 use crate::position_id::PositionId;
 use crate::position_map::PositionArray;
 use crate::stone::Stone;
@@ -13,11 +14,12 @@ type CandidateBuf = [PositionId; PositionId::COUNT];
 
 /// Generates candidate moves ordered by priority: winning, blocking, then proximity.
 ///
-/// Returns the number of candidates written to `buf`.
-fn generate_candidates(board: &Board, stone: Stone, buf: &mut CandidateBuf) -> usize {
+/// Returns `(blocking_count, total_count)` — the number of blocking moves at the
+/// front of `buf` and the total number of candidates written.
+fn generate_candidates(board: &Board, stone: Stone, buf: &mut CandidateBuf) -> (usize, usize) {
     if board.move_count() == 0 {
         buf[0] = PositionId::center();
-        return 1;
+        return (0, 1);
     }
 
     let mut nearby = PositionArray::new(false);
@@ -38,34 +40,36 @@ fn generate_candidates(board: &Board, stone: Stone, buf: &mut CandidateBuf) -> u
         }
     }
 
-    let mut blocking_end = 0;
     let mut count = 0;
-
     for (position, &is_nearby) in nearby.iter() {
         if !is_nearby {
             continue;
         }
         if board.would_win(position, stone) {
             buf[0] = position;
-            return 1;
-        } else if board.would_win(position, stone.opponent()) {
-            buf.copy_within(blocking_end..count, blocking_end + 1);
-            buf[blocking_end] = position;
+            return (0, 1);
+        }
+        buf[count] = position;
+        count += 1;
+    }
+
+    // Partition blocking moves to the front with swaps.
+    let mut blocking_end = 0;
+    for i in 0..count {
+        if board.would_win(buf[i], stone.opponent()) {
+            buf.swap(i, blocking_end);
             blocking_end += 1;
-            count += 1;
-        } else {
-            buf[count] = position;
-            count += 1;
         }
     }
 
-    count
+    (blocking_end, count)
 }
 
 /// Finds the best move for `stone` using negamax with alpha-beta pruning.
 ///
-/// When multiple moves share the best score, one is chosen uniformly at random
-/// via reservoir sampling.
+/// Candidates are shuffled before searching so that among equally-scored moves,
+/// whichever appears first after the shuffle is chosen — providing variety
+/// without the fail-soft false-tie bug that reservoir sampling would introduce.
 pub fn find_best_move(
     board: &mut Board,
     stone: Stone,
@@ -75,25 +79,30 @@ pub fn find_best_move(
     assert!(depth > 0, "find_best_move called with depth 0");
 
     let mut buf = [PositionId::default(); PositionId::COUNT];
-    let count = generate_candidates(board, stone, &mut buf);
-    let candidates = &buf[..count];
+    let (blocking_count, count) = generate_candidates(board, stone, &mut buf);
+    let candidates = &mut buf[..count];
     assert!(
         !candidates.is_empty(),
         "find_best_move called with no candidates"
     );
 
+    // Shuffle within priority tiers to preserve blocking-first move ordering
+    // while randomizing which equally-scored move is encountered first.
+    rng.shuffle(&mut candidates[..blocking_count]);
+    rng.shuffle(&mut candidates[blocking_count..]);
+
     let mut best_move = candidates[0];
     let mut best_score = Score::MIN;
-    let mut tie_count: u32 = 0;
-    let beta = Score::MAX;
 
-    for &candidate in candidates {
+    for &candidate in candidates.iter() {
         board.place(candidate, stone).expect("valid search move");
 
-        let score = if board.is_finished() {
-            Score::win_at_depth(board.move_count())
-        } else {
-            -negamax(board, depth - 1, -beta, -best_score, stone.opponent())
+        let score = match board.outcome() {
+            Some(Outcome::BlackWins | Outcome::WhiteWins) => {
+                Score::win_at_depth(board.move_count())
+            }
+            Some(Outcome::Draw) => Score::DRAW,
+            None => -negamax(board, depth - 1, Score::MIN, -best_score, stone.opponent()),
         };
 
         board.undo(candidate, stone);
@@ -101,12 +110,6 @@ pub fn find_best_move(
         if score > best_score {
             best_score = score;
             best_move = candidate;
-            tie_count = 1;
-        } else if score == best_score {
-            tie_count += 1;
-            if rng.u32(0..tie_count) == 0 {
-                best_move = candidate;
-            }
         }
     }
 
@@ -119,37 +122,34 @@ fn negamax(board: &mut Board, depth: u32, mut alpha: Score, beta: Score, stone: 
     }
 
     let mut buf = [PositionId::default(); PositionId::COUNT];
-    let count = generate_candidates(board, stone, &mut buf);
+    let (_, count) = generate_candidates(board, stone, &mut buf);
     let candidates = &buf[..count];
     if candidates.is_empty() {
         return evaluate(board, stone);
     }
 
-    let mut best_score = Score::MIN;
-
     for &candidate in candidates {
         board.place(candidate, stone).expect("valid search move");
 
-        let score = if board.is_finished() {
-            Score::win_at_depth(board.move_count())
-        } else {
-            -negamax(board, depth - 1, -beta, -alpha, stone.opponent())
+        let score = match board.outcome() {
+            Some(Outcome::BlackWins | Outcome::WhiteWins) => {
+                Score::win_at_depth(board.move_count())
+            }
+            Some(Outcome::Draw) => Score::DRAW,
+            None => -negamax(board, depth - 1, -beta, -alpha, stone.opponent()),
         };
 
         board.undo(candidate, stone);
 
-        if score > best_score {
-            best_score = score;
-            if score > alpha {
-                alpha = score;
-            }
+        if score >= beta {
+            return beta;
         }
-        if alpha >= beta {
-            break;
+        if score > alpha {
+            alpha = score;
         }
     }
 
-    best_score
+    alpha
 }
 
 #[cfg(test)]
@@ -262,7 +262,7 @@ mod tests {
         board.place(PositionId::center(), Stone::Black).unwrap();
 
         let mut buf = [PositionId::default(); PositionId::COUNT];
-        let count = generate_candidates(&board, Stone::White, &mut buf);
+        let (_, count) = generate_candidates(&board, Stone::White, &mut buf);
 
         assert!(count > 0);
         for &candidate in &buf[..count] {
@@ -284,7 +284,7 @@ mod tests {
         place_stones(&mut board, Stone::White, &[(8, 5), (8, 6)]);
 
         let mut buf = [PositionId::default(); PositionId::COUNT];
-        let count = generate_candidates(&board, Stone::Black, &mut buf);
+        let (_, count) = generate_candidates(&board, Stone::Black, &mut buf);
 
         assert_eq!(count, 1, "Should short-circuit to a single winning move");
         assert!(
@@ -300,7 +300,7 @@ mod tests {
         place_stones(&mut board, Stone::Black, &[(8, 5), (8, 6)]);
 
         let mut buf = [PositionId::default(); PositionId::COUNT];
-        let count = generate_candidates(&board, Stone::Black, &mut buf);
+        let (_, count) = generate_candidates(&board, Stone::Black, &mut buf);
         let candidates = &buf[..count];
 
         let first_regular = candidates.iter().position(|&candidate| {

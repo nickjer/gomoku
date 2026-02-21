@@ -12,8 +12,8 @@ pub struct Score(i32);
 
 impl Score {
     pub const WIN: Self = Self(1_000_000);
+    pub const DRAW: Self = Self(0);
     pub const MIN: Self = Self(-i32::MAX);
-    pub const MAX: Self = Self(i32::MAX);
 
     const OPEN_FOUR: Self = Self(100_000);
     const HALF_OPEN_FOUR: Self = Self(10_000);
