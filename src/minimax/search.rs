@@ -27,19 +27,18 @@ fn generate_candidates(board: &Board, stone: Stone, buf: &mut CandidateBuf) -> (
     let own_threats = winning_threats(*board.bitboard(stone));
     let opp_threats = winning_threats(*board.bitboard(stone.opponent()));
 
+    let occupied = *board.bitboard(Stone::Black) | *board.bitboard(Stone::White);
     let mut nearby = PositionArray::new(false);
-    for position in PositionId::iter() {
-        if !board.is_empty(position) {
-            for row_delta in -PROXIMITY_RADIUS..=PROXIMITY_RADIUS {
-                for col_delta in -PROXIMITY_RADIUS..=PROXIMITY_RADIUS {
-                    if row_delta == 0 && col_delta == 0 {
-                        continue;
-                    }
-                    if let Some(neighbor) = position.offset(Offset::new(row_delta, col_delta))
-                        && board.is_empty(neighbor)
-                    {
-                        nearby[neighbor] = true;
-                    }
+    for position in occupied.iter_set() {
+        for row_delta in -PROXIMITY_RADIUS..=PROXIMITY_RADIUS {
+            for col_delta in -PROXIMITY_RADIUS..=PROXIMITY_RADIUS {
+                if row_delta == 0 && col_delta == 0 {
+                    continue;
+                }
+                if let Some(neighbor) = position.offset(Offset::new(row_delta, col_delta))
+                    && board.is_empty(neighbor)
+                {
+                    nearby[neighbor] = true;
                 }
             }
         }

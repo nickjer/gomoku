@@ -136,6 +136,16 @@ impl BitBoard {
         count
     }
 
+    /// Returns an iterator over all positions with set bits, yielding
+    /// `PositionId`s in ascending index order. Uses `trailing_zeros` to
+    /// skip unset bits efficiently.
+    pub fn iter_set(self) -> BitBoardIter {
+        BitBoardIter {
+            words: self.words,
+            word_idx: 0,
+        }
+    }
+
     /// Returns `true` if the bitboard contains five or more consecutive stones
     /// in any direction (horizontal, vertical, diagonal).
     #[must_use]
@@ -148,6 +158,29 @@ impl BitBoard {
         || check_direction(self, WIDTH + 1, NOT_LAST_COL, NOT_LAST_2_COLS, NOT_LAST_4_COLS)
         // Diagonal down-left: stride WIDTH-1, col delta -1
         || check_direction(self, WIDTH - 1, NOT_FIRST_COL, NOT_FIRST_2_COLS, NOT_FIRST_4_COLS)
+    }
+}
+
+/// Iterator over set bit positions in a `BitBoard`.
+pub struct BitBoardIter {
+    words: Storage,
+    word_idx: usize,
+}
+
+impl Iterator for BitBoardIter {
+    type Item = PositionId;
+
+    fn next(&mut self) -> Option<PositionId> {
+        while self.word_idx < WORD_COUNT {
+            let word = self.words[self.word_idx];
+            if word != 0 {
+                let bit = word.trailing_zeros() as usize;
+                self.words[self.word_idx] = word & (word - 1); // clear lowest set bit
+                return Some(PositionId::from(self.word_idx * 64 + bit));
+            }
+            self.word_idx += 1;
+        }
+        None
     }
 }
 
@@ -841,6 +874,26 @@ mod tests {
         assert_eq!(vertical_counts.open_threes, 1);
         assert_eq!(diag_right_counts.open_threes, 1);
         assert_eq!(diag_left_counts.open_threes, 1);
+    }
+
+    // ── iter_set tests ───────────────────────────────────────────────
+
+    #[test]
+    fn iter_set_yields_set_positions_in_order() {
+        let board = bitboard_from_positions(&[(0, 0), (7, 7), (14, 14)]);
+        let positions: Vec<PositionId> = board.iter_set().collect();
+
+        assert_eq!(positions.len(), 3);
+        assert_eq!(positions[0], pos(0, 0));
+        assert_eq!(positions[1], pos(7, 7));
+        assert_eq!(positions[2], pos(14, 14));
+    }
+
+    #[test]
+    fn iter_set_empty_board_yields_nothing() {
+        let positions: Vec<PositionId> = BitBoard::EMPTY.iter_set().collect();
+
+        assert!(positions.is_empty());
     }
 
     // ── Winning threat tests ────────────────────────────────────────
