@@ -170,6 +170,81 @@ fn check_direction(
     fives.any()
 }
 
+// ── Winning threat detection (shift-AND) ─────────────────────────────
+
+/// Returns a bitboard of all positions where placing a stone would create
+/// five-in-a-row. Computed as a batch operation: for each direction, finds
+/// lines with exactly four stones and one gap, then maps each gap back to
+/// its board position.
+pub fn winning_threats(board: BitBoard) -> BitBoard {
+    // Horizontal: stride 1, col delta +1
+    threat_direction(
+        board,
+        1,
+        NOT_LAST_COL,
+        NOT_LAST_2_COLS,
+        NOT_LAST_3_COLS,
+        NOT_LAST_4_COLS,
+    )
+    // Vertical: stride WIDTH, col delta 0
+    | threat_direction(board, WIDTH, ALL_COLS, ALL_COLS, ALL_COLS, ALL_COLS)
+    // Diagonal down-right: stride WIDTH+1, col delta +1
+    | threat_direction(
+        board,
+        WIDTH + 1,
+        NOT_LAST_COL,
+        NOT_LAST_2_COLS,
+        NOT_LAST_3_COLS,
+        NOT_LAST_4_COLS,
+    )
+    // Diagonal down-left: stride WIDTH-1, col delta -1
+    | threat_direction(
+        board,
+        WIDTH - 1,
+        NOT_FIRST_COL,
+        NOT_FIRST_2_COLS,
+        NOT_FIRST_3_COLS,
+        NOT_FIRST_4_COLS,
+    )
+}
+
+/// Finds gap positions that complete a five-in-a-row in one direction.
+///
+/// For each possible alignment of 5 consecutive positions along the given
+/// stride, identifies where exactly 4 are occupied and maps the gap back
+/// to its actual board position.
+fn threat_direction(
+    board: BitBoard,
+    stride: usize,
+    fwd1: BitBoard,
+    fwd2: BitBoard,
+    fwd3: BitBoard,
+    fwd4: BitBoard,
+) -> BitBoard {
+    // Shifted views: s[k] has bit i set iff board has a stone at offset +k from i.
+    let s0 = board;
+    let s1 = (board >> stride) & fwd1;
+    let s2 = (board >> (2 * stride)) & fwd2;
+    let s3 = (board >> (3 * stride)) & fwd3;
+    let s4 = (board >> (4 * stride)) & fwd4;
+
+    // miss_at_k: four of five set, gap at offset k from the five's start.
+    let miss0 = !s0 & s1 & s2 & s3 & s4;
+    let miss1 = s0 & !s1 & s2 & s3 & s4;
+    let miss2 = s0 & s1 & !s2 & s3 & s4;
+    let miss3 = s0 & s1 & s2 & !s3 & s4;
+    // miss4 loses the fwd4 column constraint from !s4, re-apply to prevent
+    // the gap position from wrapping to the next row.
+    let miss4 = s0 & s1 & s2 & s3 & !s4 & fwd4;
+
+    // Shift each miss back to the actual gap position.
+    miss0
+        | (miss1 << stride)
+        | (miss2 << (2 * stride))
+        | (miss3 << (3 * stride))
+        | (miss4 << (4 * stride))
+}
+
 // ── Pattern counting (shift-AND) ─────────────────────────────────────
 
 /// Counts of consecutive stone patterns by length and openness.
@@ -766,5 +841,89 @@ mod tests {
         assert_eq!(vertical_counts.open_threes, 1);
         assert_eq!(diag_right_counts.open_threes, 1);
         assert_eq!(diag_left_counts.open_threes, 1);
+    }
+
+    // ── Winning threat tests ────────────────────────────────────────
+
+    #[test]
+    fn winning_threats_finds_horizontal_completion() {
+        let board = bitboard_from_positions(&[(7, 5), (7, 6), (7, 7), (7, 8)]);
+        let threats = winning_threats(board);
+
+        assert!(threats.is_set(pos(7, 4)));
+        assert!(threats.is_set(pos(7, 9)));
+    }
+
+    #[test]
+    fn winning_threats_finds_vertical_completion() {
+        let board = bitboard_from_positions(&[(3, 7), (4, 7), (5, 7), (6, 7)]);
+        let threats = winning_threats(board);
+
+        assert!(threats.is_set(pos(2, 7)));
+        assert!(threats.is_set(pos(7, 7)));
+    }
+
+    #[test]
+    fn winning_threats_finds_gap_in_middle() {
+        // X X _ X X — gap at position 2
+        let board = bitboard_from_positions(&[(7, 5), (7, 6), (7, 8), (7, 9)]);
+        let threats = winning_threats(board);
+
+        assert!(threats.is_set(pos(7, 7)));
+    }
+
+    #[test]
+    fn winning_threats_empty_for_three_in_a_row() {
+        let board = bitboard_from_positions(&[(7, 5), (7, 6), (7, 7)]);
+        let threats = winning_threats(board);
+
+        assert_eq!(threats.count_ones(), 0);
+    }
+
+    #[test]
+    fn winning_threats_at_board_edges() {
+        // Four at right edge
+        let board = bitboard_from_positions(&[(0, 11), (0, 12), (0, 13), (0, 14)]);
+        let threats = winning_threats(board);
+        assert!(threats.is_set(pos(0, 10)));
+
+        // Four at bottom edge
+        let board = bitboard_from_positions(&[(11, 0), (12, 0), (13, 0), (14, 0)]);
+        let threats = winning_threats(board);
+        assert!(threats.is_set(pos(10, 0)));
+    }
+
+    #[test]
+    fn winning_threats_agrees_with_would_win() {
+        let mut rng = fastrand::Rng::with_seed(54321);
+        for _ in 0..200 {
+            let stone_count = rng.usize(4..20);
+            let mut board = BitBoard::EMPTY;
+            while board.count_ones() < stone_count {
+                let index = rng.usize(0..PositionId::COUNT);
+                board.set(PositionId::from(index));
+            }
+
+            let threats = winning_threats(board);
+
+            for position in PositionId::iter() {
+                let mut hypothetical = board;
+                hypothetical.set(position);
+                let would_win = hypothetical.has_five_in_a_row();
+
+                if threats.is_set(position) && !board.is_set(position) {
+                    assert!(
+                        would_win,
+                        "Threat at {position:?} but placing there doesn't create five"
+                    );
+                }
+                if would_win && !board.has_five_in_a_row() && !board.is_set(position) {
+                    assert!(
+                        threats.is_set(position),
+                        "Placing at {position:?} creates five but not flagged as threat"
+                    );
+                }
+            }
+        }
     }
 }

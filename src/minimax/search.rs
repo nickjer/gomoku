@@ -1,3 +1,4 @@
+use crate::bitboard::winning_threats;
 use crate::board::Board;
 use crate::offset::Offset;
 use crate::outcome::Outcome;
@@ -22,6 +23,10 @@ fn generate_candidates(board: &Board, stone: Stone, buf: &mut CandidateBuf) -> (
         return (0, 1);
     }
 
+    // Batch-compute winning threat masks for both players.
+    let own_threats = winning_threats(*board.bitboard(stone));
+    let opp_threats = winning_threats(*board.bitboard(stone.opponent()));
+
     let mut nearby = PositionArray::new(false);
     for position in PositionId::iter() {
         if !board.is_empty(position) {
@@ -45,7 +50,7 @@ fn generate_candidates(board: &Board, stone: Stone, buf: &mut CandidateBuf) -> (
         if !is_nearby {
             continue;
         }
-        if board.would_win(position, stone) {
+        if own_threats.is_set(position) {
             buf[0] = position;
             return (0, 1);
         }
@@ -56,7 +61,7 @@ fn generate_candidates(board: &Board, stone: Stone, buf: &mut CandidateBuf) -> (
     // Partition blocking moves to the front with swaps.
     let mut blocking_end = 0;
     for i in 0..count {
-        if board.would_win(buf[i], stone.opponent()) {
+        if opp_threats.is_set(buf[i]) {
             buf.swap(i, blocking_end);
             blocking_end += 1;
         }
