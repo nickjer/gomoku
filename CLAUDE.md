@@ -78,7 +78,7 @@ The `Tournament` enum manages competition formats using `enum_dispatch`:
 ### Evolution
 The `Evolver` orchestrates the genetic algorithm. Call `evolve(strategies, rng, on_generation)` with initial strategies and a per-generation callback.
 
-- **Fitness**: Weighted combination of tournament ranking and threat defense evaluation
+- **Fitness**: Weighted combination of tournament ranking, threat defense evaluation, and minimax challenge
 - **Selection** enum: `TournamentWithReplacement`, `TournamentWithoutReplacement`
 - **Crossover** enum: `Uniform`
 - **Mutation** enum: `Gaussian { sigma }`
@@ -134,6 +134,8 @@ cargo run --release -- interactive tmp/output/gen_20/1_*.bin --play-as white
 - `--checkpoint-every` [0]: Save a checkpoint every N generations (0 to disable)
 - `--tournament-weight` [1.0]: Tournament evaluator weight (0 to disable)
 - `--defense-weight` [0.0]: Threat defense evaluator weight (0 to disable)
+- `--minimax-weight` [0.0]: Minimax evaluator weight (0 to disable)
+- `--minimax-depth` [4]: Minimax search depth
 - `--seed`: RNG seed for reproducibility
 - `-l/--log-level`: Log level (error/warn/info/debug/trace)
 

@@ -24,7 +24,7 @@ This tool uses genetic algorithms to evolve AI strategies for the classic board 
 - **Mutation**: Gaussian noise added to weights (configurable sigma)
 - **Selection**: Tournament selection with configurable size
 - **Elitism**: Preserve top performers across generations
-- **Fitness**: Weighted combination of tournament ranking and threat defense evaluation
+- **Fitness**: Weighted combination of tournament ranking, threat defense evaluation, and minimax challenge
 
 ## Installation
 
@@ -72,6 +72,8 @@ cargo run --release -- interactive tmp/output/1_*.bin --play-as white
 - `--sigma` [0.01]: Gaussian mutation sigma
 - `--tournament-weight` [1.0]: Tournament evaluator weight (0 to disable)
 - `--defense-weight` [0.0]: Threat defense evaluator weight (0 to disable)
+- `--minimax-weight` [0.0]: Minimax evaluator weight (0 to disable)
+- `--minimax-depth` [4]: Minimax search depth
 - `--seed`: RNG seed for reproducibility
 - `-l/--log-level`: Log level (error/warn/info/debug/trace)
 
