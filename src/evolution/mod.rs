@@ -10,7 +10,7 @@ pub mod population;
 pub mod selection;
 
 pub use evolver::Evolver;
-pub use fitness_evaluator::{ThreatDefenseFitness, TournamentFitness};
+pub use fitness_evaluator::{MinimaxFitness, ThreatDefenseFitness, TournamentFitness};
 pub use genes::EvolvableGenes;
 pub use individual::Individual;
 pub use population::Population;

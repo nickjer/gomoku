@@ -1,7 +1,9 @@
 use enum_dispatch::enum_dispatch;
 use tracing::{debug, info};
 
-use crate::game::Game;
+use crate::game::{Game, Play};
+use crate::minimax::MinimaxStrategy;
+use crate::outcome::Outcome;
 use crate::strategy::Strategy;
 use crate::threat::{generate_threat_scenarios, test_defense};
 use crate::tournament::{RunTournament, Standing, Tournament};
@@ -96,12 +98,60 @@ impl EvaluateFitness for ThreatDefenseFitness {
     }
 }
 
+/// Evaluates fitness by playing each strategy against a minimax opponent.
+///
+/// Minimax plays as black; the evaluated strategy plays as white.
+/// The score is the number of moves played, plus a 1000-point bonus if the
+/// strategy wins.
+pub struct MinimaxFitness {
+    game: Game,
+    depth: u32,
+}
+
+impl MinimaxFitness {
+    #[must_use]
+    pub fn new(game: Game, depth: u32) -> Self {
+        Self { game, depth }
+    }
+}
+
+impl EvaluateFitness for MinimaxFitness {
+    fn evaluate<S: Strategy>(
+        &self,
+        strategies: &[S],
+        rng: &mut fastrand::Rng,
+    ) -> Vec<FitnessScore> {
+        let minimax = MinimaxStrategy::new(self.depth);
+        strategies
+            .iter()
+            .map(|strategy| {
+                let result = self.game.play(&minimax, strategy, rng);
+                let move_count =
+                    f32::from(u16::try_from(result.turn_count()).expect("turn count fits in u16"));
+                let win_bonus = if result.outcome() == Outcome::WhiteWins {
+                    1000.0
+                } else {
+                    0.0
+                };
+                info!(
+                    label = strategy.label(),
+                    move_count,
+                    outcome = ?result.outcome(),
+                    "Minimax evaluation"
+                );
+                FitnessScore::new(move_count + win_bonus)
+            })
+            .collect()
+    }
+}
+
 /// Enum for polymorphic fitness evaluator dispatch.
 #[enum_dispatch(EvaluateFitness)]
 #[derive(strum::Display)]
 pub enum FitnessEvaluator {
     TournamentFitness,
     ThreatDefenseFitness,
+    MinimaxFitness,
 }
 
 #[cfg(test)]

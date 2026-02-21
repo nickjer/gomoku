@@ -13,7 +13,9 @@ use crate::conv::{ConvSmall, ConvTiny};
 use crate::evolution::crossover::Crossover;
 use crate::evolution::fitness_weight::FitnessWeight;
 use crate::evolution::mutation::Mutation;
-use crate::evolution::{Evolver, Population, ThreatDefenseFitness, TournamentFitness};
+use crate::evolution::{
+    Evolver, MinimaxFitness, Population, ThreatDefenseFitness, TournamentFitness,
+};
 use crate::game::Freestyle;
 use crate::strategy::EvolvableStrategy;
 use crate::tournament::Swiss;
@@ -73,6 +75,14 @@ pub struct CommonArgs {
     /// Threat defense evaluator weight (0 to disable)
     #[arg(long, default_value = "0.0")]
     pub defense_weight: f32,
+
+    /// Minimax evaluator weight (0 to disable)
+    #[arg(long, default_value = "0.0")]
+    pub minimax_weight: f32,
+
+    /// Minimax search depth
+    #[arg(long, default_value = "4")]
+    pub minimax_depth: u32,
 
     /// Save a checkpoint every N generations (0 to disable)
     #[arg(long, default_value = "0", value_name = "N")]
@@ -201,6 +211,12 @@ fn create_evolver(common: &CommonArgs, crossover: Crossover, mutation: Mutation)
         evaluators.push((
             ThreatDefenseFitness.into(),
             FitnessWeight::new(common.defense_weight),
+        ));
+    }
+    if common.minimax_weight > 0.0 {
+        evaluators.push((
+            MinimaxFitness::new(Freestyle.into(), common.minimax_depth).into(),
+            FitnessWeight::new(common.minimax_weight),
         ));
     }
 
