@@ -38,7 +38,6 @@ fn generate_candidates(board: &Board, stone: Stone, buf: &mut CandidateBuf) -> u
         }
     }
 
-    let mut winning_end = 0;
     let mut blocking_end = 0;
     let mut count = 0;
 
@@ -47,11 +46,8 @@ fn generate_candidates(board: &Board, stone: Stone, buf: &mut CandidateBuf) -> u
             continue;
         }
         if board.would_win(position, stone) {
-            buf.copy_within(winning_end..count, winning_end + 1);
-            buf[winning_end] = position;
-            winning_end += 1;
-            blocking_end += 1;
-            count += 1;
+            buf[0] = position;
+            return 1;
         } else if board.would_win(position, stone.opponent()) {
             buf.copy_within(blocking_end..count, blocking_end + 1);
             buf[blocking_end] = position;
@@ -114,6 +110,8 @@ fn negamax(board: &mut Board, depth: u32, mut alpha: Score, beta: Score, stone: 
         return evaluate(board, stone);
     }
 
+    let mut best_score = Score::MIN;
+
     for &candidate in candidates {
         board.place(candidate, stone).expect("valid search move");
 
@@ -125,15 +123,18 @@ fn negamax(board: &mut Board, depth: u32, mut alpha: Score, beta: Score, stone: 
 
         board.undo(candidate, stone);
 
-        if score > alpha {
-            alpha = score;
+        if score > best_score {
+            best_score = score;
+            if score > alpha {
+                alpha = score;
+            }
         }
         if alpha >= beta {
             break;
         }
     }
 
-    alpha
+    best_score
 }
 
 #[cfg(test)]
@@ -230,7 +231,7 @@ mod tests {
     }
 
     #[test]
-    fn winning_candidates_appear_first() {
+    fn winning_move_short_circuits_to_single_candidate() {
         let mut board = Board::new();
         place_stones(&mut board, Stone::Black, &[(7, 5), (7, 6), (7, 7), (7, 8)]);
         place_stones(&mut board, Stone::White, &[(8, 5), (8, 6)]);
@@ -238,18 +239,11 @@ mod tests {
         let mut buf = [PositionId::default(); PositionId::COUNT];
         let count = generate_candidates(&board, Stone::Black, &mut buf);
 
+        assert_eq!(count, 1, "Should short-circuit to a single winning move");
         assert!(
             board.would_win(buf[0], Stone::Black),
-            "First candidate should be a winning move"
+            "The single candidate should be a winning move"
         );
-
-        let winning_count = buf[..count]
-            .iter()
-            .filter(|&&position| board.would_win(position, Stone::Black))
-            .count();
-        for &candidate in &buf[..winning_count] {
-            assert!(board.would_win(candidate, Stone::Black));
-        }
     }
 
     #[test]
