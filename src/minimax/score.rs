@@ -9,16 +9,19 @@ use derive_more::{Add, AddAssign, From, Neg, Sub, SubAssign};
 pub struct Score(i32);
 
 impl Score {
-    pub const WIN: Self = Self(1_000_000);
+    pub const WIN: Self = Self(100_000_000);
     pub const DRAW: Self = Self(0);
     pub const MIN: Self = Self(-i32::MAX);
 
-    pub const OPEN_FOUR: Self = Self(100_000);
-    pub const HALF_OPEN_FOUR: Self = Self(10_000);
-    pub const OPEN_THREE: Self = Self(5_000);
-    pub const HALF_OPEN_THREE: Self = Self(500);
-    pub const OPEN_TWO: Self = Self(200);
-    pub const HALF_OPEN_TWO: Self = Self(20);
+    /// Open four is an unstoppable win — score just below WIN.
+    pub const OPEN_FOUR: Self = Self(10_000_000);
+    /// Half-open four forces exactly one blocking reply.
+    pub const HALF_OPEN_FOUR: Self = Self(1_000_000);
+    /// Open three becomes open four if not blocked — near-decisive.
+    pub const OPEN_THREE: Self = Self(100_000);
+    pub const HALF_OPEN_THREE: Self = Self(10_000);
+    pub const OPEN_TWO: Self = Self(1_000);
+    pub const HALF_OPEN_TWO: Self = Self(100);
 
     /// Win score adjusted for depth — prefers faster wins (fewer moves).
     #[must_use]
