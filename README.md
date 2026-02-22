@@ -52,12 +52,17 @@ cargo run --release -- evolve cluster-small -p 8 -o tmp/output -g 20 --seed 42
 # Continue evolving from saved strategies
 cargo run --release -- evolve conv-small -i tmp/output -o tmp/output2 -g 50
 
-# Play a game between two strategies
+# Inspect a strategy's summary statistics
+cargo run --release -- inspect tmp/output/1_*.bin
+
+# Play a game between two strategies (file path or "minimax" / "minimax:DEPTH")
 cargo run --release -- play tmp/output/1_*.bin tmp/output/2_*.bin
+cargo run --release -- play tmp/output/1_*.bin minimax:6
 
 # Play interactively against a strategy (TUI)
 cargo run --release -- interactive tmp/output/1_*.bin
 cargo run --release -- interactive tmp/output/1_*.bin --play-as white
+cargo run --release -- interactive minimax:4
 ```
 
 ### Evolve Options
@@ -73,7 +78,8 @@ cargo run --release -- interactive tmp/output/1_*.bin --play-as white
 - `--tournament-weight` [1.0]: Tournament evaluator weight (0 to disable)
 - `--defense-weight` [0.0]: Threat defense evaluator weight (0 to disable)
 - `--minimax-weight` [0.0]: Minimax evaluator weight (0 to disable)
-- `--minimax-depth` [4]: Minimax search depth
+- `--checkpoint-every` [0]: Save a checkpoint every N generations (0 to disable)
+- `--minimax-depth` [4]: Minimax search depths (space-separated; evaluated smallest to largest with early cutoff)
 - `--seed`: RNG seed for reproducibility
 - `-l/--log-level`: Log level (error/warn/info/debug/trace)
 

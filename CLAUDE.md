@@ -79,7 +79,7 @@ The `Tournament` enum manages competition formats using `enum_dispatch`:
 The `Evolver` orchestrates the genetic algorithm. Call `evolve(strategies, rng, on_generation)` with initial strategies and a per-generation callback.
 
 - **Fitness**: Weighted combination of tournament ranking, threat defense evaluation, and minimax challenge
-- **Selection** enum: `TournamentWithReplacement`, `TournamentWithoutReplacement`
+- **Selection** enum: `Tournament` (configured via `TournamentMode::WithReplacement` or `WithoutReplacement`)
 - **Crossover** enum: `Uniform`
 - **Mutation** enum: `Gaussian { sigma }`
 - **Elitism**: Preserve top N performers unchanged each generation
@@ -87,7 +87,7 @@ The `Evolver` orchestrates the genetic algorithm. Call `evolve(strategies, rng, 
 
 ### CLI
 
-**Subcommands:** `evolve`, `play`, `interactive`
+**Subcommands:** `evolve`, `inspect`, `play`, `interactive`
 
 The `evolve` command has strategy-type subcommands: `conv-tiny`, `conv-small`, `cluster-tiny`, `cluster-small`.
 
@@ -110,12 +110,17 @@ cargo run --release -- evolve conv-small -p 8 -o tmp/output -g 20 --checkpoint-e
 # Continue evolving from a checkpoint
 cargo run --release -- evolve conv-small -i tmp/output/gen_05 -o tmp/output2 -g 50
 
-# Play a game between two strategies
+# Inspect a strategy's summary statistics
+cargo run --release -- inspect tmp/output/gen_20/1_*.bin
+
+# Play a game between two strategies (file path or "minimax" / "minimax:DEPTH")
 cargo run --release -- play tmp/output/gen_20/1_*.bin tmp/output/gen_20/2_*.bin
+cargo run --release -- play tmp/output/gen_20/1_*.bin minimax:6
 
 # Play interactively against a strategy (TUI)
 cargo run --release -- interactive tmp/output/gen_20/1_*.bin
 cargo run --release -- interactive tmp/output/gen_20/1_*.bin --play-as white
+cargo run --release -- interactive minimax:4
 ```
 
 **Interactive controls:** Arrow keys/hjkl to move cursor, Enter/Space to place stone, q/Esc to quit.
