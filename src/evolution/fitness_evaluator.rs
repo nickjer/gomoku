@@ -124,11 +124,22 @@ impl MinimaxFitness {
         Self { depths }
     }
 
+    /// The earliest the first player (minimax/black) can win: 5 stones placed
+    /// on turns 1, 3, 5, 7, 9.
+    const FASTEST_WIN_TURNS: u32 = 9;
+
     fn evaluate_single(&self, strategy: &dyn Strategy, rng: &mut fastrand::Rng) -> f32 {
         let mut best_win: Option<u32> = None;
         let mut best_loss: Option<u32> = None;
 
         for &depth in &self.depths {
+            if best_win == Some(Self::FASTEST_WIN_TURNS) {
+                debug!(
+                    label = strategy.label(),
+                    depth, "Minimax perfect win cutoff"
+                );
+                break;
+            }
             let minimax = MinimaxStrategy::new(depth);
             let Some(result) = play_with_move_limit(&minimax, strategy, best_win, rng) else {
                 debug!(label = strategy.label(), depth, "Minimax depth cutoff");
