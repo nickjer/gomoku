@@ -10,6 +10,34 @@ use super::search_state::SearchState;
 pub const DEFAULT_DEPTH: u32 = 4;
 type CandidateBuf = [PositionId; PositionId::COUNT];
 
+struct KillerTable {
+    slots: Vec<[Option<PositionId>; 2]>,
+}
+
+impl KillerTable {
+    fn new(depth: u32) -> Self {
+        let len: usize = depth.try_into().expect("depth fits in usize");
+        Self {
+            slots: vec![[None; 2]; len],
+        }
+    }
+
+    fn get(&self, depth: u32) -> &[Option<PositionId>; 2] {
+        let idx: usize = depth.try_into().expect("depth fits in usize");
+        &self.slots[idx]
+    }
+
+    fn put(&mut self, depth: u32, position: PositionId) {
+        let idx: usize = depth.try_into().expect("depth fits in usize");
+        let entry = &mut self.slots[idx];
+        if entry[0] == Some(position) {
+            return;
+        }
+        entry[1] = entry[0];
+        entry[0] = Some(position);
+    }
+}
+
 /// Generates candidate moves ordered by priority: winning, blocking, then proximity.
 ///
 /// Returns `(blocking_count, total_count)` — the number of blocking moves at the
@@ -77,6 +105,8 @@ pub fn find_best_move(
     rng.shuffle(&mut candidates[..blocking_count]);
     rng.shuffle(&mut candidates[blocking_count..]);
 
+    let mut killers = KillerTable::new(depth);
+
     let mut best_move = candidates[0];
     let mut best_score = Score::MIN;
 
@@ -94,6 +124,7 @@ pub fn find_best_move(
                 Score::MIN,
                 -best_score,
                 stone.opponent(),
+                &mut killers,
             ),
         };
 
@@ -114,17 +145,31 @@ fn negamax(
     mut alpha: Score,
     beta: Score,
     stone: Stone,
+    killers: &mut KillerTable,
 ) -> Score {
     if depth == 0 || state.is_full() {
         return state.evaluate(stone);
     }
 
     let mut buf = [PositionId::default(); PositionId::COUNT];
-    let (_, count) = generate_candidates(state.board(), stone, &mut buf);
-    let candidates = &buf[..count];
-    if candidates.is_empty() {
+    let (blocking_count, count) = generate_candidates(state.board(), stone, &mut buf);
+    if count == 0 {
         return state.evaluate(stone);
     }
+
+    // Promote killer moves to right after blocking moves.
+    let mut priority_end = blocking_count;
+    for killer in killers.get(depth - 1).iter().flatten() {
+        if let Some(idx) = buf[priority_end..count]
+            .iter()
+            .position(|&pos| pos == *killer)
+        {
+            buf.swap(priority_end, priority_end + idx);
+            priority_end += 1;
+        }
+    }
+
+    let candidates = &buf[..count];
 
     for &candidate in candidates {
         state.place(candidate, stone);
@@ -134,12 +179,13 @@ fn negamax(
                 Score::win_at_depth(state.move_count())
             }
             Some(Outcome::Draw) => Score::DRAW,
-            None => -negamax(state, depth - 1, -beta, -alpha, stone.opponent()),
+            None => -negamax(state, depth - 1, -beta, -alpha, stone.opponent(), killers),
         };
 
         state.undo(candidate, stone);
 
         if score >= beta {
+            killers.put(depth - 1, candidate);
             return beta;
         }
         if score > alpha {
@@ -319,5 +365,117 @@ mod tests {
                 "Blocking candidates should appear before regular candidates"
             );
         }
+    }
+
+    #[test]
+    fn killer_table_starts_empty() {
+        let table = KillerTable::new(4);
+
+        for depth in 0..4 {
+            assert_eq!(*table.get(depth), [None, None]);
+        }
+    }
+
+    #[test]
+    fn killer_table_stores_in_first_slot() {
+        let mut table = KillerTable::new(4);
+        let position = pos(7, 7);
+
+        table.put(2, position);
+
+        assert_eq!(table.get(2), &[Some(position), None]);
+    }
+
+    #[test]
+    fn killer_table_shifts_first_to_second_on_new_entry() {
+        let mut table = KillerTable::new(4);
+        let first = pos(7, 7);
+        let second = pos(3, 3);
+
+        table.put(1, first);
+        table.put(1, second);
+
+        assert_eq!(table.get(1), &[Some(second), Some(first)]);
+    }
+
+    #[test]
+    fn killer_table_skips_duplicate_in_first_slot() {
+        let mut table = KillerTable::new(4);
+        let first = pos(7, 7);
+        let second = pos(3, 3);
+
+        table.put(0, first);
+        table.put(0, second);
+        table.put(0, second);
+
+        assert_eq!(table.get(0), &[Some(second), Some(first)]);
+    }
+
+    #[test]
+    fn killer_table_depths_are_independent() {
+        let mut table = KillerTable::new(4);
+        let position_a = pos(7, 7);
+        let position_b = pos(3, 3);
+
+        table.put(0, position_a);
+        table.put(3, position_b);
+
+        assert_eq!(table.get(0), &[Some(position_a), None]);
+        assert_eq!(table.get(1), &[None, None]);
+        assert_eq!(table.get(3), &[Some(position_b), None]);
+    }
+
+    #[test]
+    fn killer_table_third_entry_evicts_oldest() {
+        let mut table = KillerTable::new(4);
+        let first = pos(7, 7);
+        let second = pos(3, 3);
+        let third = pos(5, 5);
+
+        table.put(0, first);
+        table.put(0, second);
+        table.put(0, third);
+
+        assert_eq!(table.get(0), &[Some(third), Some(second)]);
+    }
+
+    #[test]
+    fn search_is_deterministic_with_killers() {
+        let mut board = Board::new();
+        place_stones(&mut board, Stone::Black, &[(7, 7), (7, 8), (8, 6)]);
+        place_stones(&mut board, Stone::White, &[(6, 7), (8, 8), (9, 5)]);
+
+        let result_a = find_best_move(
+            &mut board,
+            Stone::Black,
+            4,
+            &mut fastrand::Rng::with_seed(42),
+        );
+        let result_b = find_best_move(
+            &mut board,
+            Stone::Black,
+            4,
+            &mut fastrand::Rng::with_seed(42),
+        );
+
+        assert_eq!(result_a, result_b);
+    }
+
+    #[test]
+    fn search_at_depth_one_works_with_killers() {
+        let mut board = Board::new();
+        place_stones(&mut board, Stone::Black, &[(7, 7)]);
+        let mut rng = fastrand::Rng::with_seed(42);
+
+        let result = find_best_move(&mut board, Stone::White, 1, &mut rng);
+
+        let row_dist = result.row().abs_diff(7);
+        let col_dist = result.col().abs_diff(7);
+        assert!(
+            row_dist <= PROXIMITY_RADIUS && col_dist <= PROXIMITY_RADIUS,
+            "Move ({}, {}) should be near the existing stone",
+            result.row(),
+            result.col()
+        );
     }
 }
