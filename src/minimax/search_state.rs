@@ -6,13 +6,13 @@ use crate::stone::Stone;
 use super::lines::{LINE_LENGTHS, NUM_LINES, POSITION_LINES, score_line};
 use super::score::Score;
 
-/// Saved line scores for a single place operation (4 affected lines + total).
+/// Saved state for a single place operation so `undo` can restore in O(1).
 ///
 /// Line indices are not stored — they are derived from the position via
 /// `POSITION_LINES` when `undo` is called.
 struct UndoFrame {
-    old_scores: [Score; 4],
-    old_total: Score,
+    scores: [Score; 4],
+    total: Score,
 }
 
 /// Board wrapper that maintains incremental line-based evaluation scores.
@@ -29,7 +29,16 @@ pub struct SearchState {
     line_white: [u16; NUM_LINES],
     line_scores: [Score; NUM_LINES],
     total_score: Score,
+    outcome: Option<Outcome>,
     undo_stack: Vec<UndoFrame>,
+}
+
+/// Returns `true` if a u16 line mask contains 5 or more consecutive set bits.
+fn has_five_consecutive(mask: u16) -> bool {
+    let c2 = mask & (mask >> 1);
+    let c4 = c2 & (c2 >> 2);
+    let c5 = c4 & (mask >> 4);
+    c5 != 0
 }
 
 impl SearchState {
@@ -63,33 +72,43 @@ impl SearchState {
             line_white,
             line_scores,
             total_score,
+            outcome: board.outcome(),
             undo_stack: Vec::new(),
         }
     }
 
     /// Places a stone and incrementally updates the 4 affected line scores.
     ///
-    /// Saves the old scores onto an internal stack so that [`undo`](Self::undo)
-    /// can restore them in O(1) without recomputing `score_line`.
+    /// Uses `Board::place_unchecked` to skip validation and the expensive
+    /// `has_five_in_a_row` bitboard scan. Wins are detected cheaply by
+    /// checking 5-consecutive bits on the placed stone's line masks.
+    ///
+    /// Saves old state onto an internal stack so that [`undo`](Self::undo)
+    /// can restore in O(1).
     pub fn place(&mut self, position: PositionId, stone: Stone) {
-        self.board
-            .place(position, stone)
-            .expect("valid search move");
+        self.board.place_unchecked(position, stone);
 
         let lines = POSITION_LINES.get(position);
         let old_total = self.total_score;
         let mut old_scores = [Score::DRAW; 4];
+        let mut won = false;
 
         for (i, &(line_id, bit)) in lines.iter().enumerate() {
             let idx = usize::from(line_id);
             old_scores[i] = self.line_scores[idx];
-
             self.total_score -= self.line_scores[idx];
 
-            match stone {
-                Stone::Black => self.line_black[idx] |= 1 << bit,
-                Stone::White => self.line_white[idx] |= 1 << bit,
-            }
+            let own_mask = match stone {
+                Stone::Black => {
+                    self.line_black[idx] |= 1 << bit;
+                    self.line_black[idx]
+                }
+                Stone::White => {
+                    self.line_white[idx] |= 1 << bit;
+                    self.line_white[idx]
+                }
+            };
+            won = won || has_five_consecutive(own_mask);
 
             self.line_scores[idx] = score_line(
                 self.line_black[idx],
@@ -99,9 +118,18 @@ impl SearchState {
             self.total_score += self.line_scores[idx];
         }
 
+        if won {
+            self.outcome = Some(match stone {
+                Stone::Black => Outcome::BlackWins,
+                Stone::White => Outcome::WhiteWins,
+            });
+        } else if self.board.is_full() {
+            self.outcome = Some(Outcome::Draw);
+        }
+
         self.undo_stack.push(UndoFrame {
-            old_scores,
-            old_total,
+            scores: old_scores,
+            total: old_total,
         });
     }
 
@@ -120,9 +148,10 @@ impl SearchState {
                 Stone::Black => self.line_black[idx] &= !(1 << bit),
                 Stone::White => self.line_white[idx] &= !(1 << bit),
             }
-            self.line_scores[idx] = frame.old_scores[i];
+            self.line_scores[idx] = frame.scores[i];
         }
-        self.total_score = frame.old_total;
+        self.total_score = frame.total;
+        self.outcome = None;
     }
 
     /// O(1) evaluation from `stone`'s perspective.
@@ -144,7 +173,7 @@ impl SearchState {
 
     #[must_use]
     pub fn outcome(&self) -> Option<Outcome> {
-        self.board.outcome()
+        self.outcome
     }
 
     #[must_use]
@@ -251,9 +280,8 @@ mod tests {
             let white_before = state.line_white;
             let total_before = state.total_score;
 
-            let empty: Vec<PositionId> = PositionId::iter()
-                .filter(|&p| board.is_empty(p))
-                .collect();
+            let empty: Vec<PositionId> =
+                PositionId::iter().filter(|&p| board.is_empty(p)).collect();
             let target = empty[rng.usize(0..empty.len())];
 
             state.place(target, turn);
@@ -284,5 +312,88 @@ mod tests {
 
         state.undo(pos(7, 8), Stone::White);
         assert_eq!(state.total_score, score_0, "after undoing first place");
+    }
+
+    #[test]
+    fn detects_black_win() {
+        let mut board = Board::new();
+        board.place(pos(7, 3), Stone::Black).unwrap();
+        board.place(pos(7, 4), Stone::Black).unwrap();
+        board.place(pos(7, 5), Stone::Black).unwrap();
+        board.place(pos(7, 6), Stone::Black).unwrap();
+        // White stones to keep alternating turns valid for Board
+        board.place(pos(0, 0), Stone::White).unwrap();
+        board.place(pos(0, 1), Stone::White).unwrap();
+
+        let mut state = SearchState::from_board(&board);
+        assert!(state.outcome().is_none());
+
+        state.place(pos(7, 7), Stone::Black);
+
+        assert_eq!(state.outcome(), Some(Outcome::BlackWins));
+    }
+
+    #[test]
+    fn detects_white_win() {
+        let mut board = Board::new();
+        board.place(pos(3, 7), Stone::White).unwrap();
+        board.place(pos(4, 7), Stone::White).unwrap();
+        board.place(pos(5, 7), Stone::White).unwrap();
+        board.place(pos(6, 7), Stone::White).unwrap();
+        board.place(pos(0, 0), Stone::Black).unwrap();
+
+        let mut state = SearchState::from_board(&board);
+        assert!(state.outcome().is_none());
+
+        state.place(pos(7, 7), Stone::White);
+
+        assert_eq!(state.outcome(), Some(Outcome::WhiteWins));
+    }
+
+    #[test]
+    fn undo_clears_win_outcome() {
+        let mut board = Board::new();
+        board.place(pos(7, 3), Stone::Black).unwrap();
+        board.place(pos(7, 4), Stone::Black).unwrap();
+        board.place(pos(7, 5), Stone::Black).unwrap();
+        board.place(pos(7, 6), Stone::Black).unwrap();
+        board.place(pos(0, 0), Stone::White).unwrap();
+
+        let mut state = SearchState::from_board(&board);
+
+        state.place(pos(7, 7), Stone::Black);
+        assert_eq!(state.outcome(), Some(Outcome::BlackWins));
+
+        state.undo(pos(7, 7), Stone::Black);
+        assert!(state.outcome().is_none());
+    }
+
+    #[test]
+    fn outcome_agrees_with_board_across_random_games() {
+        let mut rng = fastrand::Rng::with_seed(99999);
+        for _ in 0..200 {
+            let mut board = Board::new();
+            let mut state = SearchState::from_board(&board);
+            let mut positions: Vec<PositionId> = PositionId::iter().collect();
+            rng.shuffle(&mut positions);
+            let mut turn = Stone::Black;
+
+            for &position in &positions {
+                if board.is_finished() {
+                    break;
+                }
+                board.place(position, turn).unwrap();
+                state.place(position, turn);
+
+                assert_eq!(
+                    state.outcome(),
+                    board.outcome(),
+                    "outcome mismatch after placing at ({}, {})",
+                    position.row(),
+                    position.col()
+                );
+                turn = turn.opponent();
+            }
+        }
     }
 }
