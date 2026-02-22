@@ -135,7 +135,7 @@ cargo run --release -- interactive tmp/output/gen_20/1_*.bin --play-as white
 - `--tournament-weight` [1.0]: Tournament evaluator weight (0 to disable)
 - `--defense-weight` [0.0]: Threat defense evaluator weight (0 to disable)
 - `--minimax-weight` [0.0]: Minimax evaluator weight (0 to disable)
-- `--minimax-depth` [4]: Minimax search depth
+- `--minimax-depth` [4]: Minimax search depths (space-separated; evaluated smallest to largest with early cutoff)
 - `--seed`: RNG seed for reproducibility
 - `-l/--log-level`: Log level (error/warn/info/debug/trace)
 

@@ -80,9 +80,9 @@ pub struct CommonArgs {
     #[arg(long, default_value = "0.0")]
     pub minimax_weight: f32,
 
-    /// Minimax search depth
-    #[arg(long, default_value = "4")]
-    pub minimax_depth: u32,
+    /// Minimax search depths (evaluated smallest to largest with early cutoff)
+    #[arg(long, default_value = "4", num_args = 1..)]
+    pub minimax_depth: Vec<u32>,
 
     /// Save a checkpoint every N generations (0 to disable)
     #[arg(long, default_value = "0", value_name = "N")]
@@ -215,7 +215,7 @@ fn create_evolver(common: &CommonArgs, crossover: Crossover, mutation: Mutation)
     }
     if common.minimax_weight > 0.0 {
         evaluators.push((
-            MinimaxFitness::new(Freestyle.into(), common.minimax_depth).into(),
+            MinimaxFitness::new(common.minimax_depth.clone()).into(),
             FitnessWeight::new(common.minimax_weight),
         ));
     }
