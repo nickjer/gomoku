@@ -6,17 +6,30 @@ use crate::stone::Stone;
 use super::lines::{LINE_LENGTHS, NUM_LINES, POSITION_LINES, score_line};
 use super::score::Score;
 
+/// Saved line scores for a single place operation (4 affected lines + total).
+///
+/// Line indices are not stored — they are derived from the position via
+/// `POSITION_LINES` when `undo` is called.
+struct UndoFrame {
+    old_scores: [Score; 4],
+    old_total: Score,
+}
+
 /// Board wrapper that maintains incremental line-based evaluation scores.
 ///
 /// Instead of recomputing full-board pattern counts at every leaf node,
 /// `SearchState` tracks u16 bit masks for each of the 88 board lines and
 /// updates only the 4 affected lines per place/undo. Leaf evaluation is O(1).
+///
+/// Undo is O(1): `place` saves the 4 affected line scores onto a stack, and
+/// `undo` restores them without recomputing `score_line`.
 pub struct SearchState {
     board: Board,
     line_black: [u16; NUM_LINES],
     line_white: [u16; NUM_LINES],
     line_scores: [Score; NUM_LINES],
     total_score: Score,
+    undo_stack: Vec<UndoFrame>,
 }
 
 impl SearchState {
@@ -50,17 +63,27 @@ impl SearchState {
             line_white,
             line_scores,
             total_score,
+            undo_stack: Vec::new(),
         }
     }
 
     /// Places a stone and incrementally updates the 4 affected line scores.
+    ///
+    /// Saves the old scores onto an internal stack so that [`undo`](Self::undo)
+    /// can restore them in O(1) without recomputing `score_line`.
     pub fn place(&mut self, position: PositionId, stone: Stone) {
         self.board
             .place(position, stone)
             .expect("valid search move");
 
-        for &(line_id, bit) in POSITION_LINES.get(position) {
+        let lines = POSITION_LINES.get(position);
+        let old_total = self.total_score;
+        let mut old_scores = [Score::DRAW; 4];
+
+        for (i, &(line_id, bit)) in lines.iter().enumerate() {
             let idx = usize::from(line_id);
+            old_scores[i] = self.line_scores[idx];
+
             self.total_score -= self.line_scores[idx];
 
             match stone {
@@ -75,28 +98,31 @@ impl SearchState {
             );
             self.total_score += self.line_scores[idx];
         }
+
+        self.undo_stack.push(UndoFrame {
+            old_scores,
+            old_total,
+        });
     }
 
-    /// Undoes a stone placement and incrementally updates the 4 affected line scores.
+    /// Undoes a stone placement by restoring saved line scores from the stack.
+    ///
+    /// O(1) — no `score_line` recomputation needed.
     pub fn undo(&mut self, position: PositionId, stone: Stone) {
         self.board.undo(position, stone);
 
-        for &(line_id, bit) in POSITION_LINES.get(position) {
-            let idx = usize::from(line_id);
-            self.total_score -= self.line_scores[idx];
+        let frame = self.undo_stack.pop().expect("undo without matching place");
 
+        // Restore bit masks and saved line scores for the 4 affected lines.
+        for (i, &(line_id, bit)) in POSITION_LINES.get(position).iter().enumerate() {
+            let idx = usize::from(line_id);
             match stone {
                 Stone::Black => self.line_black[idx] &= !(1 << bit),
                 Stone::White => self.line_white[idx] &= !(1 << bit),
             }
-
-            self.line_scores[idx] = score_line(
-                self.line_black[idx],
-                self.line_white[idx],
-                LINE_LENGTHS[idx],
-            );
-            self.total_score += self.line_scores[idx];
+            self.line_scores[idx] = frame.old_scores[i];
         }
+        self.total_score = frame.old_total;
     }
 
     /// O(1) evaluation from `stone`'s perspective.
@@ -194,5 +220,69 @@ mod tests {
         state.undo(pos(8, 8), Stone::White);
 
         assert_eq!(state.total_score, score_before);
+    }
+
+    #[test]
+    fn undo_restores_line_scores_and_masks() {
+        let mut rng = fastrand::Rng::with_seed(12345);
+        for _ in 0..200 {
+            let mut board = Board::new();
+            let mut state = SearchState::from_board(&board);
+            let setup_count = rng.usize(0..15);
+            let mut positions: Vec<PositionId> = PositionId::iter().collect();
+            rng.shuffle(&mut positions);
+            let mut turn = Stone::Black;
+
+            for &position in positions.iter().take(setup_count) {
+                if board.is_finished() {
+                    break;
+                }
+                board.place(position, turn).unwrap();
+                state.place(position, turn);
+                turn = turn.opponent();
+            }
+
+            if board.is_finished() {
+                continue;
+            }
+
+            let scores_before = state.line_scores;
+            let black_before = state.line_black;
+            let white_before = state.line_white;
+            let total_before = state.total_score;
+
+            let empty: Vec<PositionId> = PositionId::iter()
+                .filter(|&p| board.is_empty(p))
+                .collect();
+            let target = empty[rng.usize(0..empty.len())];
+
+            state.place(target, turn);
+            state.undo(target, turn);
+
+            assert_eq!(state.total_score, total_before, "total_score mismatch");
+            assert_eq!(state.line_scores, scores_before, "line_scores mismatch");
+            assert_eq!(state.line_black, black_before, "line_black mismatch");
+            assert_eq!(state.line_white, white_before, "line_white mismatch");
+        }
+    }
+
+    #[test]
+    fn nested_place_undo_restores_correctly() {
+        let mut board = Board::new();
+        board.place(pos(7, 7), Stone::Black).unwrap();
+
+        let mut state = SearchState::from_board(&board);
+        let score_0 = state.total_score;
+
+        state.place(pos(7, 8), Stone::White);
+        let score_1 = state.total_score;
+
+        state.place(pos(6, 6), Stone::Black);
+
+        state.undo(pos(6, 6), Stone::Black);
+        assert_eq!(state.total_score, score_1, "after undoing second place");
+
+        state.undo(pos(7, 8), Stone::White);
+        assert_eq!(state.total_score, score_0, "after undoing first place");
     }
 }
