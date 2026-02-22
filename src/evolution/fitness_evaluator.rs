@@ -1,5 +1,5 @@
 use enum_dispatch::enum_dispatch;
-use tracing::{debug, info};
+use tracing::{debug, info, instrument};
 
 use crate::board::Board;
 use crate::game::Game;
@@ -37,6 +37,7 @@ impl TournamentFitness {
 }
 
 impl EvaluateFitness for TournamentFitness {
+    #[instrument(name = "TournamentFitness", skip_all)]
     fn evaluate<S: Strategy>(
         &self,
         strategies: &[S],
@@ -88,6 +89,7 @@ fn log_standings<S: Strategy>(standings: &[Standing], strategies: &[S]) {
 pub struct ThreatDefenseFitness;
 
 impl EvaluateFitness for ThreatDefenseFitness {
+    #[instrument(name = "ThreatDefenseFitness", skip_all)]
     fn evaluate<S: Strategy>(
         &self,
         strategies: &[S],
@@ -175,6 +177,7 @@ impl MinimaxFitness {
 }
 
 impl EvaluateFitness for MinimaxFitness {
+    #[instrument(name = "MinimaxFitness", skip_all)]
     fn evaluate<S: Strategy>(
         &self,
         strategies: &[S],
