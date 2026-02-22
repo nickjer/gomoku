@@ -134,6 +134,38 @@ impl BitBoard {
         }
     }
 
+    /// Expands every set position to its 8 Moore neighbours (radius-1 shell).
+    /// Used to build larger neighbourhoods by repeated application.
+    fn expand_r1(self) -> Self {
+        let mut r = Self::EMPTY;
+        r = r | ((self << 1) & NOT_FIRST_COL); // ( 0,+1)
+        r = r | ((self >> 1) & NOT_LAST_COL); // ( 0,-1)
+        r = r | ((self << WIDTH) & ALL_COLS); // (+1, 0)
+        r = r | ((self >> WIDTH) & ALL_COLS); // (-1, 0)
+        r = r | ((self << (WIDTH + 1)) & NOT_FIRST_COL); // (+1,+1)
+        r = r | ((self >> (WIDTH + 1)) & NOT_LAST_COL); // (-1,-1)
+        r = r | ((self << (WIDTH - 1)) & NOT_LAST_COL); // (+1,-1)
+        r = r | ((self >> (WIDTH - 1)) & NOT_FIRST_COL); // (-1,+1)
+        r
+    }
+
+    /// Returns all positions within [`PROXIMITY_RADIUS`] of any set position.
+    ///
+    /// Implemented as [`PROXIMITY_RADIUS`] applications of [`expand_r1`](Self::expand_r1),
+    /// which reaches every position with Chebyshev distance ≤ radius using 8
+    /// hardcoded shifts per pass. Intersect the result with `!self` to keep
+    /// only unoccupied positions.
+    #[must_use]
+    pub fn expand_nearby(self) -> Self {
+        let mut shell = self;
+        let mut i = 0;
+        while i < PROXIMITY_RADIUS {
+            shell = shell.expand_r1();
+            i += 1;
+        }
+        shell
+    }
+
     /// Returns `true` if the bitboard contains five or more consecutive stones
     /// in any direction (horizontal, vertical, diagonal).
     #[must_use]
@@ -229,6 +261,11 @@ pub fn winning_threats(board: BitBoard) -> BitBoard {
         NOT_FIRST_4_COLS,
     )
 }
+
+// ── Proximity expansion (radius-2 neighbourhood) ─────────────────────
+
+/// Radius of the proximity neighbourhood for candidate move generation.
+pub const PROXIMITY_RADIUS: usize = 2;
 
 /// Finds gap positions that complete a five-in-a-row in one direction.
 ///
@@ -744,5 +781,98 @@ mod tests {
             all_valid.set(position);
         }
         assert_eq!(!BitBoard::EMPTY, all_valid);
+    }
+
+    // ── expand_nearby tests ──────────────────────────────────────────
+
+    #[test]
+    fn expand_nearby_empty_board_is_empty() {
+        assert_eq!(BitBoard::EMPTY.expand_nearby(), BitBoard::EMPTY);
+    }
+
+    #[test]
+    fn expand_nearby_center_covers_5x5_neighbourhood() {
+        let board = bitboard_from_positions(&[(7, 7)]);
+        let nearby = board.expand_nearby() & !board;
+
+        for row in 5..=9 {
+            for col in 5..=9 {
+                if row == 7 && col == 7 {
+                    assert!(!nearby.is_set(pos(row, col)), "center should be excluded");
+                } else {
+                    assert!(
+                        nearby.is_set(pos(row, col)),
+                        "({row}, {col}) should be in neighbourhood"
+                    );
+                }
+            }
+        }
+        assert!(!nearby.is_set(pos(4, 7)), "radius 3 should not be included");
+        assert!(
+            !nearby.is_set(pos(10, 7)),
+            "radius 3 should not be included"
+        );
+    }
+
+    #[test]
+    fn expand_nearby_corner_clips_to_board() {
+        let board = bitboard_from_positions(&[(0, 0)]);
+        let nearby = board.expand_nearby() & !board;
+
+        assert_eq!(nearby.iter_set().count(), 8);
+        for position in nearby.iter_set() {
+            assert!(position.row() <= PROXIMITY_RADIUS);
+            assert!(position.col() <= PROXIMITY_RADIUS);
+        }
+    }
+
+    #[test]
+    fn expand_nearby_does_not_wrap_across_rows() {
+        let board = bitboard_from_positions(&[(3, 14)]);
+        let nearby = board.expand_nearby();
+
+        assert!(
+            !nearby.is_set(pos(6, 0)),
+            "should not wrap right edge to col 0"
+        );
+        assert!(
+            !nearby.is_set(pos(5, 0)),
+            "should not wrap right edge to col 0"
+        );
+    }
+
+    #[test]
+    fn expand_nearby_matches_brute_force() {
+        use crate::offset::Offset;
+        let mut rng = fastrand::Rng::with_seed(99);
+        let radius = PROXIMITY_RADIUS as isize;
+
+        for _ in 0..200 {
+            let stone_count = rng.usize(1..30);
+            let mut board = BitBoard::EMPTY;
+            while board.iter_set().count() < stone_count {
+                board.set(PositionId::from(rng.usize(0..PositionId::COUNT)));
+            }
+
+            let fast = board.expand_nearby() & !board;
+
+            let mut expected = BitBoard::EMPTY;
+            for position in board.iter_set() {
+                for dr in -radius..=radius {
+                    for dc in -radius..=radius {
+                        if dr == 0 && dc == 0 {
+                            continue;
+                        }
+                        if let Some(neighbor) = position.offset(Offset::new(dr, dc)) {
+                            if !board.is_set(neighbor) {
+                                expected.set(neighbor);
+                            }
+                        }
+                    }
+                }
+            }
+
+            assert_eq!(fast, expected, "mismatch with {stone_count} stones");
+        }
     }
 }

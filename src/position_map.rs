@@ -29,14 +29,6 @@ impl<T> PositionArray<T> {
     pub const fn get_mut(&mut self, position: PositionId) -> &mut T {
         &mut self.data[position.to_index()]
     }
-
-    /// Iterates over all positions and their values.
-    pub fn iter(&self) -> impl Iterator<Item = (PositionId, &T)> {
-        self.data
-            .iter()
-            .enumerate()
-            .map(|(index, value)| (PositionId::from(index), value))
-    }
 }
 
 // ── PositionMap ───────────────────────────────────────────────────────

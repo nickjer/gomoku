@@ -1,17 +1,13 @@
 use crate::bitboard::winning_threats;
 use crate::board::Board;
-use crate::offset::Offset;
 use crate::outcome::Outcome;
 use crate::position_id::PositionId;
-use crate::position_map::PositionArray;
 use crate::stone::Stone;
 
 use super::score::Score;
 use super::search_state::SearchState;
 
 pub const DEFAULT_DEPTH: u32 = 4;
-const PROXIMITY_RADIUS: isize = 2;
-
 type CandidateBuf = [PositionId; PositionId::COUNT];
 
 /// Generates candidate moves ordered by priority: winning, blocking, then proximity.
@@ -29,27 +25,10 @@ fn generate_candidates(board: &Board, stone: Stone, buf: &mut CandidateBuf) -> (
     let opp_threats = winning_threats(*board.bitboard(stone.opponent()));
 
     let occupied = *board.bitboard(Stone::Black) | *board.bitboard(Stone::White);
-    let mut nearby = PositionArray::new(false);
-    for position in occupied.iter_set() {
-        for row_delta in -PROXIMITY_RADIUS..=PROXIMITY_RADIUS {
-            for col_delta in -PROXIMITY_RADIUS..=PROXIMITY_RADIUS {
-                if row_delta == 0 && col_delta == 0 {
-                    continue;
-                }
-                if let Some(neighbor) = position.offset(Offset::new(row_delta, col_delta))
-                    && board.is_empty(neighbor)
-                {
-                    *nearby.get_mut(neighbor) = true;
-                }
-            }
-        }
-    }
+    let nearby = occupied.expand_nearby() & !occupied;
 
     let mut count = 0;
-    for (position, &is_nearby) in nearby.iter() {
-        if !is_nearby {
-            continue;
-        }
+    for position in nearby.iter_set() {
         if own_threats.is_set(position) {
             buf[0] = position;
             return (0, 1);
@@ -174,6 +153,7 @@ fn negamax(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bitboard::PROXIMITY_RADIUS;
     use crate::position::Position;
 
     fn pos(row: usize, col: usize) -> PositionId {
@@ -288,7 +268,7 @@ mod tests {
             let row_dist = candidate.row().abs_diff(PositionId::center().row());
             let col_dist = candidate.col().abs_diff(PositionId::center().col());
             assert!(
-                row_dist <= PROXIMITY_RADIUS as usize && col_dist <= PROXIMITY_RADIUS as usize,
+                row_dist <= PROXIMITY_RADIUS && col_dist <= PROXIMITY_RADIUS,
                 "Candidate ({}, {}) is too far from center",
                 candidate.row(),
                 candidate.col()
