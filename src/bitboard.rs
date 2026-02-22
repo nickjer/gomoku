@@ -124,18 +124,6 @@ impl BitBoard {
         false
     }
 
-    /// Returns the number of set bits.
-    #[must_use]
-    pub fn count_ones(self) -> usize {
-        let mut count = 0;
-        let mut idx = 0;
-        while idx < WORD_COUNT {
-            count += usize::try_from(self.words[idx].count_ones()).expect("u32 fits in usize");
-            idx += 1;
-        }
-        count
-    }
-
     /// Returns an iterator over all positions with set bits, yielding
     /// `PositionId`s in ascending index order. Uses `trailing_zeros` to
     /// skip unset bits efficiently.
@@ -174,7 +162,8 @@ impl Iterator for BitBoardIter {
         while self.word_idx < WORD_COUNT {
             let word = self.words[self.word_idx];
             if word != 0 {
-                let bit = word.trailing_zeros() as usize;
+                let bit = usize::try_from(word.trailing_zeros())
+                    .expect("trailing zeros of u64 fits in usize");
                 self.words[self.word_idx] = word & (word - 1); // clear lowest set bit
                 return Some(PositionId::from(self.word_idx * 64 + bit));
             }
@@ -276,127 +265,6 @@ fn threat_direction(
         | (miss2 << (2 * stride))
         | (miss3 << (3 * stride))
         | (miss4 << (4 * stride))
-}
-
-// ── Pattern counting (shift-AND) ─────────────────────────────────────
-
-/// Counts of consecutive stone patterns by length and openness.
-#[derive(Debug, Default)]
-pub struct PatternCounts {
-    pub fives: usize,
-    pub open_fours: usize,
-    pub half_open_fours: usize,
-    pub open_threes: usize,
-    pub half_open_threes: usize,
-    pub open_twos: usize,
-    pub half_open_twos: usize,
-}
-
-/// Counts all consecutive stone patterns across all four directions.
-///
-/// For each direction, detects runs of exactly 2, 3, 4, and 5+ own stones
-/// and classifies them by openness (both ends empty, one end empty, or closed).
-pub fn count_all_patterns(own: BitBoard, opponent: BitBoard) -> PatternCounts {
-    let mut counts = PatternCounts::default();
-
-    // Horizontal: stride 1, col delta +1
-    count_direction_patterns(
-        own,
-        opponent,
-        1,
-        NOT_LAST_COL,
-        NOT_LAST_2_COLS,
-        NOT_LAST_3_COLS,
-        NOT_LAST_4_COLS,
-        NOT_FIRST_COL,
-        &mut counts,
-    );
-    // Vertical: stride WIDTH, col delta 0 (no wraparound possible)
-    count_direction_patterns(
-        own,
-        opponent,
-        WIDTH,
-        ALL_COLS,
-        ALL_COLS,
-        ALL_COLS,
-        ALL_COLS,
-        ALL_COLS,
-        &mut counts,
-    );
-    // Diagonal down-right: stride WIDTH+1, col delta +1
-    count_direction_patterns(
-        own,
-        opponent,
-        WIDTH + 1,
-        NOT_LAST_COL,
-        NOT_LAST_2_COLS,
-        NOT_LAST_3_COLS,
-        NOT_LAST_4_COLS,
-        NOT_FIRST_COL,
-        &mut counts,
-    );
-    // Diagonal down-left: stride WIDTH-1, col delta -1
-    count_direction_patterns(
-        own,
-        opponent,
-        WIDTH - 1,
-        NOT_FIRST_COL,
-        NOT_FIRST_2_COLS,
-        NOT_FIRST_3_COLS,
-        NOT_FIRST_4_COLS,
-        NOT_LAST_COL,
-        &mut counts,
-    );
-
-    counts
-}
-
-/// Counts patterns in a single direction using shift-AND.
-///
-/// Uses the same decomposition as `has_five_in_a_row`: consecutive runs via
-/// shift-AND, then filters by exact length and openness (empty cells at ends).
-#[allow(clippy::too_many_arguments)]
-fn count_direction_patterns(
-    own: BitBoard,
-    opponent: BitBoard,
-    stride: usize,
-    fwd1: BitBoard,
-    fwd2: BitBoard,
-    fwd3: BitBoard,
-    fwd4: BitBoard,
-    bwd1: BitBoard,
-    counts: &mut PatternCounts,
-) {
-    // Step 1: Consecutive runs (same decomposition as has_five_in_a_row)
-    let consecutive2 = own & ((own >> stride) & fwd1);
-    let consecutive3 = consecutive2 & ((own >> (2 * stride)) & fwd2);
-    let consecutive4 = consecutive2 & ((consecutive2 >> (2 * stride)) & fwd2);
-    let consecutive5 = consecutive4 & ((own >> (4 * stride)) & fwd4);
-
-    // Step 2: Run starts (position before is not our stone)
-    let not_preceded = !((own << stride) & bwd1);
-
-    // Step 3: Exact run lengths
-    let exact5 = consecutive5 & not_preceded;
-    let exact4 = (consecutive4 & !consecutive5) & not_preceded;
-    let exact3 = (consecutive3 & !consecutive4) & not_preceded;
-    let exact2 = (consecutive2 & !consecutive3) & not_preceded;
-
-    // Step 4: Openness (empty cell before/after the run)
-    let empty = !(own | opponent);
-    let open_before = (empty << stride) & bwd1;
-    let open_after_4 = (empty >> (4 * stride)) & fwd4;
-    let open_after_3 = (empty >> (3 * stride)) & fwd3;
-    let open_after_2 = (empty >> (2 * stride)) & fwd2;
-
-    // Step 5: Count patterns by length and openness
-    counts.fives += exact5.count_ones();
-    counts.open_fours += (exact4 & open_before & open_after_4).count_ones();
-    counts.half_open_fours += (exact4 & (open_before ^ open_after_4)).count_ones();
-    counts.open_threes += (exact3 & open_before & open_after_3).count_ones();
-    counts.half_open_threes += (exact3 & (open_before ^ open_after_3)).count_ones();
-    counts.open_twos += (exact2 & open_before & open_after_2).count_ones();
-    counts.half_open_twos += (exact2 & (open_before ^ open_after_2)).count_ones();
 }
 
 impl Default for BitBoard {
@@ -512,9 +380,11 @@ impl ops::Not for BitBoard {
     type Output = Self;
 
     fn not(self) -> Self {
-        Self {
+        let mut result = Self {
             words: std::array::from_fn(|idx| !self.words[idx]),
-        }
+        };
+        result.words[WORD_COUNT - 1] &= LAST_WORD_MASK;
+        result
     }
 }
 
@@ -760,122 +630,6 @@ mod tests {
         assert!(result.is_set(pos(0, 2)));
     }
 
-    #[test]
-    fn count_ones_counts_set_bits() {
-        let board = bitboard_from_positions(&[(0, 0), (3, 7), (14, 14)]);
-
-        assert_eq!(board.count_ones(), 3);
-    }
-
-    #[test]
-    fn count_ones_empty_board_is_zero() {
-        assert_eq!(BitBoard::EMPTY.count_ones(), 0);
-    }
-
-    // ── Pattern counting tests ─────────────────────────────────────
-
-    #[test]
-    fn empty_board_has_no_patterns() {
-        let counts = count_all_patterns(BitBoard::EMPTY, BitBoard::EMPTY);
-
-        assert_eq!(counts.fives, 0);
-        assert_eq!(counts.open_fours, 0);
-        assert_eq!(counts.half_open_fours, 0);
-        assert_eq!(counts.open_threes, 0);
-        assert_eq!(counts.half_open_threes, 0);
-        assert_eq!(counts.open_twos, 0);
-        assert_eq!(counts.half_open_twos, 0);
-    }
-
-    #[test]
-    fn five_in_a_row_counted() {
-        let own = bitboard_from_positions(&[(7, 5), (7, 6), (7, 7), (7, 8), (7, 9)]);
-        let counts = count_all_patterns(own, BitBoard::EMPTY);
-
-        assert_eq!(counts.fives, 1);
-    }
-
-    #[test]
-    fn open_four_counted() {
-        // Four in a row with empty cells on both sides
-        let own = bitboard_from_positions(&[(7, 5), (7, 6), (7, 7), (7, 8)]);
-        let counts = count_all_patterns(own, BitBoard::EMPTY);
-
-        assert_eq!(counts.open_fours, 1);
-    }
-
-    #[test]
-    fn half_open_four_with_opponent_block() {
-        // Four in a row, opponent blocks one end
-        let own = bitboard_from_positions(&[(7, 5), (7, 6), (7, 7), (7, 8)]);
-        let opponent = bitboard_from_positions(&[(7, 4)]);
-        let counts = count_all_patterns(own, opponent);
-
-        assert_eq!(counts.open_fours, 0);
-        assert_eq!(counts.half_open_fours, 1);
-    }
-
-    #[test]
-    fn open_three_counted() {
-        let own = bitboard_from_positions(&[(7, 5), (7, 6), (7, 7)]);
-        let counts = count_all_patterns(own, BitBoard::EMPTY);
-
-        assert_eq!(counts.open_threes, 1);
-    }
-
-    #[test]
-    fn open_two_counted() {
-        let own = bitboard_from_positions(&[(7, 5), (7, 6)]);
-        let counts = count_all_patterns(own, BitBoard::EMPTY);
-
-        assert_eq!(counts.open_twos, 1);
-    }
-
-    #[test]
-    fn closed_pattern_not_counted() {
-        // Three blocked on both sides
-        let own = bitboard_from_positions(&[(7, 5), (7, 6), (7, 7)]);
-        let opponent = bitboard_from_positions(&[(7, 4), (7, 8)]);
-        let counts = count_all_patterns(own, opponent);
-
-        assert_eq!(counts.open_threes, 0);
-        assert_eq!(counts.half_open_threes, 0);
-    }
-
-    #[test]
-    fn half_open_at_board_edge() {
-        // Three against left edge — edge counts as blocked
-        let own = bitboard_from_positions(&[(7, 0), (7, 1), (7, 2)]);
-        let counts = count_all_patterns(own, BitBoard::EMPTY);
-
-        assert_eq!(counts.open_threes, 0);
-        assert_eq!(counts.half_open_threes, 1);
-    }
-
-    #[test]
-    fn open_three_in_each_direction() {
-        // Horizontal
-        let horizontal = bitboard_from_positions(&[(7, 5), (7, 6), (7, 7)]);
-        let horizontal_counts = count_all_patterns(horizontal, BitBoard::EMPTY);
-
-        // Vertical
-        let vertical = bitboard_from_positions(&[(5, 7), (6, 7), (7, 7)]);
-        let vertical_counts = count_all_patterns(vertical, BitBoard::EMPTY);
-
-        // Diagonal down-right
-        let diag_right = bitboard_from_positions(&[(5, 5), (6, 6), (7, 7)]);
-        let diag_right_counts = count_all_patterns(diag_right, BitBoard::EMPTY);
-
-        // Diagonal down-left
-        let diag_left = bitboard_from_positions(&[(5, 9), (6, 8), (7, 7)]);
-        let diag_left_counts = count_all_patterns(diag_left, BitBoard::EMPTY);
-
-        assert_eq!(horizontal_counts.open_threes, 1);
-        assert_eq!(vertical_counts.open_threes, 1);
-        assert_eq!(diag_right_counts.open_threes, 1);
-        assert_eq!(diag_left_counts.open_threes, 1);
-    }
-
     // ── iter_set tests ───────────────────────────────────────────────
 
     #[test]
@@ -930,7 +684,7 @@ mod tests {
         let board = bitboard_from_positions(&[(7, 5), (7, 6), (7, 7)]);
         let threats = winning_threats(board);
 
-        assert_eq!(threats.count_ones(), 0);
+        assert_eq!(threats.iter_set().count(), 0);
     }
 
     #[test]
@@ -952,7 +706,7 @@ mod tests {
         for _ in 0..200 {
             let stone_count = rng.usize(4..20);
             let mut board = BitBoard::EMPTY;
-            while board.count_ones() < stone_count {
+            while board.iter_set().count() < stone_count {
                 let index = rng.usize(0..PositionId::COUNT);
                 board.set(PositionId::from(index));
             }
@@ -978,5 +732,17 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn not_empty_has_no_dirty_bits_beyond_valid_range() {
+        // !BitBoard::EMPTY should equal a board with exactly the 225 valid bits set.
+        // If Not leaves dirty bits in the last word, the result won't match and a
+        // subsequent Shr would shift phantom empty bits into valid board positions.
+        let mut all_valid = BitBoard::EMPTY;
+        for position in PositionId::iter() {
+            all_valid.set(position);
+        }
+        assert_eq!(!BitBoard::EMPTY, all_valid);
     }
 }

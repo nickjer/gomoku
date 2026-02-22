@@ -6,7 +6,8 @@ use crate::position_id::PositionId;
 use crate::position_map::PositionArray;
 use crate::stone::Stone;
 
-use super::evaluate::{Score, evaluate};
+use super::score::Score;
+use super::search_state::SearchState;
 
 pub const DEFAULT_DEPTH: u32 = 4;
 const PROXIMITY_RADIUS: isize = 2;
@@ -38,7 +39,7 @@ fn generate_candidates(board: &Board, stone: Stone, buf: &mut CandidateBuf) -> (
                 if let Some(neighbor) = position.offset(Offset::new(row_delta, col_delta))
                     && board.is_empty(neighbor)
                 {
-                    nearby[neighbor] = true;
+                    *nearby.get_mut(neighbor) = true;
                 }
             }
         }
@@ -82,8 +83,10 @@ pub fn find_best_move(
 ) -> PositionId {
     assert!(depth > 0, "find_best_move called with depth 0");
 
+    let mut state = SearchState::from_board(board);
+
     let mut buf = [PositionId::default(); PositionId::COUNT];
-    let (blocking_count, count) = generate_candidates(board, stone, &mut buf);
+    let (blocking_count, count) = generate_candidates(state.board(), stone, &mut buf);
     let candidates = &mut buf[..count];
     assert!(
         !candidates.is_empty(),
@@ -99,17 +102,23 @@ pub fn find_best_move(
     let mut best_score = Score::MIN;
 
     for &candidate in candidates.iter() {
-        board.place(candidate, stone).expect("valid search move");
+        state.place(candidate, stone);
 
-        let score = match board.outcome() {
+        let score = match state.outcome() {
             Some(Outcome::BlackWins | Outcome::WhiteWins) => {
-                Score::win_at_depth(board.move_count())
+                Score::win_at_depth(state.move_count())
             }
             Some(Outcome::Draw) => Score::DRAW,
-            None => -negamax(board, depth - 1, Score::MIN, -best_score, stone.opponent()),
+            None => -negamax(
+                &mut state,
+                depth - 1,
+                Score::MIN,
+                -best_score,
+                stone.opponent(),
+            ),
         };
 
-        board.undo(candidate, stone);
+        state.undo(candidate, stone);
 
         if score > best_score {
             best_score = score;
@@ -120,30 +129,36 @@ pub fn find_best_move(
     best_move
 }
 
-fn negamax(board: &mut Board, depth: u32, mut alpha: Score, beta: Score, stone: Stone) -> Score {
-    if depth == 0 || board.is_full() {
-        return evaluate(board, stone);
+fn negamax(
+    state: &mut SearchState,
+    depth: u32,
+    mut alpha: Score,
+    beta: Score,
+    stone: Stone,
+) -> Score {
+    if depth == 0 || state.is_full() {
+        return state.evaluate(stone);
     }
 
     let mut buf = [PositionId::default(); PositionId::COUNT];
-    let (_, count) = generate_candidates(board, stone, &mut buf);
+    let (_, count) = generate_candidates(state.board(), stone, &mut buf);
     let candidates = &buf[..count];
     if candidates.is_empty() {
-        return evaluate(board, stone);
+        return state.evaluate(stone);
     }
 
     for &candidate in candidates {
-        board.place(candidate, stone).expect("valid search move");
+        state.place(candidate, stone);
 
-        let score = match board.outcome() {
+        let score = match state.outcome() {
             Some(Outcome::BlackWins | Outcome::WhiteWins) => {
-                Score::win_at_depth(board.move_count())
+                Score::win_at_depth(state.move_count())
             }
             Some(Outcome::Draw) => Score::DRAW,
-            None => -negamax(board, depth - 1, -beta, -alpha, stone.opponent()),
+            None => -negamax(state, depth - 1, -beta, -alpha, stone.opponent()),
         };
 
-        board.undo(candidate, stone);
+        state.undo(candidate, stone);
 
         if score >= beta {
             return beta;
@@ -291,8 +306,9 @@ mod tests {
         let (_, count) = generate_candidates(&board, Stone::Black, &mut buf);
 
         assert_eq!(count, 1, "Should short-circuit to a single winning move");
+        let threats = winning_threats(*board.bitboard(Stone::Black));
         assert!(
-            board.would_win(buf[0], Stone::Black),
+            threats.is_set(buf[0]),
             "The single candidate should be a winning move"
         );
     }
@@ -307,12 +323,15 @@ mod tests {
         let (_, count) = generate_candidates(&board, Stone::Black, &mut buf);
         let candidates = &buf[..count];
 
+        let opp_threats = winning_threats(*board.bitboard(Stone::White));
+        let own_threats = winning_threats(*board.bitboard(Stone::Black));
+
         let first_regular = candidates.iter().position(|&candidate| {
-            !board.would_win(candidate, Stone::White) && !board.would_win(candidate, Stone::Black)
+            !opp_threats.is_set(candidate) && !own_threats.is_set(candidate)
         });
         let last_blocking = candidates
             .iter()
-            .rposition(|&candidate| board.would_win(candidate, Stone::White));
+            .rposition(|&candidate| opp_threats.is_set(candidate));
 
         if let (Some(first_reg), Some(last_blk)) = (first_regular, last_blocking) {
             assert!(

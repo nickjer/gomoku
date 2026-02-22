@@ -112,15 +112,6 @@ impl Board {
 
     /// Returns `true` if placing a stone at the given position would win.
     ///
-    /// Does not modify the board — checks a hypothetical placement using
-    /// a stack copy of the bitboard.
-    #[must_use]
-    pub fn would_win(&self, position_id: PositionId, stone: Stone) -> bool {
-        let mut bitboard = *self.bitboard(stone);
-        bitboard.set(position_id);
-        bitboard.has_five_in_a_row()
-    }
-
     pub(crate) fn bitboard(&self, stone: Stone) -> &BitBoard {
         match stone {
             Stone::Black => &self.black,

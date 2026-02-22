@@ -1,12 +1,8 @@
-use std::ops;
-
 use crate::position_id::PositionId;
 
 // ── PositionArray ────────────────────────────────────────────────────
 
 /// A stack-allocated, `PositionId`-indexed array.
-///
-/// Wraps `[T; PositionId::COUNT]` with `Index`/`IndexMut` by `PositionId`.
 #[derive(Debug, Clone)]
 pub struct PositionArray<T> {
     data: [T; PositionId::COUNT],
@@ -15,7 +11,7 @@ pub struct PositionArray<T> {
 impl<T: Copy> PositionArray<T> {
     /// Creates a new array with all positions set to `value`.
     #[must_use]
-    pub fn new(value: T) -> Self {
+    pub const fn new(value: T) -> Self {
         Self {
             data: [value; PositionId::COUNT],
         }
@@ -23,26 +19,23 @@ impl<T: Copy> PositionArray<T> {
 }
 
 impl<T> PositionArray<T> {
+    /// Returns a reference to the value at the given position.
+    #[must_use]
+    pub const fn get(&self, position: PositionId) -> &T {
+        &self.data[position.to_index()]
+    }
+
+    /// Returns a mutable reference to the value at the given position.
+    pub const fn get_mut(&mut self, position: PositionId) -> &mut T {
+        &mut self.data[position.to_index()]
+    }
+
     /// Iterates over all positions and their values.
     pub fn iter(&self) -> impl Iterator<Item = (PositionId, &T)> {
         self.data
             .iter()
             .enumerate()
             .map(|(index, value)| (PositionId::from(index), value))
-    }
-}
-
-impl<T> ops::Index<PositionId> for PositionArray<T> {
-    type Output = T;
-
-    fn index(&self, position: PositionId) -> &T {
-        &self.data[usize::from(position)]
-    }
-}
-
-impl<T> ops::IndexMut<PositionId> for PositionArray<T> {
-    fn index_mut(&mut self, position: PositionId) -> &mut T {
-        &mut self.data[usize::from(position)]
     }
 }
 
@@ -143,18 +136,18 @@ mod tests {
     fn position_array_initializes_to_value() {
         let array = PositionArray::new(false);
 
-        assert!(!array[pos(0, 0)]);
-        assert!(!array[pos(7, 7)]);
-        assert!(!array[pos(14, 14)]);
+        assert!(!array.get(pos(0, 0)));
+        assert!(!array.get(pos(7, 7)));
+        assert!(!array.get(pos(14, 14)));
     }
 
     #[test]
-    fn position_array_index_mut_modifies_value() {
+    fn position_array_get_mut_modifies_value() {
         let mut array = PositionArray::new(0i32);
-        array[pos(3, 4)] = 42;
+        *array.get_mut(pos(3, 4)) = 42;
 
-        assert_eq!(array[pos(3, 4)], 42);
-        assert_eq!(array[pos(0, 0)], 0);
+        assert_eq!(*array.get(pos(3, 4)), 42);
+        assert_eq!(*array.get(pos(0, 0)), 0);
     }
 
     // ── PositionMap tests ──────────────────────────────────────────

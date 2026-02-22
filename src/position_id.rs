@@ -40,6 +40,18 @@ impl PositionId {
         Position::new(self.row(), self.col())
     }
 
+    /// Creates a `PositionId` from a raw index.
+    #[must_use]
+    pub const fn from_index(index: usize) -> Self {
+        Self::new(index)
+    }
+
+    /// Returns the raw index (0-based).
+    #[must_use]
+    pub const fn to_index(self) -> usize {
+        self.index
+    }
+
     #[must_use]
     pub const fn center() -> Self {
         Self::new(Self::COUNT / 2)
