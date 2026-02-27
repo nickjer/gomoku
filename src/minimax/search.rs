@@ -499,4 +499,154 @@ mod tests {
             result.col()
         );
     }
+
+    #[test]
+    fn score_move_completing_five_returns_win() {
+        let mut board = Board::new();
+        place_stones(&mut board, Stone::Black, &[(7, 5), (7, 6), (7, 7), (7, 8)]);
+        place_stones(&mut board, Stone::White, &[(8, 5), (8, 6), (8, 7)]);
+
+        let score = score_move(&board, Stone::Black, pos(7, 4), 4);
+
+        // 4 Black + 3 White + 1 placed = 8 stones total
+        assert_eq!(score, Score::win_at_depth(8));
+    }
+
+    #[test]
+    fn score_move_open_four_at_depth_zero() {
+        let mut board = Board::new();
+        place_stones(&mut board, Stone::Black, &[(7, 6), (7, 7), (7, 8)]);
+
+        // Extends to _XXXX_ on row 7 — only pattern on the board
+        let score = score_move(&board, Stone::Black, pos(7, 5), 0);
+
+        assert_eq!(score, Score::OPEN_FOUR);
+    }
+
+    #[test]
+    fn score_move_half_open_four_at_depth_zero() {
+        let mut board = Board::new();
+        place_stones(&mut board, Stone::Black, &[(7, 6), (7, 7), (7, 8)]);
+        place_stones(&mut board, Stone::White, &[(7, 5)]);
+
+        // Extends to OXXXX_ on row 7 (blocked on left by White)
+        let score = score_move(&board, Stone::Black, pos(7, 9), 0);
+
+        assert_eq!(score, Score::HALF_OPEN_FOUR);
+    }
+
+    #[test]
+    fn score_move_jump_four_at_depth_zero() {
+        let mut board = Board::new();
+        place_stones(&mut board, Stone::Black, &[(7, 5), (7, 6), (7, 8)]);
+
+        // Creates XX_XX on row 7 (gap at 7), plus two open twos
+        let score = score_move(&board, Stone::Black, pos(7, 9), 0);
+
+        assert_eq!(score, Score::HALF_OPEN_FOUR + Score::OPEN_TWO * 2);
+    }
+
+    #[test]
+    fn score_move_open_four_is_forced_win_at_depth_four() {
+        let mut board = Board::new();
+        place_stones(&mut board, Stone::Black, &[(7, 6), (7, 7), (7, 8)]);
+        place_stones(&mut board, Stone::White, &[(2, 2), (2, 3)]);
+
+        // At depth 0: Black's open four minus White's open two at (2,2)-(2,3)
+        let shallow = score_move(&board, Stone::Black, pos(7, 5), 0);
+        assert_eq!(shallow, Score::OPEN_FOUR - Score::OPEN_TWO);
+
+        // At depth 4, search discovers the forced win: opponent blocks one
+        // end, Black completes the other → win at 8 stones
+        let deep = score_move(&board, Stone::Black, pos(7, 5), 4);
+        assert_eq!(deep, Score::win_at_depth(8));
+    }
+
+    #[test]
+    fn score_move_winning_scores_higher_than_non_winning() {
+        let mut board = Board::new();
+        place_stones(&mut board, Stone::Black, &[(7, 5), (7, 6), (7, 7), (7, 8)]);
+        place_stones(&mut board, Stone::White, &[(8, 5), (8, 6), (8, 7)]);
+
+        let winning = score_move(&board, Stone::Black, pos(7, 4), 4);
+        let other = score_move(&board, Stone::Black, pos(6, 5), 4);
+
+        assert!(winning > other);
+    }
+
+    #[test]
+    fn score_move_depth_one_returns_static_eval() {
+        let mut board = Board::new();
+        place_stones(&mut board, Stone::Black, &[(7, 7), (7, 8)]);
+
+        // Place at (7,6) creates _XXX_ (open three on row 7).
+        // Depth 1 gives no opponent response — same as depth 0.
+        let depth_0 = score_move(&board, Stone::Black, pos(7, 6), 0);
+        let depth_1 = score_move(&board, Stone::Black, pos(7, 6), 1);
+
+        assert_eq!(depth_0, Score::OPEN_THREE);
+        assert_eq!(depth_1, Score::OPEN_THREE);
+    }
+
+    #[test]
+    fn score_move_depth_two_white_blocks_open_three() {
+        let mut board = Board::new();
+        place_stones(&mut board, Stone::Black, &[(7, 7), (7, 8)]);
+
+        // Place at (7,6) creates _XXX_. At depth 2, White blocks one end,
+        // reducing it to a half-open three.
+        let score = score_move(&board, Stone::Black, pos(7, 6), 2);
+
+        assert_eq!(score, Score::HALF_OPEN_THREE);
+    }
+
+    #[test]
+    fn score_move_open_four_is_won_at_depth_three() {
+        let mut board = Board::new();
+        place_stones(&mut board, Stone::Black, &[(7, 6), (7, 7), (7, 8)]);
+
+        // Place at (7,5) creates _XXXX_. White can only block one end;
+        // Black completes five on the other. Win at move count 6:
+        //   mc=4 (initial place), mc=5 (White blocks), mc=6 (Black wins).
+        let score = score_move(&board, Stone::Black, pos(7, 5), 3);
+
+        assert_eq!(score, Score::win_at_depth(6));
+    }
+
+    #[test]
+    fn score_move_depth_three_open_three_extends_to_jump_four() {
+        let mut board = Board::new();
+        place_stones(&mut board, Stone::Black, &[(7, 7), (7, 8)]);
+
+        // Place at (7,6) creates _XXX_. At depth 3: White blocks one end (say
+        // (7,5)), Black plays (7,10) creating the jump four XXX_X at (7,6..10)
+        // with gap at (7,9), plus the half-open three (7,6..8) still scores
+        // (one end blocked by White, the other open toward the gap).
+        let score = score_move(&board, Stone::Black, pos(7, 6), 3);
+
+        assert_eq!(score, Score::HALF_OPEN_FOUR + Score::HALF_OPEN_THREE);
+    }
+
+    #[test]
+    fn score_move_depth_two_white_blocks_open_four() {
+        let mut board = Board::new();
+        place_stones(&mut board, Stone::Black, &[(7, 6), (7, 7), (7, 8)]);
+
+        // Place at (7,5) creates _XXXX_. At depth 2, White blocks one end,
+        // reducing it to a half-open four.
+        let score = score_move(&board, Stone::Black, pos(7, 5), 2);
+
+        assert_eq!(score, Score::HALF_OPEN_FOUR);
+    }
+
+    #[test]
+    fn score_move_negative_when_position_favors_opponent() {
+        let mut board = Board::new();
+        place_stones(&mut board, Stone::Black, &[(7, 6), (7, 7), (7, 8)]);
+
+        // White blocks Black's left side — board still favors Black
+        let score = score_move(&board, Stone::White, pos(7, 5), 0);
+
+        assert_eq!(score, -Score::HALF_OPEN_THREE);
+    }
 }
