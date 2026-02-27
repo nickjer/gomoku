@@ -94,35 +94,10 @@ pub fn score_line(black: u16, white: u16, length: u8) -> Score {
     }
     let valid = (1u16 << length) - 1;
     let empty = !(black | white) & valid;
-    let open_before = empty << 1;
-    let open_after_2 = empty >> 2;
-    let open_after_3 = empty >> 3;
-    let open_after_4 = empty >> 4;
-    score_side(
-        black,
-        valid,
-        open_before,
-        open_after_2,
-        open_after_3,
-        open_after_4,
-    ) - score_side(
-        white,
-        valid,
-        open_before,
-        open_after_2,
-        open_after_3,
-        open_after_4,
-    )
+    score_side(black, valid, empty) - score_side(white, valid, empty)
 }
 
-fn score_side(
-    own: u16,
-    valid: u16,
-    open_before: u16,
-    open_after_2: u16,
-    open_after_3: u16,
-    open_after_4: u16,
-) -> Score {
+fn score_side(own: u16, valid: u16, empty: u16) -> Score {
     let c2 = own & (own >> 1);
     let c3 = c2 & (own >> 2);
     let c4 = c2 & (c2 >> 2);
@@ -135,9 +110,24 @@ fn score_side(
     let exact3 = (c3 & !c4) & not_preceded;
     let exact2 = (c2 & !c3) & not_preceded;
 
+    let open_before = empty << 1;
+    let open_after_2 = empty >> 2;
+    let open_after_3 = empty >> 3;
+    let open_after_4 = empty >> 4;
+
+    // Jump fours: 4 own stones in a 5-cell window with one empty gap.
+    // Filling the gap completes 5-in-a-row, so the opponent has exactly one
+    // forced reply — semantically equivalent to a straight HALF_OPEN_FOUR.
+    // The three patterns are mutually exclusive at each bit (different gap
+    // offsets), so OR + single popcount is correct.
+    let jump_four = (own & (empty >> 1) & (c3 >> 2)) // X_XXX
+        | (c2 & (empty >> 2) & (c2 >> 3))            // XX_XX
+        | (c3 & (empty >> 3) & (own >> 4)); // XXX_X
+
     Score::WIN * popcount(exact5)
         + Score::OPEN_FOUR * popcount(exact4 & open_before & open_after_4)
         + Score::HALF_OPEN_FOUR * popcount(exact4 & (open_before ^ open_after_4))
+        + Score::HALF_OPEN_FOUR * popcount(jump_four)
         + Score::OPEN_THREE * popcount(exact3 & open_before & open_after_3)
         + Score::HALF_OPEN_THREE * popcount(exact3 & (open_before ^ open_after_3))
         + Score::OPEN_TWO * popcount(exact2 & open_before & open_after_2)
@@ -224,7 +214,59 @@ mod tests {
     fn score_one_side(own: u16, opp: u16, length: u8) -> Score {
         let valid = (1u16 << length) - 1;
         let empty = !(own | opp) & valid;
-        let open_before = empty << 1;
-        score_side(own, valid, open_before, empty >> 2, empty >> 3, empty >> 4)
+        score_side(own, valid, empty)
+    }
+
+    #[test]
+    fn score_line_jump_four_x_xxx() {
+        // X_XXX: own at positions 3, 5, 6, 7 (gap at 4)
+        // Also detects open three at 5,6,7 (open ends at 4 and 8).
+        let own = (1 << 3) | (1 << 5) | (1 << 6) | (1 << 7);
+        assert_eq!(
+            score_one_side(own, 0, W as u8),
+            Score::HALF_OPEN_FOUR + Score::OPEN_THREE
+        );
+    }
+
+    #[test]
+    fn score_line_jump_four_xx_xx() {
+        // XX_XX: own at positions 3, 4, 6, 7 (gap at 5)
+        // Also detects two open twos at (3,4) and (6,7).
+        let own = (1 << 3) | (1 << 4) | (1 << 6) | (1 << 7);
+        assert_eq!(
+            score_one_side(own, 0, W as u8),
+            Score::HALF_OPEN_FOUR + Score::OPEN_TWO * 2
+        );
+    }
+
+    #[test]
+    fn score_line_jump_four_xxx_x() {
+        // XXX_X: own at positions 3, 4, 5, 7 (gap at 6)
+        // Also detects open three at 3,4,5 (open ends at 2 and 6).
+        let own = (1 << 3) | (1 << 4) | (1 << 5) | (1 << 7);
+        assert_eq!(
+            score_one_side(own, 0, W as u8),
+            Score::HALF_OPEN_FOUR + Score::OPEN_THREE
+        );
+    }
+
+    #[test]
+    fn score_line_jump_four_blocked_by_opponent() {
+        // XX_XX with opponent stone in the gap — no jump four.
+        // Splits into two half-open twos (each blocked on the gap side).
+        let own = (1 << 3) | (1 << 4) | (1 << 6) | (1 << 7);
+        let opp = 1 << 5;
+        assert_eq!(score_one_side(own, opp, W as u8), Score::HALF_OPEN_TWO * 2);
+    }
+
+    #[test]
+    fn score_line_jump_four_on_short_line() {
+        // XX_XX spanning the entire 5-cell line (positions 0,1,_,3,4).
+        // Both twos are half-open (blocked by line boundaries).
+        let own = (1 << 0) | (1 << 1) | (1 << 3) | (1 << 4);
+        assert_eq!(
+            score_one_side(own, 0, 5),
+            Score::HALF_OPEN_FOUR + Score::HALF_OPEN_TWO * 2
+        );
     }
 }

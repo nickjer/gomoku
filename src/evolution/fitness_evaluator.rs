@@ -457,10 +457,10 @@ mod tests {
 
         let mut observer = MinimaxObserver::new(None, Some(1));
 
-        observer.on_move(Stone::Black, blocking_position, &board);
+        let _ = observer.on_move(Stone::Black, blocking_position, &board);
         let after_black = observer.score_sum;
 
-        observer.on_move(Stone::White, blocking_position, &board);
+        let _ = observer.on_move(Stone::White, blocking_position, &board);
         let after_white = observer.score_sum;
 
         assert_eq!(after_black, 0.0);
@@ -473,7 +473,7 @@ mod tests {
         let board = Board::new();
         let position = board.empty_position_ids()[0];
 
-        observer.on_move(Stone::White, position, &board);
+        let _ = observer.on_move(Stone::White, position, &board);
 
         assert_eq!(observer.score_sum, 0.0);
     }
