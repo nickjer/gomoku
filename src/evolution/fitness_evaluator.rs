@@ -1,10 +1,13 @@
+use std::ops::ControlFlow;
+
 use enum_dispatch::enum_dispatch;
 use tracing::{debug, info, instrument};
 
 use crate::board::Board;
-use crate::game::Game;
+use crate::game::{Game, GameObserver, Play};
 use crate::minimax::{MinimaxStrategy, score_move};
 use crate::outcome::Outcome;
+use crate::position_id::PositionId;
 use crate::stone::Stone;
 use crate::strategy::Strategy;
 use crate::threat::{generate_threat_scenarios, test_defense};
@@ -114,16 +117,18 @@ impl EvaluateFitness for ThreatDefenseFitness {
 /// Minimax plays as black; the evaluated strategy plays as white.
 /// Score: if the strategy wins, `1000 - turn_count`; otherwise `turn_count`.
 pub struct MinimaxFitness {
+    game: Game,
     depths: Vec<u32>,
     scoring_depth: Option<u32>,
 }
 
 impl MinimaxFitness {
     #[must_use]
-    pub fn new(mut depths: Vec<u32>, scoring_depth: Option<u32>) -> Self {
+    pub fn new(game: Game, mut depths: Vec<u32>, scoring_depth: Option<u32>) -> Self {
         depths.sort_unstable();
         depths.dedup();
         Self {
+            game,
             depths,
             scoring_depth,
         }
@@ -131,11 +136,11 @@ impl MinimaxFitness {
 
     /// The earliest the first player (minimax/black) can win: 5 stones placed
     /// on turns 1, 3, 5, 7, 9.
-    const FASTEST_WIN_TURNS: u32 = 9;
+    const FASTEST_WIN_TURNS: usize = 9;
 
     fn evaluate_single(&self, strategy: &dyn Strategy, rng: &mut fastrand::Rng) -> f32 {
-        let mut minimax_win: Option<GameResult> = None;
-        let mut strategy_win: Option<GameResult> = None;
+        let mut minimax_win: Option<EvalResult> = None;
+        let mut strategy_win: Option<EvalResult> = None;
 
         for &depth in &self.depths {
             if minimax_win
@@ -153,10 +158,26 @@ impl MinimaxFitness {
 
             let minimax = MinimaxStrategy::new(depth);
             let move_limit = minimax_win.as_ref().map(|r| r.turn_count);
-            let Some(result) = play_game(&minimax, strategy, move_limit, self.scoring_depth, rng)
+            let mut board = Board::new();
+            let mut observer = MinimaxObserver::new(move_limit, self.scoring_depth);
+
+            let Some(_) = self
+                .game
+                .play_from(&mut board, &minimax, strategy, &mut observer, rng)
             else {
-                debug!(label = strategy.label(), depth, turn_count = move_limit.expect("cutoff requires a prior result"), "Minimax depth cutoff");
+                debug!(
+                    label = strategy.label(),
+                    depth,
+                    turn_count = move_limit.expect("cutoff requires a prior result"),
+                    "Minimax depth cutoff"
+                );
                 continue;
+            };
+
+            let result = EvalResult {
+                turn_count: board.move_count(),
+                outcome: board.outcome().expect("finished game has outcome"),
+                score_sum: observer.score_sum,
             };
 
             debug!(
@@ -193,11 +214,15 @@ impl MinimaxFitness {
                 (None, Some(r)) => 1000.0 - turns_as_f32(r.turn_count),
                 (None, None) => 0.0,
             },
-            Some(_) => minimax_win.as_ref().or(strategy_win.as_ref()).map_or(0.0, |r| {
-                let white_moves =
-                    f32::from(u16::try_from(r.turn_count / 2).expect("white move count fits u16"));
-                (r.score_sum / white_moves + 1.0) * 500.0
-            }),
+            Some(_) => minimax_win
+                .as_ref()
+                .or(strategy_win.as_ref())
+                .map_or(0.0, |r| {
+                    let white_moves = f32::from(
+                        u16::try_from(r.turn_count / 2).expect("white move count fits u16"),
+                    );
+                    (r.score_sum / white_moves + 1.0) * 500.0
+                }),
         }
     }
 }
@@ -240,63 +265,50 @@ fn log_minimax_scores<S: Strategy>(strategies: &[S], scores: &[FitnessScore]) {
     }
 }
 
-fn turns_as_f32(turns: u32) -> f32 {
+fn turns_as_f32(turns: usize) -> f32 {
     f32::from(u16::try_from(turns).expect("turn count fits in u16"))
 }
 
-struct GameResult {
-    turn_count: u32,
+/// Compact result used within [`MinimaxFitness::evaluate_single`] to track the best
+/// minimax win and best strategy win across depth iterations.
+struct EvalResult {
+    turn_count: usize,
     outcome: Outcome,
-    /// Sum of per-move normalized scores for white in `[-1.0, 1.0]`; `0.0` when `scoring_depth` is `None`.
+    /// Sum of per-move normalized minimax scores for white; `0.0` when `scoring_depth` is `None`.
     score_sum: f32,
 }
 
-/// Plays a Freestyle game between `black` and `white`, returning `None` if
-/// `move_limit` is reached before the game finishes naturally.
-///
-/// When `scoring_depth` is `Some(d)`, each of white's chosen moves is evaluated
-/// with minimax to depth `d` before being placed, and the scores are accumulated
-/// in `GameResult::score_sum`.
-fn play_game(
-    black: &dyn Strategy,
-    white: &dyn Strategy,
-    move_limit: Option<u32>,
+/// Per-game observer for [`MinimaxFitness`]. Enforces an optional move limit and
+/// accumulates per-move minimax scores for white's moves when `scoring_depth` is set.
+struct MinimaxObserver {
+    move_limit: Option<usize>,
     scoring_depth: Option<u32>,
-    rng: &mut fastrand::Rng,
-) -> Option<GameResult> {
-    let mut board = Board::new();
-    let mut turn_count: u32 = 0;
-    let mut score_sum: f32 = 0.0;
+    score_sum: f32,
+}
 
-    while !board.is_finished() {
-        if move_limit.is_some_and(|limit| turn_count >= limit) {
-            return None;
+impl MinimaxObserver {
+    fn new(move_limit: Option<usize>, scoring_depth: Option<u32>) -> Self {
+        Self {
+            move_limit,
+            scoring_depth,
+            score_sum: 0.0,
         }
-
-        let (strategy, stone): (&dyn Strategy, Stone) = if turn_count.is_multiple_of(2) {
-            (black, Stone::Black)
-        } else {
-            (white, Stone::White)
-        };
-
-        let position = strategy.choose_move(stone, &board, rng);
-
-        if let (Stone::White, Some(depth)) = (stone, scoring_depth) {
-            score_sum += score_move(&board, stone, position, depth).normalized();
-        }
-
-        board
-            .place(position, stone)
-            .expect("strategy returned invalid move");
-        turn_count += 1;
     }
+}
 
-    let outcome = board.outcome().expect("game finished without outcome");
-    Some(GameResult {
-        turn_count,
-        outcome,
-        score_sum,
-    })
+impl GameObserver for MinimaxObserver {
+    fn on_move(&mut self, stone: Stone, position: PositionId, board: &Board) -> ControlFlow<()> {
+        if self
+            .move_limit
+            .is_some_and(|limit| board.move_count() >= limit)
+        {
+            return ControlFlow::Break(());
+        }
+        if let (Stone::White, Some(depth)) = (stone, self.scoring_depth) {
+            self.score_sum += score_move(board, stone, position, depth).normalized();
+        }
+        ControlFlow::Continue(())
+    }
 }
 
 /// Enum for polymorphic fitness evaluator dispatch.
@@ -312,7 +324,7 @@ pub enum FitnessEvaluator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::game::Stub;
+    use crate::game::{Freestyle, Play, Stub};
     use crate::outcome::Outcome;
     use crate::test_utils::{ScriptedStrategy, StubStrategy};
     use crate::tournament::Scripted;
@@ -355,12 +367,21 @@ mod tests {
     }
 
     #[test]
+    fn minimax_depths_sorted_and_deduped() {
+        let evaluator = MinimaxFitness::new(Freestyle.into(), vec![6, 2, 4, 2], None);
+
+        assert_eq!(evaluator.depths, vec![2, 4, 6]);
+    }
+
+    #[test]
     fn move_limit_returns_none_when_game_exceeds_limit() {
         // Black wins in 9 turns; limit of 5 should cut it off
         let (black, white) = ScriptedStrategy::black_wins();
+        let mut board = Board::new();
+        let mut observer = MinimaxObserver::new(Some(5), None);
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let result = play_game(&black, &white, Some(5), None, &mut rng);
+        let result = Freestyle.play_from(&mut board, &black, &white, &mut observer, &mut rng);
 
         assert!(result.is_none());
     }
@@ -369,31 +390,91 @@ mod tests {
     fn move_limit_returns_result_when_game_finishes_before_limit() {
         // Black wins in 9 turns; limit of 20 allows completion
         let (black, white) = ScriptedStrategy::black_wins();
+        let mut board = Board::new();
+        let mut observer = MinimaxObserver::new(Some(20), None);
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let result = play_game(&black, &white, Some(20), None, &mut rng);
+        let result = Freestyle.play_from(&mut board, &black, &white, &mut observer, &mut rng);
 
-        let result = result.expect("game should finish before limit");
-        assert_eq!(result.outcome, Outcome::BlackWins);
-        assert_eq!(result.turn_count, 9);
+        assert!(result.is_some());
+        assert_eq!(board.move_count(), 9);
+        assert_eq!(board.outcome(), Some(Outcome::BlackWins));
     }
 
     #[test]
     fn move_limit_none_plays_to_completion() {
         let (black, white) = ScriptedStrategy::black_wins();
+        let mut board = Board::new();
+        let mut observer = MinimaxObserver::new(None, None);
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let result = play_game(&black, &white, None, None, &mut rng);
+        let result = Freestyle.play_from(&mut board, &black, &white, &mut observer, &mut rng);
 
-        let result = result.expect("game should complete without limit");
-        assert_eq!(result.outcome, Outcome::BlackWins);
-        assert_eq!(result.turn_count, 9);
+        assert!(result.is_some());
+        assert_eq!(board.move_count(), 9);
+        assert_eq!(board.outcome(), Some(Outcome::BlackWins));
     }
 
     #[test]
-    fn minimax_depths_sorted_and_deduped() {
-        let evaluator = MinimaxFitness::new(vec![6, 2, 4, 2], None);
+    fn observer_breaks_when_move_count_reaches_limit() {
+        let mut observer = MinimaxObserver::new(Some(4), None);
+        let mut board = Board::new();
+        let positions = board.empty_position_ids();
+        board.place(positions[0], Stone::Black).unwrap();
+        board.place(positions[1], Stone::White).unwrap();
+        board.place(positions[2], Stone::Black).unwrap();
+        board.place(positions[3], Stone::White).unwrap();
 
-        assert_eq!(evaluator.depths, vec![2, 4, 6]);
+        let result = observer.on_move(Stone::Black, positions[4], &board);
+
+        assert!(result.is_break());
+    }
+
+    #[test]
+    fn observer_continues_below_move_limit() {
+        let mut observer = MinimaxObserver::new(Some(10), None);
+        let board = Board::new();
+        let position = board.empty_position_ids()[0];
+
+        let result = observer.on_move(Stone::Black, position, &board);
+
+        assert!(result.is_continue());
+    }
+
+    #[test]
+    fn observer_accumulates_score_only_for_white() {
+        use crate::position::Position;
+
+        // Four Black stones in a row — White must block at (7, 9) to prevent a win.
+        // That threat gives the blocking move a non-zero minimax score at depth 1.
+        let mut board = Board::new();
+        let pos = |row, col| PositionId::from_position(Position::new(row, col));
+        board.place(pos(7, 5), Stone::Black).unwrap();
+        board.place(pos(7, 6), Stone::Black).unwrap();
+        board.place(pos(7, 7), Stone::Black).unwrap();
+        board.place(pos(7, 8), Stone::Black).unwrap();
+        let blocking_position = pos(7, 9);
+
+        let mut observer = MinimaxObserver::new(None, Some(1));
+
+        observer.on_move(Stone::Black, blocking_position, &board);
+        let after_black = observer.score_sum;
+
+        observer.on_move(Stone::White, blocking_position, &board);
+        let after_white = observer.score_sum;
+
+        assert_eq!(after_black, 0.0);
+        assert_ne!(after_white, 0.0);
+    }
+
+    #[test]
+    fn observer_no_score_when_scoring_depth_is_none() {
+        let mut observer = MinimaxObserver::new(None, None);
+        let board = Board::new();
+        let position = board.empty_position_ids()[0];
+
+        observer.on_move(Stone::White, position, &board);
+
+        assert_eq!(observer.score_sum, 0.0);
     }
 }

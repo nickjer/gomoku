@@ -2,60 +2,25 @@ use tracing::instrument;
 
 use crate::board::Board;
 use crate::match_result::MatchResult;
-use crate::stone::Stone;
 use crate::strategy::Strategy;
 
-use super::Play;
+use super::{GameObserver, Play, run_from};
 
 /// Freestyle Gomoku: 5+ in a row wins, no restrictions.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Freestyle;
 
-impl Freestyle {
-    #[instrument(level = "debug", skip_all, fields(black = black_strategy.label(), white = white_strategy.label()))]
-    fn run_internal(
-        black_strategy: &dyn Strategy,
-        white_strategy: &dyn Strategy,
-        rng: &mut fastrand::Rng,
-    ) -> MatchResult {
-        let mut board = Board::new();
-
-        let mut turn_count: u32 = 0;
-
-        while !board.is_finished() {
-            let (strategy, stone): (&dyn Strategy, Stone) = if turn_count.is_multiple_of(2) {
-                (black_strategy, Stone::Black)
-            } else {
-                (white_strategy, Stone::White)
-            };
-
-            let position_id = strategy.choose_move(stone, &board, rng);
-            board
-                .place(position_id, stone)
-                .expect("strategy returned invalid move");
-            turn_count += 1;
-        }
-
-        let outcome = board.outcome().expect("game finished without outcome");
-
-        MatchResult::new(
-            outcome,
-            black_strategy.label().to_string(),
-            white_strategy.label().to_string(),
-            turn_count,
-            board.to_string(),
-        )
-    }
-}
-
 impl Play for Freestyle {
-    fn play(
+    #[instrument(level = "debug", skip_all, fields(black = black_strategy.label(), white = white_strategy.label()))]
+    fn play_from(
         &self,
+        board: &mut Board,
         black_strategy: &dyn Strategy,
         white_strategy: &dyn Strategy,
+        observer: &mut dyn GameObserver,
         rng: &mut fastrand::Rng,
-    ) -> MatchResult {
-        Self::run_internal(black_strategy, white_strategy, rng)
+    ) -> Option<MatchResult> {
+        run_from(board, black_strategy, white_strategy, observer, rng)
     }
 }
 

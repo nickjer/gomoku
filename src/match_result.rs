@@ -6,7 +6,7 @@ pub struct MatchResult {
     outcome: Outcome,
     black_label: String,
     white_label: String,
-    turn_count: u32,
+    turn_count: usize,
     board_state: String,
 }
 
@@ -16,7 +16,7 @@ impl MatchResult {
         outcome: Outcome,
         black_label: String,
         white_label: String,
-        turn_count: u32,
+        turn_count: usize,
         board_state: String,
     ) -> Self {
         Self {
@@ -44,7 +44,7 @@ impl MatchResult {
     }
 
     #[must_use]
-    pub fn turn_count(&self) -> u32 {
+    pub fn turn_count(&self) -> usize {
         self.turn_count
     }
 

@@ -16,7 +16,7 @@ use crate::evolution::mutation::Mutation;
 use crate::evolution::{
     Evolver, MinimaxFitness, Population, ThreatDefenseFitness, TournamentFitness,
 };
-use crate::game::Freestyle;
+use crate::game::{Freestyle, Game, RandomOpening};
 use crate::strategy::EvolvableStrategy;
 use crate::tournament::Swiss;
 
@@ -87,6 +87,10 @@ pub struct CommonArgs {
     /// Depth for per-move minimax scoring (enables move scoring mode when set)
     #[arg(long)]
     pub minimax_scoring_depth: Option<u32>,
+
+    /// Pre-place N random stones before each game (0 = start from empty board)
+    #[arg(long, default_value = "0")]
+    pub opening_moves: u32,
 
     /// Save a checkpoint every N generations (0 to disable)
     #[arg(long, default_value = "0", value_name = "N")]
@@ -204,10 +208,19 @@ fn save_population<S: EvolvableStrategy>(
 }
 
 fn create_evolver(common: &CommonArgs, crossover: Crossover, mutation: Mutation) -> Evolver {
+    let game: Game = if common.opening_moves > 0 {
+        RandomOpening {
+            moves: common.opening_moves,
+        }
+        .into()
+    } else {
+        Freestyle.into()
+    };
+
     let mut evaluators = Vec::new();
     if common.tournament_weight > 0.0 {
         evaluators.push((
-            TournamentFitness::new(Swiss.into(), Freestyle.into()).into(),
+            TournamentFitness::new(Swiss.into(), game.clone()).into(),
             FitnessWeight::new(common.tournament_weight),
         ));
     }
@@ -219,7 +232,12 @@ fn create_evolver(common: &CommonArgs, crossover: Crossover, mutation: Mutation)
     }
     if common.minimax_weight > 0.0 {
         evaluators.push((
-            MinimaxFitness::new(common.minimax_depth.clone(), common.minimax_scoring_depth).into(),
+            MinimaxFitness::new(
+                game.clone(),
+                common.minimax_depth.clone(),
+                common.minimax_scoring_depth,
+            )
+            .into(),
             FitnessWeight::new(common.minimax_weight),
         ));
     }

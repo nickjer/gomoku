@@ -1,4 +1,6 @@
 mod freestyle;
+mod observer;
+mod random_opening;
 // mod standard;  // TODO: Overlines (6+) don't count as a win
 // mod renju;     // TODO: Forbidden moves for Black (3-3, 4-4, overlines)
 // mod caro;      // TODO: Row must not be blocked at both ends to win
@@ -6,34 +8,108 @@ mod freestyle;
 use enum_dispatch::enum_dispatch;
 
 pub use freestyle::Freestyle;
+pub use observer::{GameObserver, NoOpObserver};
+pub use random_opening::RandomOpening;
 
+use crate::board::Board;
 use crate::match_result::MatchResult;
+use crate::stone::Stone;
 use crate::strategy::Strategy;
 
 /// Trait for playing games between strategies.
+///
+/// The required method is [`Play::play_from`], which accepts a mutable board so callers can
+/// pre-populate it with an opening position and inspect its state after an early exit.
+/// [`Play::play`] is a provided method that creates an empty board and plays to completion.
 #[enum_dispatch]
 pub trait Play {
+    /// Plays a game starting from `board`, calling `observer` after each move is chosen but
+    /// before it is placed.
+    ///
+    /// Returns `None` if the observer breaks early (e.g. move limit reached). On return,
+    /// `board` reflects the final state whether the game finished naturally or was aborted.
+    fn play_from(
+        &self,
+        board: &mut Board,
+        black_strategy: &dyn Strategy,
+        white_strategy: &dyn Strategy,
+        observer: &mut dyn GameObserver,
+        rng: &mut fastrand::Rng,
+    ) -> Option<MatchResult>;
+
+    /// Plays a complete game from an empty board with no observer hooks.
     fn play(
         &self,
         black_strategy: &dyn Strategy,
         white_strategy: &dyn Strategy,
         rng: &mut fastrand::Rng,
-    ) -> MatchResult;
+    ) -> MatchResult {
+        let mut board = Board::new();
+        self.play_from(
+            &mut board,
+            black_strategy,
+            white_strategy,
+            &mut NoOpObserver,
+            rng,
+        )
+        .expect("NoOpObserver never breaks early")
+    }
 }
 
-/// Test game: panics if play() is called.
+/// Shared game loop used by all game variants. Drives alternating play until the board is
+/// finished or the observer breaks early. Takes `&mut Board` so callers retain the board
+/// state after an early exit.
+pub fn run_from(
+    board: &mut Board,
+    black_strategy: &dyn Strategy,
+    white_strategy: &dyn Strategy,
+    observer: &mut dyn GameObserver,
+    rng: &mut fastrand::Rng,
+) -> Option<MatchResult> {
+    while !board.is_finished() {
+        let (stone, strategy): (Stone, &dyn Strategy) = if board.move_count().is_multiple_of(2) {
+            (Stone::Black, black_strategy)
+        } else {
+            (Stone::White, white_strategy)
+        };
+
+        let position = strategy.choose_move(stone, board, rng);
+
+        if observer.on_move(stone, position, board).is_break() {
+            return None;
+        }
+
+        board
+            .place(position, stone)
+            .expect("strategy returned invalid move");
+    }
+
+    let outcome = board.outcome().expect("game finished without outcome");
+
+    Some(MatchResult::new(
+        outcome,
+        black_strategy.label().to_string(),
+        white_strategy.label().to_string(),
+        board.move_count(),
+        board.to_string(),
+    ))
+}
+
+/// Test game: panics if `play_from` is called.
 #[cfg(test)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Stub;
 
 #[cfg(test)]
 impl Play for Stub {
-    fn play(
+    fn play_from(
         &self,
+        _board: &mut Board,
         _black_strategy: &dyn Strategy,
         _white_strategy: &dyn Strategy,
+        _observer: &mut dyn GameObserver,
         _rng: &mut fastrand::Rng,
-    ) -> MatchResult {
+    ) -> Option<MatchResult> {
         panic!("Stub game should not be called")
     }
 }
@@ -76,12 +152,14 @@ impl Scripted {
 
 #[cfg(test)]
 impl Play for Scripted {
-    fn play(
+    fn play_from(
         &self,
+        _board: &mut Board,
         black_strategy: &dyn Strategy,
         white_strategy: &dyn Strategy,
+        _observer: &mut dyn GameObserver,
         _rng: &mut fastrand::Rng,
-    ) -> MatchResult {
+    ) -> Option<MatchResult> {
         let black_label = black_strategy.label();
         let white_label = white_strategy.label();
         let key = Self::make_key(black_label, white_label);
@@ -98,13 +176,13 @@ impl Play for Scripted {
             Some(label) => panic!("Invalid winner label: {label}"),
         };
 
-        MatchResult::new(
+        Some(MatchResult::new(
             outcome,
             black_label.to_string(),
             white_label.to_string(),
             0,
             String::new(),
-        )
+        ))
     }
 }
 
@@ -113,6 +191,7 @@ impl Play for Scripted {
 #[derive(Debug, Clone)]
 pub enum Game {
     Freestyle,
+    RandomOpening,
     #[cfg(test)]
     Stub,
     #[cfg(test)]
@@ -137,9 +216,42 @@ impl Default for Game {
 
 #[cfg(test)]
 mod tests {
+    use std::ops::ControlFlow;
+
     use super::*;
     use crate::outcome::Outcome;
+    use crate::position_id::PositionId;
     use crate::test_utils::{ScriptedStrategy, StubStrategy};
+
+    /// Test observer that records the board's move count on the first call.
+    struct FirstMoveCapture {
+        captured_move_count: Option<usize>,
+    }
+
+    impl GameObserver for FirstMoveCapture {
+        fn on_move(&mut self, _: Stone, _: PositionId, board: &Board) -> ControlFlow<()> {
+            if self.captured_move_count.is_none() {
+                self.captured_move_count = Some(board.move_count());
+            }
+            ControlFlow::Continue(())
+        }
+    }
+
+    /// Test observer that breaks after allowing a fixed number of moves through.
+    struct BreakAfter {
+        remaining: usize,
+    }
+
+    impl GameObserver for BreakAfter {
+        fn on_move(&mut self, _: Stone, _: PositionId, _: &Board) -> ControlFlow<()> {
+            if self.remaining == 0 {
+                ControlFlow::Break(())
+            } else {
+                self.remaining -= 1;
+                ControlFlow::Continue(())
+            }
+        }
+    }
 
     #[test]
     fn freestyle_variant_plays_game() {
@@ -185,5 +297,43 @@ mod tests {
         let mut rng = fastrand::Rng::new();
 
         game.play(&a, &b, &mut rng);
+    }
+
+    #[test]
+    fn play_default_starts_from_empty_board() {
+        let (black, white) = ScriptedStrategy::black_wins();
+        let mut capture = FirstMoveCapture {
+            captured_move_count: None,
+        };
+        let mut board = Board::new();
+        let mut rng = fastrand::Rng::new();
+
+        Freestyle.play_from(&mut board, &black, &white, &mut capture, &mut rng);
+
+        assert_eq!(capture.captured_move_count, Some(0));
+    }
+
+    #[test]
+    fn play_from_board_reflects_final_state_on_natural_finish() {
+        let (black, white) = ScriptedStrategy::black_wins();
+        let mut board = Board::new();
+        let mut rng = fastrand::Rng::new();
+
+        Freestyle.play_from(&mut board, &black, &white, &mut NoOpObserver, &mut rng);
+
+        assert!(board.is_finished());
+    }
+
+    #[test]
+    fn play_from_board_reflects_partial_state_on_early_exit() {
+        let (black, white) = ScriptedStrategy::black_wins();
+        let mut board = Board::new();
+        let mut rng = fastrand::Rng::new();
+        let mut observer = BreakAfter { remaining: 2 };
+
+        let result = Freestyle.play_from(&mut board, &black, &white, &mut observer, &mut rng);
+
+        assert!(result.is_none());
+        assert_eq!(board.move_count(), 2);
     }
 }
