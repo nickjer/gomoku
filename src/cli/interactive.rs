@@ -4,7 +4,7 @@ use anyhow::Result;
 use clap::{Args, ValueEnum};
 
 use super::{create_rng, load_strategy, setup_logging};
-use crate::game::{Freestyle, Play as GamePlay};
+use crate::game::{Freestyle, Game, Play as GamePlay, RandomOpening};
 use crate::interactive_strategy::InteractiveStrategy;
 use crate::outcome::Outcome;
 
@@ -26,6 +26,10 @@ pub struct InteractiveArgs {
     #[arg(long, default_value = "black")]
     pub play_as: PlayerColor,
 
+    /// Pre-place N random stones before the game starts (0 = empty board).
+    #[arg(long, default_value = "0")]
+    pub opening_moves: u32,
+
     /// RNG seed for reproducibility.
     #[arg(long)]
     pub seed: Option<u64>,
@@ -46,12 +50,21 @@ pub fn run_interactive(args: &InteractiveArgs) -> Result<()> {
     let mut rng = create_rng(args.seed);
     let opponent = load_strategy(&args.strategy)?;
 
+    let game: Game = if args.opening_moves > 0 {
+        RandomOpening {
+            moves: args.opening_moves,
+        }
+        .into()
+    } else {
+        Freestyle.into()
+    };
+
     let terminal = ratatui::init();
     let human = InteractiveStrategy::new(terminal);
 
     let result = match args.play_as {
-        PlayerColor::Black => Freestyle.play(&human, opponent.as_ref(), &mut rng),
-        PlayerColor::White => Freestyle.play(opponent.as_ref(), &human, &mut rng),
+        PlayerColor::Black => game.play(&human, opponent.as_ref(), &mut rng),
+        PlayerColor::White => game.play(opponent.as_ref(), &human, &mut rng),
     };
 
     ratatui::restore();

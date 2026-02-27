@@ -52,17 +52,22 @@ cargo run --release -- evolve cluster-small -p 8 -o tmp/output -g 20 --seed 42
 # Continue evolving from saved strategies
 cargo run --release -- evolve conv-small -i tmp/output -o tmp/output2 -g 50
 
+# Evolve with random opening positions (4 pre-placed stones per game)
+cargo run --release -- evolve conv-small -p 8 -o tmp/output -g 20 --opening-moves 4 --seed 42
+
 # Inspect a strategy's summary statistics
 cargo run --release -- inspect tmp/output/1_*.bin
 
 # Play a game between two strategies (file path or "minimax" / "minimax:DEPTH")
 cargo run --release -- play tmp/output/1_*.bin tmp/output/2_*.bin
 cargo run --release -- play tmp/output/1_*.bin minimax:6
+cargo run --release -- play tmp/output/1_*.bin minimax:6 --opening-moves 4
 
 # Play interactively against a strategy (TUI)
 cargo run --release -- interactive tmp/output/1_*.bin
 cargo run --release -- interactive tmp/output/1_*.bin --play-as white
 cargo run --release -- interactive minimax:4
+cargo run --release -- interactive minimax:4 --opening-moves 6
 ```
 
 ### Evolve Options
@@ -80,6 +85,8 @@ cargo run --release -- interactive minimax:4
 - `--minimax-weight` [0.0]: Minimax evaluator weight (0 to disable)
 - `--checkpoint-every` [0]: Save a checkpoint every N generations (0 to disable)
 - `--minimax-depth` [4]: Minimax search depths (space-separated; evaluated smallest to largest with early cutoff)
+- `--minimax-scoring-depth`: Depth for per-move minimax scoring (enables move scoring mode when set)
+- `--opening-moves` [0]: Pre-place N random stones before each game (0 = start from empty board; applies to tournament and minimax evaluators)
 - `--seed`: RNG seed for reproducibility
 - `-l/--log-level`: Log level (error/warn/info/debug/trace)
 

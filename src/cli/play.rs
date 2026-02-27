@@ -4,7 +4,7 @@ use anyhow::Result;
 use clap::Args;
 
 use super::{create_rng, load_strategy, setup_logging};
-use crate::game::{Freestyle, Play as GamePlay};
+use crate::game::{Freestyle, Game, Play as GamePlay, RandomOpening};
 use crate::outcome::Outcome;
 
 /// Arguments for the play subcommand.
@@ -15,6 +15,10 @@ pub struct PlayArgs {
 
     /// White strategy: path to .bin file, or "minimax" / "minimax:DEPTH".
     pub white: PathBuf,
+
+    /// Pre-place N random stones before the game starts (0 = empty board).
+    #[arg(long, default_value = "0")]
+    pub opening_moves: u32,
 
     /// RNG seed for reproducibility.
     #[arg(long)]
@@ -38,7 +42,16 @@ pub fn run_play(args: &PlayArgs) -> Result<()> {
     let black = load_strategy(&args.black)?;
     let white = load_strategy(&args.white)?;
 
-    let result = Freestyle.play(black.as_ref(), white.as_ref(), &mut rng);
+    let game: Game = if args.opening_moves > 0 {
+        RandomOpening {
+            moves: args.opening_moves,
+        }
+        .into()
+    } else {
+        Freestyle.into()
+    };
+
+    let result = game.play(black.as_ref(), white.as_ref(), &mut rng);
 
     println!("Black (X): {}", result.black_label());
     println!("White (O): {}", result.white_label());
