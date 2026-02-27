@@ -134,26 +134,28 @@ impl MinimaxFitness {
     const FASTEST_WIN_TURNS: u32 = 9;
 
     fn evaluate_single(&self, strategy: &dyn Strategy, rng: &mut fastrand::Rng) -> f32 {
-        let mut best_win: Option<GameResult> = None;
-        let mut best_loss: Option<GameResult> = None;
+        let mut minimax_win: Option<GameResult> = None;
+        let mut strategy_win: Option<GameResult> = None;
 
         for &depth in &self.depths {
-            if best_win
+            if minimax_win
                 .as_ref()
                 .is_some_and(|r| r.turn_count == Self::FASTEST_WIN_TURNS)
             {
                 debug!(
                     label = strategy.label(),
-                    depth, "Minimax perfect win cutoff"
+                    depth,
+                    turn_count = minimax_win.as_ref().unwrap().turn_count,
+                    "Minimax perfect win cutoff"
                 );
                 break;
             }
 
             let minimax = MinimaxStrategy::new(depth);
-            let move_limit = best_win.as_ref().map(|r| r.turn_count);
+            let move_limit = minimax_win.as_ref().map(|r| r.turn_count);
             let Some(result) = play_game(&minimax, strategy, move_limit, self.scoring_depth, rng)
             else {
-                debug!(label = strategy.label(), depth, "Minimax depth cutoff");
+                debug!(label = strategy.label(), depth, turn_count = move_limit.expect("cutoff requires a prior result"), "Minimax depth cutoff");
                 continue;
             };
 
@@ -165,31 +167,33 @@ impl MinimaxFitness {
                 "Minimax evaluation"
             );
 
-            if result.outcome != Outcome::WhiteWins {
-                if best_win
-                    .as_ref()
-                    .is_none_or(|r| result.turn_count < r.turn_count)
-                {
-                    best_win = Some(result);
+            match result.outcome {
+                Outcome::BlackWins | Outcome::Draw => {
+                    if minimax_win
+                        .as_ref()
+                        .is_none_or(|r| result.turn_count < r.turn_count)
+                    {
+                        minimax_win = Some(result);
+                    }
                 }
-            } else if best_loss
-                .as_ref()
-                .is_none_or(|r| result.turn_count > r.turn_count)
-            {
-                best_loss = Some(result);
+                Outcome::WhiteWins => {
+                    if strategy_win
+                        .as_ref()
+                        .is_none_or(|r| result.turn_count > r.turn_count)
+                    {
+                        strategy_win = Some(result);
+                    }
+                }
             }
         }
 
-        let turns_to_f32 =
-            |turns: u32| f32::from(u16::try_from(turns).expect("turn count fits in u16"));
-
         match self.scoring_depth {
-            None => match (&best_win, &best_loss) {
-                (Some(r), _) => turns_to_f32(r.turn_count),
-                (None, Some(r)) => 1000.0 - turns_to_f32(r.turn_count),
+            None => match (&minimax_win, &strategy_win) {
+                (Some(r), _) => turns_as_f32(r.turn_count),
+                (None, Some(r)) => 1000.0 - turns_as_f32(r.turn_count),
                 (None, None) => 0.0,
             },
-            Some(_) => best_win.as_ref().or(best_loss.as_ref()).map_or(0.0, |r| {
+            Some(_) => minimax_win.as_ref().or(strategy_win.as_ref()).map_or(0.0, |r| {
                 let white_moves =
                     f32::from(u16::try_from(r.turn_count / 2).expect("white move count fits u16"));
                 (r.score_sum / white_moves + 1.0) * 500.0
@@ -234,6 +238,10 @@ fn log_minimax_scores<S: Strategy>(strategies: &[S], scores: &[FitnessScore]) {
             debug!(rank = rank + 1, label, score, "Minimax");
         }
     }
+}
+
+fn turns_as_f32(turns: u32) -> f32 {
+    f32::from(u16::try_from(turns).expect("turn count fits in u16"))
 }
 
 struct GameResult {
