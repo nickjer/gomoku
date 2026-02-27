@@ -84,6 +84,10 @@ pub struct CommonArgs {
     #[arg(long, default_value = "4", num_args = 1..)]
     pub minimax_depth: Vec<u32>,
 
+    /// Depth for per-move minimax scoring (enables move scoring mode when set)
+    #[arg(long)]
+    pub minimax_scoring_depth: Option<u32>,
+
     /// Save a checkpoint every N generations (0 to disable)
     #[arg(long, default_value = "0", value_name = "N")]
     pub checkpoint_every: u32,
@@ -215,7 +219,7 @@ fn create_evolver(common: &CommonArgs, crossover: Crossover, mutation: Mutation)
     }
     if common.minimax_weight > 0.0 {
         evaluators.push((
-            MinimaxFitness::new(common.minimax_depth.clone()).into(),
+            MinimaxFitness::new(common.minimax_depth.clone(), common.minimax_scoring_depth).into(),
             FitnessWeight::new(common.minimax_weight),
         ));
     }

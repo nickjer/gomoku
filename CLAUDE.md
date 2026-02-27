@@ -141,6 +141,7 @@ cargo run --release -- interactive minimax:4
 - `--defense-weight` [0.0]: Threat defense evaluator weight (0 to disable)
 - `--minimax-weight` [0.0]: Minimax evaluator weight (0 to disable)
 - `--minimax-depth` [4]: Minimax search depths (space-separated; evaluated smallest to largest with early cutoff)
+- `--minimax-scoring-depth`: Depth for per-move minimax scoring (enables move scoring mode when set)
 - `--seed`: RNG seed for reproducibility
 - `-l/--log-level`: Log level (error/warn/info/debug/trace)
 

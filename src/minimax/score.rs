@@ -23,6 +23,13 @@ impl Score {
     pub const OPEN_TWO: Self = Self(1_000);
     pub const HALF_OPEN_TWO: Self = Self(100);
 
+    /// Returns the score normalized to `[-1.0, 1.0]` relative to `Score::WIN`.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss, clippy::as_conversions)]
+    pub fn normalized(self) -> f32 {
+        self.0 as f32 / Self::WIN.0 as f32
+    }
+
     /// Win score adjusted for depth — prefers faster wins (fewer moves).
     #[must_use]
     pub fn win_at_depth(move_count: usize) -> Self {

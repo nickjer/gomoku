@@ -3,8 +3,7 @@ use tracing::{debug, info, instrument};
 
 use crate::board::Board;
 use crate::game::Game;
-use crate::match_result::MatchResult;
-use crate::minimax::MinimaxStrategy;
+use crate::minimax::{MinimaxStrategy, score_move};
 use crate::outcome::Outcome;
 use crate::stone::Stone;
 use crate::strategy::Strategy;
@@ -116,14 +115,18 @@ impl EvaluateFitness for ThreatDefenseFitness {
 /// Score: if the strategy wins, `1000 - turn_count`; otherwise `turn_count`.
 pub struct MinimaxFitness {
     depths: Vec<u32>,
+    scoring_depth: Option<u32>,
 }
 
 impl MinimaxFitness {
     #[must_use]
-    pub fn new(mut depths: Vec<u32>) -> Self {
+    pub fn new(mut depths: Vec<u32>, scoring_depth: Option<u32>) -> Self {
         depths.sort_unstable();
         depths.dedup();
-        Self { depths }
+        Self {
+            depths,
+            scoring_depth,
+        }
     }
 
     /// The earliest the first player (minimax/black) can win: 5 stones placed
@@ -131,47 +134,66 @@ impl MinimaxFitness {
     const FASTEST_WIN_TURNS: u32 = 9;
 
     fn evaluate_single(&self, strategy: &dyn Strategy, rng: &mut fastrand::Rng) -> f32 {
-        let mut best_win: Option<u32> = None;
-        let mut best_loss: Option<u32> = None;
+        let mut best_win: Option<GameResult> = None;
+        let mut best_loss: Option<GameResult> = None;
 
         for &depth in &self.depths {
-            if best_win == Some(Self::FASTEST_WIN_TURNS) {
+            if best_win
+                .as_ref()
+                .is_some_and(|r| r.turn_count == Self::FASTEST_WIN_TURNS)
+            {
                 debug!(
                     label = strategy.label(),
                     depth, "Minimax perfect win cutoff"
                 );
                 break;
             }
+
             let minimax = MinimaxStrategy::new(depth);
-            let Some(result) = play_with_move_limit(&minimax, strategy, best_win, rng) else {
+            let move_limit = best_win.as_ref().map(|r| r.turn_count);
+            let Some(result) = play_game(&minimax, strategy, move_limit, self.scoring_depth, rng)
+            else {
                 debug!(label = strategy.label(), depth, "Minimax depth cutoff");
                 continue;
             };
 
-            let turn_count = result.turn_count();
-            let minimax_won = result.outcome() != Outcome::WhiteWins;
-
-            if minimax_won {
-                best_win = Some(best_win.map_or(turn_count, |prev| prev.min(turn_count)));
-            } else {
-                best_loss = Some(best_loss.map_or(turn_count, |prev| prev.max(turn_count)));
-            }
-
             debug!(
                 label = strategy.label(),
                 depth,
-                turn_count,
-                outcome = ?result.outcome(),
+                turn_count = result.turn_count,
+                outcome = ?result.outcome,
                 "Minimax evaluation"
             );
+
+            if result.outcome != Outcome::WhiteWins {
+                if best_win
+                    .as_ref()
+                    .is_none_or(|r| result.turn_count < r.turn_count)
+                {
+                    best_win = Some(result);
+                }
+            } else if best_loss
+                .as_ref()
+                .is_none_or(|r| result.turn_count > r.turn_count)
+            {
+                best_loss = Some(result);
+            }
         }
 
         let turns_to_f32 =
             |turns: u32| f32::from(u16::try_from(turns).expect("turn count fits in u16"));
-        match (best_win, best_loss) {
-            (Some(turns), _) => turns_to_f32(turns),
-            (None, Some(turns)) => 1000.0 - turns_to_f32(turns),
-            (None, None) => 0.0,
+
+        match self.scoring_depth {
+            None => match (&best_win, &best_loss) {
+                (Some(r), _) => turns_to_f32(r.turn_count),
+                (None, Some(r)) => 1000.0 - turns_to_f32(r.turn_count),
+                (None, None) => 0.0,
+            },
+            Some(_) => best_win.as_ref().or(best_loss.as_ref()).map_or(0.0, |r| {
+                let white_moves =
+                    f32::from(u16::try_from(r.turn_count / 2).expect("white move count fits u16"));
+                (r.score_sum / white_moves + 1.0) * 500.0
+            }),
         }
     }
 }
@@ -214,16 +236,29 @@ fn log_minimax_scores<S: Strategy>(strategies: &[S], scores: &[FitnessScore]) {
     }
 }
 
+struct GameResult {
+    turn_count: u32,
+    outcome: Outcome,
+    /// Sum of per-move normalized scores for white in `[-1.0, 1.0]`; `0.0` when `scoring_depth` is `None`.
+    score_sum: f32,
+}
+
 /// Plays a Freestyle game between `black` and `white`, returning `None` if
 /// `move_limit` is reached before the game finishes naturally.
-fn play_with_move_limit(
+///
+/// When `scoring_depth` is `Some(d)`, each of white's chosen moves is evaluated
+/// with minimax to depth `d` before being placed, and the scores are accumulated
+/// in `GameResult::score_sum`.
+fn play_game(
     black: &dyn Strategy,
     white: &dyn Strategy,
     move_limit: Option<u32>,
+    scoring_depth: Option<u32>,
     rng: &mut fastrand::Rng,
-) -> Option<MatchResult> {
+) -> Option<GameResult> {
     let mut board = Board::new();
     let mut turn_count: u32 = 0;
+    let mut score_sum: f32 = 0.0;
 
     while !board.is_finished() {
         if move_limit.is_some_and(|limit| turn_count >= limit) {
@@ -236,21 +271,24 @@ fn play_with_move_limit(
             (white, Stone::White)
         };
 
-        let position_id = strategy.choose_move(stone, &board, rng);
+        let position = strategy.choose_move(stone, &board, rng);
+
+        if let (Stone::White, Some(depth)) = (stone, scoring_depth) {
+            score_sum += score_move(&board, stone, position, depth).normalized();
+        }
+
         board
-            .place(position_id, stone)
+            .place(position, stone)
             .expect("strategy returned invalid move");
         turn_count += 1;
     }
 
     let outcome = board.outcome().expect("game finished without outcome");
-    Some(MatchResult::new(
-        outcome,
-        black.label().to_string(),
-        white.label().to_string(),
+    Some(GameResult {
         turn_count,
-        board.to_string(),
-    ))
+        outcome,
+        score_sum,
+    })
 }
 
 /// Enum for polymorphic fitness evaluator dispatch.
@@ -314,7 +352,7 @@ mod tests {
         let (black, white) = ScriptedStrategy::black_wins();
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let result = play_with_move_limit(&black, &white, Some(5), &mut rng);
+        let result = play_game(&black, &white, Some(5), None, &mut rng);
 
         assert!(result.is_none());
     }
@@ -325,11 +363,11 @@ mod tests {
         let (black, white) = ScriptedStrategy::black_wins();
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let result = play_with_move_limit(&black, &white, Some(20), &mut rng);
+        let result = play_game(&black, &white, Some(20), None, &mut rng);
 
         let result = result.expect("game should finish before limit");
-        assert_eq!(result.outcome(), Outcome::BlackWins);
-        assert_eq!(result.turn_count(), 9);
+        assert_eq!(result.outcome, Outcome::BlackWins);
+        assert_eq!(result.turn_count, 9);
     }
 
     #[test]
@@ -337,16 +375,16 @@ mod tests {
         let (black, white) = ScriptedStrategy::black_wins();
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let result = play_with_move_limit(&black, &white, None, &mut rng);
+        let result = play_game(&black, &white, None, None, &mut rng);
 
         let result = result.expect("game should complete without limit");
-        assert_eq!(result.outcome(), Outcome::BlackWins);
-        assert_eq!(result.turn_count(), 9);
+        assert_eq!(result.outcome, Outcome::BlackWins);
+        assert_eq!(result.turn_count, 9);
     }
 
     #[test]
     fn minimax_depths_sorted_and_deduped() {
-        let evaluator = MinimaxFitness::new(vec![6, 2, 4, 2]);
+        let evaluator = MinimaxFitness::new(vec![6, 2, 4, 2], None);
 
         assert_eq!(evaluator.depths, vec![2, 4, 6]);
     }

@@ -112,22 +112,7 @@ pub fn find_best_move(
 
     for &candidate in candidates.iter() {
         state.place(candidate, stone);
-
-        let score = match state.outcome() {
-            Some(Outcome::BlackWins | Outcome::WhiteWins) => {
-                Score::win_at_depth(state.move_count())
-            }
-            Some(Outcome::Draw) => Score::DRAW,
-            None => -negamax(
-                &mut state,
-                depth - 1,
-                Score::MIN,
-                -best_score,
-                stone.opponent(),
-                &mut killers,
-            ),
-        };
-
+        let score = score_after_place(&mut state, stone, depth, -best_score, &mut killers);
         state.undo(candidate, stone);
 
         if score > best_score {
@@ -137,6 +122,42 @@ pub fn find_best_move(
     }
 
     best_move
+}
+
+/// Scores `position` for `stone` on `board` using negamax to `depth`.
+/// Returns the score from `stone`'s perspective.
+pub fn score_move(board: &Board, stone: Stone, position: PositionId, depth: u32) -> Score {
+    let mut state = SearchState::from_board(board);
+    state.place(position, stone);
+    let mut killers = KillerTable::new(depth);
+    score_after_place(&mut state, stone, depth, Score::WIN, &mut killers)
+}
+
+/// Evaluates the current `state` (where `stone` just played) to `depth` remaining plies.
+///
+/// Handles immediate outcomes, heuristic evaluation at `depth == 0`, and full
+/// negamax search otherwise. `beta` is the upper bound from `stone`'s perspective;
+/// pass `Score::WIN` for a full-window search or `-best_score` for a narrowing window.
+fn score_after_place(
+    state: &mut SearchState,
+    stone: Stone,
+    depth: u32,
+    beta: Score,
+    killers: &mut KillerTable,
+) -> Score {
+    match state.outcome() {
+        Some(Outcome::BlackWins | Outcome::WhiteWins) => Score::win_at_depth(state.move_count()),
+        Some(Outcome::Draw) => Score::DRAW,
+        None if depth == 0 => state.evaluate(stone),
+        None => -negamax(
+            state,
+            depth - 1,
+            Score::MIN,
+            beta,
+            stone.opponent(),
+            killers,
+        ),
+    }
 }
 
 fn negamax(
