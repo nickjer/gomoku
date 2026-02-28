@@ -124,6 +124,13 @@ pub fn find_best_move(
     best_move
 }
 
+/// Returns the static heuristic evaluation of `board` from `stone`'s perspective.
+/// Equivalent to a depth-0 search: no lookahead, just pattern scoring.
+#[must_use]
+pub fn board_score(board: &Board, stone: Stone) -> Score {
+    SearchState::from_board(board).evaluate(stone)
+}
+
 /// Scores `position` for `stone` on `board` using negamax to `depth`.
 /// Returns the score from `stone`'s perspective.
 pub fn score_move(board: &Board, stone: Stone, position: PositionId, depth: u32) -> Score {

@@ -1,11 +1,11 @@
 use std::ops::ControlFlow;
 
 use enum_dispatch::enum_dispatch;
-use tracing::{debug, info, instrument};
+use tracing::{debug, info, instrument, trace};
 
 use crate::board::Board;
 use crate::game::{Game, GameObserver, Play};
-use crate::minimax::{MinimaxStrategy, score_move};
+use crate::minimax::{MinimaxStrategy, board_score, score_move};
 use crate::outcome::Outcome;
 use crate::position_id::PositionId;
 use crate::stone::Stone;
@@ -274,12 +274,15 @@ fn turns_as_f32(turns: usize) -> f32 {
 struct EvalResult {
     turn_count: usize,
     outcome: Outcome,
-    /// Sum of per-move normalized minimax scores for white; `0.0` when `scoring_depth` is `None`.
+    /// Sum of per-move score deltas (`score_after_move` − `score_before_move`, normalized) for white's
+    /// moves; `0.0` when `scoring_depth` is `None`.
     score_sum: f32,
 }
 
 /// Per-game observer for [`MinimaxFitness`]. Enforces an optional move limit and
-/// accumulates per-move minimax scores for white's moves when `scoring_depth` is set.
+/// accumulates per-move score deltas (after − before) for white's moves when `scoring_depth` is
+/// set. Using deltas rather than absolute scores rewards moves that improve White's position and
+/// penalizes moves that allow Black's threats to grow unchecked.
 struct MinimaxObserver {
     move_limit: Option<usize>,
     scoring_depth: Option<u32>,
@@ -305,7 +308,19 @@ impl GameObserver for MinimaxObserver {
             return ControlFlow::Break(());
         }
         if let (Stone::White, Some(depth)) = (stone, self.scoring_depth) {
-            self.score_sum += score_move(board, stone, position, depth).normalized();
+            let before = board_score(board, stone);
+            let after = score_move(board, stone, position, depth);
+            let delta = (after - before).normalized();
+            trace!(
+                row = position.row(),
+                col = position.col(),
+                move_count = board.move_count(),
+                before = before.normalized(),
+                after = after.normalized(),
+                delta,
+                "White move delta"
+            );
+            self.score_sum += delta;
         }
         ControlFlow::Continue(())
     }
