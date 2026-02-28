@@ -115,7 +115,15 @@ impl EvaluateFitness for ThreatDefenseFitness {
 /// at the best turn count so far (deeper search that can't improve is skipped).
 ///
 /// Minimax plays as black; the evaluated strategy plays as white.
-/// Score: if the strategy wins, `1000 - turn_count`; otherwise `turn_count`.
+///
+/// **Without `scoring_depth`:** fitness = `turn_count` (longer loss = better) or
+/// `1000 - turn_count` (faster win = better).
+///
+/// **With `scoring_depth`:** fitness = per-move quality + game-length score.
+/// Quality is the average per-move contribution (delta + proximity bonus), scaled
+/// to `[0, 1000]`. Game-length uses the same formula as the no-scoring path.
+/// The quality component (~[400, 600]) dominates; length (~[9, 50] for losses,
+/// ~[950, 991] for wins) acts as a tiebreaker. Wins always land well above losses.
 pub struct MinimaxFitness {
     game: Game,
     depths: Vec<u32>,
@@ -221,7 +229,12 @@ impl MinimaxFitness {
                     let white_moves = f32::from(
                         u16::try_from(r.turn_count / 2).expect("white move count fits u16"),
                     );
-                    (r.score_sum / white_moves + 1.0) * 500.0
+                    let quality = (r.score_sum / white_moves + 1.0) * 500.0;
+                    let length = match r.outcome {
+                        Outcome::WhiteWins => 1000.0 - turns_as_f32(r.turn_count),
+                        Outcome::BlackWins | Outcome::Draw => turns_as_f32(r.turn_count),
+                    };
+                    quality + length
                 }),
         }
     }
