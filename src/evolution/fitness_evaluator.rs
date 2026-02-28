@@ -266,8 +266,8 @@ fn scoring_depth_fitness(score_sum: f32, turn_count: usize, outcome: Outcome) ->
     let white_moves = f32::from(u16::try_from(turn_count / 2).expect("white move count fits u16"));
     let quality = (score_sum / white_moves + 1.0) * 500.0;
     let length = match outcome {
-        Outcome::WhiteWins => 1000.0 - turns_as_f32(turn_count),
-        Outcome::BlackWins | Outcome::Draw => turns_as_f32(turn_count),
+        Outcome::WhiteWins => 1000.0 - 2.0 * turns_as_f32(turn_count),
+        Outcome::BlackWins | Outcome::Draw => 2.0 * turns_as_f32(turn_count),
     };
     quality + length
 }
@@ -292,7 +292,7 @@ struct EvalResult {
 /// four independent build directions so no single White placement changes the evaluation.
 /// This nudges nearby moves above far corners as a tiebreaker without overriding real
 /// tactical signals at the recommended depth of 4+.
-const PROXIMITY_BONUS: f32 = 0.001;
+const PROXIMITY_BONUS: f32 = 0.01;
 
 /// Per-game observer for [`MinimaxFitness`]. Enforces an optional move limit and accumulates
 /// per-move score contributions for White when `scoring_depth` is set. Each contribution
