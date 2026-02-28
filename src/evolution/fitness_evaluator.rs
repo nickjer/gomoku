@@ -15,16 +15,14 @@ use crate::tournament::{RunTournament, Standing, Tournament};
 
 use super::fitness_score::FitnessScore;
 
-/// Trait for computing fitness scores for a population of strategies.
+/// Computes fitness scores for a population of strategies.
 #[enum_dispatch]
 pub trait EvaluateFitness {
     fn evaluate<S: Strategy>(&self, strategies: &[S], rng: &mut fastrand::Rng)
     -> Vec<FitnessScore>;
 }
 
-/// Evaluates fitness by running a tournament.
-///
-/// Scores are `population_size - rank` (1-indexed, winner gets highest).
+/// Evaluates fitness by running a tournament; score equals `population_size − rank`.
 #[derive(Default)]
 pub struct TournamentFitness {
     tournament: Tournament,
@@ -87,7 +85,7 @@ fn log_standings<S: Strategy>(standings: &[Standing], strategies: &[S]) {
     }
 }
 
-/// Evaluates fitness using only defensive capability testing (threat blocking).
+/// Evaluates fitness by testing how well each strategy blocks pre-generated threats.
 pub struct ThreatDefenseFitness;
 
 impl EvaluateFitness for ThreatDefenseFitness {
@@ -105,25 +103,16 @@ impl EvaluateFitness for ThreatDefenseFitness {
     }
 }
 
-/// Evaluates fitness by playing each strategy against minimax opponents at
-/// multiple depths. The score reflects the strongest minimax performance:
+/// Evaluates fitness by playing each strategy against minimax at multiple depths.
+/// Minimax plays as Black; the evaluated strategy plays as White.
 ///
-/// - If any minimax wins: use the quickest win (fewest moves).
-/// - If all minimax lose: use the one that lasted longest (most moves).
+/// Across depths, keeps the minimax win with the fewest turns (or the strategy win
+/// with the most turns if minimax never wins). Deeper searches that cannot improve
+/// on the current best are skipped.
 ///
-/// Depths are iterated smallest to largest. Each subsequent depth is cut off
-/// at the best turn count so far (deeper search that can't improve is skipped).
-///
-/// Minimax plays as black; the evaluated strategy plays as white.
-///
-/// **Without `scoring_depth`:** fitness = `turn_count` (longer loss = better) or
-/// `1000 - turn_count` (faster win = better).
-///
-/// **With `scoring_depth`:** fitness = per-move quality + game-length score.
-/// Quality is the average per-move contribution (delta + proximity bonus), scaled
-/// to `[0, 1000]`. Game-length uses the same formula as the no-scoring path.
-/// The quality component (~[400, 600]) dominates; length (~[9, 50] for losses,
-/// ~[950, 991] for wins) acts as a tiebreaker. Wins always land well above losses.
+/// Without `scoring_depth`: fitness is game length (longer survival or faster win).
+/// With `scoring_depth`: fitness combines average per-move quality with game length;
+/// quality dominates and length acts as a tiebreaker.
 pub struct MinimaxFitness {
     game: Game,
     depths: Vec<u32>,
@@ -142,8 +131,7 @@ impl MinimaxFitness {
         }
     }
 
-    /// The earliest the first player (minimax/black) can win: 5 stones placed
-    /// on turns 1, 3, 5, 7, 9.
+    /// Minimum turns for Black to win: 5 stones on alternating turns starting from turn 1.
     const FASTEST_WIN_TURNS: usize = 9;
 
     fn evaluate_single(&self, strategy: &dyn Strategy, rng: &mut fastrand::Rng) -> f32 {
@@ -226,15 +214,7 @@ impl MinimaxFitness {
                 .as_ref()
                 .or(strategy_win.as_ref())
                 .map_or(0.0, |r| {
-                    let white_moves = f32::from(
-                        u16::try_from(r.turn_count / 2).expect("white move count fits u16"),
-                    );
-                    let quality = (r.score_sum / white_moves + 1.0) * 500.0;
-                    let length = match r.outcome {
-                        Outcome::WhiteWins => 1000.0 - turns_as_f32(r.turn_count),
-                        Outcome::BlackWins | Outcome::Draw => turns_as_f32(r.turn_count),
-                    };
-                    quality + length
+                    scoring_depth_fitness(r.score_sum, r.turn_count, r.outcome)
                 }),
         }
     }
@@ -278,40 +258,45 @@ fn log_minimax_scores<S: Strategy>(strategies: &[S], scores: &[FitnessScore]) {
     }
 }
 
+/// Fitness formula used when `scoring_depth` is set.
+///
+/// Sums average per-move quality (dominant signal) and game length (tiebreaker).
+/// Longer losses and faster wins both score higher; wins land well above losses.
+fn scoring_depth_fitness(score_sum: f32, turn_count: usize, outcome: Outcome) -> f32 {
+    let white_moves = f32::from(u16::try_from(turn_count / 2).expect("white move count fits u16"));
+    let quality = (score_sum / white_moves + 1.0) * 500.0;
+    let length = match outcome {
+        Outcome::WhiteWins => 1000.0 - turns_as_f32(turn_count),
+        Outcome::BlackWins | Outcome::Draw => turns_as_f32(turn_count),
+    };
+    quality + length
+}
+
 fn turns_as_f32(turns: usize) -> f32 {
     f32::from(u16::try_from(turns).expect("turn count fits in u16"))
 }
 
-/// Compact result used within [`MinimaxFitness::evaluate_single`] to track the best
-/// minimax win and best strategy win across depth iterations.
+/// Tracks the best game result across depth iterations in [`MinimaxFitness::evaluate_single`].
 struct EvalResult {
     turn_count: usize,
     outcome: Outcome,
-    /// Sum of per-move contributions for White's moves; `0.0` when `scoring_depth` is `None`.
-    /// Each contribution is the score delta plus [`PROXIMITY_BONUS`] when the move is within
-    /// proximity of existing stones.
+    /// Sum of per-move contributions (delta + proximity bonus) for White's moves;
+    /// `0.0` when `scoring_depth` is `None`.
     score_sum: f32,
 }
 
-/// Tiebreaker added to each White move's contribution when the move is within
-/// [`PROXIMITY_RADIUS`](crate::bitboard::PROXIMITY_RADIUS) of any existing stone.
+/// Bonus added to each White move within [`PROXIMITY_RADIUS`](crate::bitboard::PROXIMITY_RADIUS)
+/// of any existing stone.
 ///
-/// With very few stones on the board the `before`/`after` delta is completely flat: Black has
-/// four independent build directions and any single White placement blocks at most one, so every
-/// position yields the same evaluation at any search depth.  This constant injects a gradient so
-/// "near the action" beats "far corner" even when the depth signal is uninformative.
-///
-/// The value sits an order of magnitude above the flat early-game noise floor (~0.0001 at
-/// depth 4) and well below the smallest meaningful blocking signal at the recommended depth of
-/// 4+ (~0.009 for an open-two).  Numerically equal to `Score::OPEN_THREE / Score::WIN`.
+/// With very few stones the depth delta is flat across all positions — Black can pivot among
+/// four independent build directions so no single White placement changes the evaluation.
+/// This nudges nearby moves above far corners as a tiebreaker without overriding real
+/// tactical signals at the recommended depth of 4+.
 const PROXIMITY_BONUS: f32 = 0.001;
 
-/// Per-game observer for [`MinimaxFitness`]. Enforces an optional move limit and
-/// accumulates per-move score contributions for White's moves when `scoring_depth` is set.
-/// Each contribution is `(after − before).normalized() + proximity`, where `before` is
-/// `-score_move(prev_board, Black, black_pos, depth)`, `after` is
-/// `score_move(board, White, position, depth)`, and `proximity` is [`PROXIMITY_BONUS`] when
-/// `position` is within proximity of existing stones and `0` otherwise.
+/// Per-game observer for [`MinimaxFitness`]. Enforces an optional move limit and accumulates
+/// per-move score contributions for White when `scoring_depth` is set. Each contribution
+/// combines the symmetric depth delta with a [`PROXIMITY_BONUS`] for moves near existing stones.
 struct MinimaxObserver {
     move_limit: Option<usize>,
     scoring_depth: Option<u32>,
@@ -374,7 +359,7 @@ impl GameObserver for MinimaxObserver {
     }
 }
 
-/// Enum for polymorphic fitness evaluator dispatch.
+/// Polymorphic dispatch over all fitness evaluator variants.
 #[enum_dispatch(EvaluateFitness)]
 #[derive(strum::Display)]
 #[allow(clippy::enum_variant_names)]
@@ -405,10 +390,9 @@ mod tests {
 
         let scores = evaluator.evaluate(&strategies, &mut rng);
 
-        // Indexed by original position: a=2nd (score 2), b=1st (score 3), c=3rd (score 1)
-        assert_eq!(scores[0], FitnessScore::new(2.0)); // a
-        assert_eq!(scores[1], FitnessScore::new(3.0)); // b
-        assert_eq!(scores[2], FitnessScore::new(1.0)); // c
+        assert_eq!(scores[0], FitnessScore::new(2.0)); // a finished 2nd
+        assert_eq!(scores[1], FitnessScore::new(3.0)); // b finished 1st
+        assert_eq!(scores[2], FitnessScore::new(1.0)); // c finished 3rd
     }
 
     #[test]
@@ -424,7 +408,7 @@ mod tests {
 
         let scores = evaluator.evaluate(&strategies, &mut rng);
 
-        assert_eq!(scores[0], FitnessScore::new(3.0)); // population_size - 0
+        assert_eq!(scores[0], FitnessScore::new(3.0));
         assert_eq!(scores[1], FitnessScore::new(2.0));
         assert_eq!(scores[2], FitnessScore::new(1.0));
     }
@@ -438,8 +422,7 @@ mod tests {
 
     #[test]
     fn move_limit_returns_none_when_game_exceeds_limit() {
-        // Black wins in 9 turns; limit of 5 should cut it off
-        let (black, white) = ScriptedStrategy::black_wins();
+        let (black, white) = ScriptedStrategy::black_wins(); // Black wins in 9 turns; limit 5 cuts it off
         let mut board = Board::new();
         let mut observer = MinimaxObserver::new(Some(5), None);
         let mut rng = fastrand::Rng::with_seed(42);
@@ -451,8 +434,7 @@ mod tests {
 
     #[test]
     fn move_limit_returns_result_when_game_finishes_before_limit() {
-        // Black wins in 9 turns; limit of 20 allows completion
-        let (black, white) = ScriptedStrategy::black_wins();
+        let (black, white) = ScriptedStrategy::black_wins(); // Black wins in 9 turns; limit 20 allows completion
         let mut board = Board::new();
         let mut observer = MinimaxObserver::new(Some(20), None);
         let mut rng = fastrand::Rng::with_seed(42);
@@ -508,8 +490,7 @@ mod tests {
     fn observer_accumulates_score_only_for_white() {
         use crate::position::Position;
 
-        // Four Black stones in a row — White must block at (7, 9) to prevent a win.
-        // That threat gives the blocking move a non-zero minimax score at depth 1.
+        // Four Black stones in a row — blocking at (7,9) yields a non-zero score; Black's move doesn't.
         let mut board = Board::new();
         let pos = |row, col| PositionId::from_position(Position::new(row, col));
         board.place(pos(7, 5), Stone::Black).unwrap();
@@ -543,8 +524,7 @@ mod tests {
 
     #[test]
     fn white_move_without_prior_black_move_skips_scoring() {
-        // White moves first — no Black move has been stored yet, so no delta
-        // can be computed and score_sum must stay zero.
+        // No stored Black move means there is no baseline to compute a delta from.
         let mut observer = MinimaxObserver::new(None, Some(1));
         let board = Board::new();
         let position = board.empty_position_ids()[0];
@@ -558,10 +538,7 @@ mod tests {
     fn blocking_imminent_win_scores_higher_than_ignoring() {
         use crate::position::Position;
 
-        // Black has three stones in a row; Black's next move (7,8) creates an
-        // open four — an immediate winning threat.  Both observers see the same
-        // `before` (derived from the board before Black's move).  The blocking
-        // observer responds at (7,9); the ignoring observer plays the corner.
+        // Black extends three-in-a-row to an open four; one observer blocks, the other plays corner.
         let mut board_before_black = Board::new();
         let pos = |row, col| PositionId::from_position(Position::new(row, col));
         board_before_black.place(pos(7, 5), Stone::Black).unwrap();
@@ -599,10 +576,8 @@ mod tests {
     fn proximity_bonus_applied_near_stones_not_at_corner() {
         use crate::position::Position;
 
-        // Board with only 1 Black stone at center.  The depth signal is
-        // completely flat at any depth (all positions score identically), so
-        // the entire score difference between the two observers must come from
-        // the proximity bonus alone.
+        // With one Black stone the depth signal is flat, so any score difference
+        // comes from the proximity bonus alone.
         let board_before_black = Board::new();
         let black_pos = PositionId::center();
         let mut board_after_black = board_before_black;
@@ -623,7 +598,7 @@ mod tests {
             nearby_observer.score_sum,
             corner_observer.score_sum,
         );
-        // Deltas are identical (flat signal), so the gap is exactly PROXIMITY_BONUS.
+        // The gap equals exactly PROXIMITY_BONUS because the deltas are identical.
         assert_eq!(
             nearby_observer.score_sum - corner_observer.score_sum,
             PROXIMITY_BONUS,
@@ -631,10 +606,41 @@ mod tests {
     }
 
     #[test]
+    fn longer_loss_scores_higher_than_shorter_loss() {
+        // Same quality, different lengths — the length component must differentiate them.
+        let short = scoring_depth_fitness(0.0, 9, Outcome::BlackWins);
+        let long = scoring_depth_fitness(0.0, 21, Outcome::BlackWins);
+        assert!(
+            long > short,
+            "longer loss ({long}) should beat shorter loss ({short})"
+        );
+    }
+
+    #[test]
+    fn faster_win_scores_higher_than_slower_win() {
+        let fast = scoring_depth_fitness(0.0, 9, Outcome::WhiteWins);
+        let slow = scoring_depth_fitness(0.0, 25, Outcome::WhiteWins);
+        assert!(
+            fast > slow,
+            "faster win ({fast}) should beat slower win ({slow})"
+        );
+    }
+
+    #[test]
+    fn win_scores_higher_than_loss_with_equal_quality() {
+        // At equal quality a win beats a loss at any length.  The invariant does not hold
+        // across extreme quality differences, but equal quality is the realistic baseline.
+        let win = scoring_depth_fitness(0.0, 225, Outcome::WhiteWins);
+        let loss = scoring_depth_fitness(0.0, 225, Outcome::BlackWins);
+        assert!(
+            win > loss,
+            "win ({win}) should beat loss ({loss}) at equal quality"
+        );
+    }
+
+    #[test]
     fn score_accumulates_across_multiple_white_moves() {
-        // Play a full scripted game (Black wins in 9 turns → 4 White moves).
-        // Each White move is preceded by a Black move, so all four contribute
-        // to score_sum via the stored prev_black_move.
+        // All four White moves in a 9-turn game are preceded by Black moves, so each contributes.
         let (black, white) = ScriptedStrategy::black_wins();
         let mut board = Board::new();
         let mut observer = MinimaxObserver::new(None, Some(1));
