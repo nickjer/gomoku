@@ -5,7 +5,7 @@ use tracing::{debug, info, instrument, trace};
 
 use crate::board::Board;
 use crate::game::{Game, GameObserver, Play};
-use crate::minimax::{MinimaxStrategy, board_score, score_move};
+use crate::minimax::{MinimaxStrategy, score_move};
 use crate::outcome::Outcome;
 use crate::position_id::PositionId;
 use crate::stone::Stone;
@@ -280,13 +280,15 @@ struct EvalResult {
 }
 
 /// Per-game observer for [`MinimaxFitness`]. Enforces an optional move limit and
-/// accumulates per-move score deltas (after − before) for white's moves when `scoring_depth` is
-/// set. Using deltas rather than absolute scores rewards moves that improve White's position and
-/// penalizes moves that allow Black's threats to grow unchecked.
+/// accumulates per-move score deltas (after − before) for White's moves when `scoring_depth` is
+/// set. `before` is `-score_move(prev_board, Black, black_pos, depth)` (White's eval after
+/// Black's last move); `after` is `score_move(board, White, position, depth)`. Both use the same
+/// depth, so the delta purely measures how much White's position improved from the move.
 struct MinimaxObserver {
     move_limit: Option<usize>,
     scoring_depth: Option<u32>,
     score_sum: f32,
+    prev_black_move: Option<(Board, PositionId)>,
 }
 
 impl MinimaxObserver {
@@ -295,6 +297,7 @@ impl MinimaxObserver {
             move_limit,
             scoring_depth,
             score_sum: 0.0,
+            prev_black_move: None,
         }
     }
 }
@@ -307,20 +310,29 @@ impl GameObserver for MinimaxObserver {
         {
             return ControlFlow::Break(());
         }
-        if let (Stone::White, Some(depth)) = (stone, self.scoring_depth) {
-            let before = board_score(board, stone);
-            let after = score_move(board, stone, position, depth);
-            let delta = (after - before).normalized();
-            trace!(
-                row = position.row(),
-                col = position.col(),
-                move_count = board.move_count(),
-                before = before.normalized(),
-                after = after.normalized(),
-                delta,
-                "White move delta"
-            );
-            self.score_sum += delta;
+        if let Some(depth) = self.scoring_depth {
+            match stone {
+                Stone::Black => {
+                    self.prev_black_move = Some((*board, position));
+                }
+                Stone::White => {
+                    if let Some((ref prev_board, black_pos)) = self.prev_black_move {
+                        let before = -score_move(prev_board, Stone::Black, black_pos, depth);
+                        let after = score_move(board, Stone::White, position, depth);
+                        let delta = (after - before).normalized();
+                        trace!(
+                            row = position.row(),
+                            col = position.col(),
+                            move_count = board.move_count(),
+                            before = before.normalized(),
+                            after = after.normalized(),
+                            delta,
+                            "White move delta"
+                        );
+                        self.score_sum += delta;
+                    }
+                }
+            }
         }
         ControlFlow::Continue(())
     }
@@ -491,5 +503,74 @@ mod tests {
         let _ = observer.on_move(Stone::White, position, &board);
 
         assert_eq!(observer.score_sum, 0.0);
+    }
+
+    #[test]
+    fn white_move_without_prior_black_move_skips_scoring() {
+        // White moves first — no Black move has been stored yet, so no delta
+        // can be computed and score_sum must stay zero.
+        let mut observer = MinimaxObserver::new(None, Some(1));
+        let board = Board::new();
+        let position = board.empty_position_ids()[0];
+
+        let _ = observer.on_move(Stone::White, position, &board);
+
+        assert_eq!(observer.score_sum, 0.0);
+    }
+
+    #[test]
+    fn blocking_imminent_win_scores_higher_than_ignoring() {
+        use crate::position::Position;
+
+        // Black has three stones in a row; Black's next move (7,8) creates an
+        // open four — an immediate winning threat.  Both observers see the same
+        // `before` (derived from the board before Black's move).  The blocking
+        // observer responds at (7,9); the ignoring observer plays the corner.
+        let mut board_before_black = Board::new();
+        let pos = |row, col| PositionId::from_position(Position::new(row, col));
+        board_before_black.place(pos(7, 5), Stone::Black).unwrap();
+        board_before_black.place(pos(7, 6), Stone::Black).unwrap();
+        board_before_black.place(pos(7, 7), Stone::Black).unwrap();
+        let black_pos = pos(7, 8);
+
+        let mut board_after_black = board_before_black;
+        board_after_black.place(black_pos, Stone::Black).unwrap();
+
+        let scoring_depth = 1;
+
+        let mut blocking_observer = MinimaxObserver::new(None, Some(scoring_depth));
+        let _ = blocking_observer.on_move(Stone::Black, black_pos, &board_before_black);
+        let _ = blocking_observer.on_move(Stone::White, pos(7, 9), &board_after_black);
+
+        let mut ignoring_observer = MinimaxObserver::new(None, Some(scoring_depth));
+        let _ = ignoring_observer.on_move(Stone::Black, black_pos, &board_before_black);
+        let _ = ignoring_observer.on_move(Stone::White, pos(0, 0), &board_after_black);
+
+        assert!(
+            blocking_observer.score_sum > 0.0,
+            "blocking an open-four threat should yield a positive delta (got {})",
+            blocking_observer.score_sum,
+        );
+        assert!(
+            blocking_observer.score_sum > ignoring_observer.score_sum,
+            "blocking ({}) should outscore ignoring ({}) Black's open-four threat",
+            blocking_observer.score_sum,
+            ignoring_observer.score_sum,
+        );
+    }
+
+    #[test]
+    fn score_accumulates_across_multiple_white_moves() {
+        // Play a full scripted game (Black wins in 9 turns → 4 White moves).
+        // Each White move is preceded by a Black move, so all four contribute
+        // to score_sum via the stored prev_black_move.
+        let (black, white) = ScriptedStrategy::black_wins();
+        let mut board = Board::new();
+        let mut observer = MinimaxObserver::new(None, Some(1));
+        let mut rng = fastrand::Rng::with_seed(42);
+
+        let _ = Freestyle.play_from(&mut board, &black, &white, &mut observer, &mut rng);
+
+        assert_ne!(observer.score_sum, 0.0);
     }
 }
