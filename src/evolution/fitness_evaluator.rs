@@ -335,8 +335,8 @@ impl GameObserver for MinimaxObserver {
                         let before = -score_move(prev_board, Stone::Black, black_pos, depth);
                         let after = score_move(board, Stone::White, position, depth);
                         let delta = (after - before).normalized();
-                        let occupied = *board.bitboard(Stone::Black)
-                            | *board.bitboard(Stone::White);
+                        let occupied =
+                            *board.bitboard(Stone::Black) | *board.bitboard(Stone::White);
                         let proximity = if occupied.expand_nearby().is_set(position) {
                             PROXIMITY_BONUS
                         } else {
@@ -579,6 +579,41 @@ mod tests {
             "blocking ({}) should outscore ignoring ({}) Black's open-four threat",
             blocking_observer.score_sum,
             ignoring_observer.score_sum,
+        );
+    }
+
+    #[test]
+    fn proximity_bonus_applied_near_stones_not_at_corner() {
+        use crate::position::Position;
+
+        // Board with only 1 Black stone at center.  The depth signal is
+        // completely flat at any depth (all positions score identically), so
+        // the entire score difference between the two observers must come from
+        // the proximity bonus alone.
+        let board_before_black = Board::new();
+        let black_pos = PositionId::center();
+        let mut board_after_black = board_before_black;
+        board_after_black.place(black_pos, Stone::Black).unwrap();
+        let pos = |row, col| PositionId::from_position(Position::new(row, col));
+
+        let mut nearby_observer = MinimaxObserver::new(None, Some(1));
+        let _ = nearby_observer.on_move(Stone::Black, black_pos, &board_before_black);
+        let _ = nearby_observer.on_move(Stone::White, pos(7, 6), &board_after_black);
+
+        let mut corner_observer = MinimaxObserver::new(None, Some(1));
+        let _ = corner_observer.on_move(Stone::Black, black_pos, &board_before_black);
+        let _ = corner_observer.on_move(Stone::White, pos(0, 0), &board_after_black);
+
+        assert!(
+            nearby_observer.score_sum > corner_observer.score_sum,
+            "nearby ({}) should beat corner ({}) when depth signal is flat",
+            nearby_observer.score_sum,
+            corner_observer.score_sum,
+        );
+        // Deltas are identical (flat signal), so the gap is exactly PROXIMITY_BONUS.
+        assert_eq!(
+            nearby_observer.score_sum - corner_observer.score_sum,
+            PROXIMITY_BONUS,
         );
     }
 
