@@ -219,6 +219,8 @@ cargo install flamegraph
 cargo flamegraph --release -o tmp/flamegraph.svg -- evolve conv-small -p 4 -o tmp/profile -g 1
 ```
 
+Be sure to copy the target release builds under the local `tmp/` directory so that you can perform profiling without having to rebuild when comparing two or more builds.
+
 **Key optimization insights:**
 
 Both conv and cluster layers use a two-phase workspace pattern: gather input data into a contiguous buffer (per-position layout), then compute dot products against transposed weights (`[STRIDE][OUT_C]` layout). The workspace eliminates bounds checks from the hot dot-product loop. For conv, the stride is `IN_C * K * K`; for cluster, it is `IN_C * F`.
