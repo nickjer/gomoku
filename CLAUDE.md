@@ -219,7 +219,7 @@ cargo install flamegraph
 cargo flamegraph --release -o tmp/flamegraph.svg -- evolve conv-small -p 4 -o tmp/profile -g 1
 ```
 
-Be sure to copy the target release builds under the local `tmp/` directory so that you can perform profiling without having to rebuild when comparing two or more builds.
+Be sure to copy the target release builds under the local `tmp/` directory so that you can perform profiling without having to rebuild when comparing two or more builds. You do not need to create the `tmp/` directory as it already exists.
 
 **Key optimization insights:**
 
