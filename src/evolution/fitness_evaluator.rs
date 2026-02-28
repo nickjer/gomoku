@@ -274,16 +274,31 @@ fn turns_as_f32(turns: usize) -> f32 {
 struct EvalResult {
     turn_count: usize,
     outcome: Outcome,
-    /// Sum of per-move score deltas (`score_after_move` − `score_before_move`, normalized) for white's
-    /// moves; `0.0` when `scoring_depth` is `None`.
+    /// Sum of per-move contributions for White's moves; `0.0` when `scoring_depth` is `None`.
+    /// Each contribution is the score delta plus [`PROXIMITY_BONUS`] when the move is within
+    /// proximity of existing stones.
     score_sum: f32,
 }
 
+/// Tiebreaker added to each White move's contribution when the move is within
+/// [`PROXIMITY_RADIUS`](crate::bitboard::PROXIMITY_RADIUS) of any existing stone.
+///
+/// With very few stones on the board the `before`/`after` delta is completely flat: Black has
+/// four independent build directions and any single White placement blocks at most one, so every
+/// position yields the same evaluation at any search depth.  This constant injects a gradient so
+/// "near the action" beats "far corner" even when the depth signal is uninformative.
+///
+/// The value sits an order of magnitude above the flat early-game noise floor (~0.0001 at
+/// depth 4) and well below the smallest meaningful blocking signal at the recommended depth of
+/// 4+ (~0.009 for an open-two).  Numerically equal to `Score::OPEN_THREE / Score::WIN`.
+const PROXIMITY_BONUS: f32 = 0.001;
+
 /// Per-game observer for [`MinimaxFitness`]. Enforces an optional move limit and
-/// accumulates per-move score deltas (after − before) for White's moves when `scoring_depth` is
-/// set. `before` is `-score_move(prev_board, Black, black_pos, depth)` (White's eval after
-/// Black's last move); `after` is `score_move(board, White, position, depth)`. Both use the same
-/// depth, so the delta purely measures how much White's position improved from the move.
+/// accumulates per-move score contributions for White's moves when `scoring_depth` is set.
+/// Each contribution is `(after − before).normalized() + proximity`, where `before` is
+/// `-score_move(prev_board, Black, black_pos, depth)`, `after` is
+/// `score_move(board, White, position, depth)`, and `proximity` is [`PROXIMITY_BONUS`] when
+/// `position` is within proximity of existing stones and `0` otherwise.
 struct MinimaxObserver {
     move_limit: Option<usize>,
     scoring_depth: Option<u32>,
@@ -320,6 +335,13 @@ impl GameObserver for MinimaxObserver {
                         let before = -score_move(prev_board, Stone::Black, black_pos, depth);
                         let after = score_move(board, Stone::White, position, depth);
                         let delta = (after - before).normalized();
+                        let occupied = *board.bitboard(Stone::Black)
+                            | *board.bitboard(Stone::White);
+                        let proximity = if occupied.expand_nearby().is_set(position) {
+                            PROXIMITY_BONUS
+                        } else {
+                            0.0
+                        };
                         trace!(
                             row = position.row(),
                             col = position.col(),
@@ -327,9 +349,10 @@ impl GameObserver for MinimaxObserver {
                             before = before.normalized(),
                             after = after.normalized(),
                             delta,
-                            "White move delta"
+                            proximity,
+                            "White move scored"
                         );
-                        self.score_sum += delta;
+                        self.score_sum += delta + proximity;
                     }
                 }
             }
