@@ -5,7 +5,7 @@ use tracing::{debug, info, instrument, trace};
 use crate::board::Board;
 use crate::evolution::fitness_score::FitnessScore;
 use crate::game::{Game, GameObserver, Play};
-use crate::minimax::{MinimaxStrategy, score_move};
+use crate::minimax::{MinimaxStrategy, TranspositionTable, score_move};
 use crate::outcome::Outcome;
 use crate::position_id::PositionId;
 use crate::stone::Stone;
@@ -212,6 +212,7 @@ struct MinimaxObserver {
     scoring_depth: Option<u32>,
     score_sum: f32,
     prev_black_move: Option<(Board, PositionId)>,
+    tt: TranspositionTable,
 }
 
 impl MinimaxObserver {
@@ -221,6 +222,7 @@ impl MinimaxObserver {
             scoring_depth,
             score_sum: 0.0,
             prev_black_move: None,
+            tt: TranspositionTable::new(),
         }
     }
 }
@@ -240,8 +242,9 @@ impl GameObserver for MinimaxObserver {
                 }
                 Stone::White => {
                     if let Some((ref prev_board, black_pos)) = self.prev_black_move {
-                        let before = -score_move(prev_board, Stone::Black, black_pos, depth);
-                        let after = score_move(board, Stone::White, position, depth);
+                        let before =
+                            -score_move(prev_board, Stone::Black, black_pos, depth, &mut self.tt);
+                        let after = score_move(board, Stone::White, position, depth, &mut self.tt);
                         let delta = (after - before).normalized();
                         let occupied =
                             *board.bitboard(Stone::Black) | *board.bitboard(Stone::White);

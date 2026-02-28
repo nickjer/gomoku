@@ -5,6 +5,7 @@ use crate::stone::Stone;
 
 use super::lines::{LINE_LENGTHS, NUM_LINES, POSITION_LINES, score_line};
 use super::score::Score;
+use super::tt::ZOBRIST;
 
 /// Saved state for a single place operation so `undo` can restore in O(1).
 ///
@@ -24,6 +25,7 @@ struct UndoFrame {
 /// Undo is O(1): `place` saves the 4 affected line scores onto a stack, and
 /// `undo` restores them without recomputing `score_line`.
 pub struct SearchState {
+    hash: u64,
     board: Board,
     line_black: [u16; NUM_LINES],
     line_white: [u16; NUM_LINES],
@@ -66,7 +68,16 @@ impl SearchState {
             total_score += line_scores[i];
         }
 
+        let zobrist = &*ZOBRIST;
+        let mut hash = 0u64;
+        for position in PositionId::iter() {
+            if let Some(stone) = board.stone(position) {
+                hash ^= zobrist[usize::from(position)][usize::from(stone)];
+            }
+        }
+
         Self {
+            hash,
             board: *board,
             line_black,
             line_white,
@@ -87,6 +98,7 @@ impl SearchState {
     /// can restore in O(1).
     pub fn place(&mut self, position: PositionId, stone: Stone) {
         self.board.place_unchecked(position, stone);
+        self.hash ^= ZOBRIST[usize::from(position)][usize::from(stone)];
 
         let lines = POSITION_LINES.get(position);
         let old_total = self.total_score;
@@ -138,6 +150,7 @@ impl SearchState {
     /// O(1) — no `score_line` recomputation needed.
     pub fn undo(&mut self, position: PositionId, stone: Stone) {
         self.board.undo(position, stone);
+        self.hash ^= ZOBRIST[usize::from(position)][usize::from(stone)];
 
         let frame = self.undo_stack.pop().expect("undo without matching place");
 
@@ -164,6 +177,11 @@ impl SearchState {
             Stone::Black => self.total_score,
             Stone::White => -self.total_score,
         }
+    }
+
+    #[must_use]
+    pub fn hash(&self) -> u64 {
+        self.hash
     }
 
     #[must_use]

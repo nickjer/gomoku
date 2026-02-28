@@ -15,3 +15,12 @@ impl Stone {
         }
     }
 }
+
+impl From<Stone> for usize {
+    fn from(stone: Stone) -> usize {
+        match stone {
+            Stone::Black => 0,
+            Stone::White => 1,
+        }
+    }
+}

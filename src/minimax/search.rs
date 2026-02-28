@@ -6,6 +6,7 @@ use crate::stone::Stone;
 
 use super::score::Score;
 use super::search_state::SearchState;
+use super::tt::{Bound, TranspositionTable};
 
 pub const DEFAULT_DEPTH: u32 = 4;
 type CandidateBuf = [PositionId; PositionId::COUNT];
@@ -106,13 +107,14 @@ pub fn find_best_move(
     rng.shuffle(&mut candidates[blocking_count..]);
 
     let mut killers = KillerTable::new(depth);
+    let mut tt = TranspositionTable::new();
 
     let mut best_move = candidates[0];
     let mut best_score = Score::MIN;
 
     for &candidate in candidates.iter() {
         state.place(candidate, stone);
-        let score = score_after_place(&mut state, stone, depth, -best_score, &mut killers);
+        let score = score_after_place(&mut state, stone, depth, -best_score, &mut killers, &mut tt);
         state.undo(candidate, stone);
 
         if score > best_score {
@@ -126,11 +128,17 @@ pub fn find_best_move(
 
 /// Scores `position` for `stone` on `board` using negamax to `depth`.
 /// Returns the score from `stone`'s perspective.
-pub fn score_move(board: &Board, stone: Stone, position: PositionId, depth: u32) -> Score {
+pub fn score_move(
+    board: &Board,
+    stone: Stone,
+    position: PositionId,
+    depth: u32,
+    tt: &mut TranspositionTable,
+) -> Score {
     let mut state = SearchState::from_board(board);
     state.place(position, stone);
     let mut killers = KillerTable::new(depth);
-    score_after_place(&mut state, stone, depth, Score::WIN, &mut killers)
+    score_after_place(&mut state, stone, depth, Score::WIN, &mut killers, tt)
 }
 
 /// Evaluates the current `state` (where `stone` just played) to `depth` remaining plies.
@@ -144,6 +152,7 @@ fn score_after_place(
     depth: u32,
     beta: Score,
     killers: &mut KillerTable,
+    tt: &mut TranspositionTable,
 ) -> Score {
     match state.outcome() {
         Some(Outcome::BlackWins | Outcome::WhiteWins) => Score::win_at_depth(state.move_count()),
@@ -156,6 +165,7 @@ fn score_after_place(
             beta,
             stone.opponent(),
             killers,
+            tt,
         ),
     }
 }
@@ -167,9 +177,24 @@ fn negamax(
     beta: Score,
     stone: Stone,
     killers: &mut KillerTable,
+    tt: &mut TranspositionTable,
 ) -> Score {
     if depth == 0 || state.is_full() {
         return state.evaluate(stone);
+    }
+
+    let alpha_orig = alpha;
+    let mut beta = beta;
+
+    if let Some((tt_score, bound)) = tt.probe(state.hash(), depth) {
+        match bound {
+            Bound::Exact => return tt_score,
+            Bound::Lower => alpha = alpha.max(tt_score),
+            Bound::Upper => beta = beta.min(tt_score),
+        }
+        if alpha >= beta {
+            return beta;
+        }
     }
 
     let mut buf = [PositionId::default(); PositionId::COUNT];
@@ -200,13 +225,22 @@ fn negamax(
                 Score::win_at_depth(state.move_count())
             }
             Some(Outcome::Draw) => Score::DRAW,
-            None => -negamax(state, depth - 1, -beta, -alpha, stone.opponent(), killers),
+            None => -negamax(
+                state,
+                depth - 1,
+                -beta,
+                -alpha,
+                stone.opponent(),
+                killers,
+                tt,
+            ),
         };
 
         state.undo(candidate, stone);
 
         if score >= beta {
             killers.put(depth - 1, candidate);
+            tt.store(state.hash(), depth, beta, Bound::Lower);
             return beta;
         }
         if score > alpha {
@@ -214,6 +248,12 @@ fn negamax(
         }
     }
 
+    let bound = if alpha > alpha_orig {
+        Bound::Exact
+    } else {
+        Bound::Upper
+    };
+    tt.store(state.hash(), depth, alpha, bound);
     alpha
 }
 
@@ -231,6 +271,16 @@ mod tests {
         for &(row, col) in positions {
             board.place(pos(row, col), stone).unwrap();
         }
+    }
+
+    fn score_move_fresh(board: &Board, stone: Stone, position: PositionId, depth: u32) -> Score {
+        score_move(
+            board,
+            stone,
+            position,
+            depth,
+            &mut TranspositionTable::new(),
+        )
     }
 
     #[test]
@@ -506,7 +556,7 @@ mod tests {
         place_stones(&mut board, Stone::Black, &[(7, 5), (7, 6), (7, 7), (7, 8)]);
         place_stones(&mut board, Stone::White, &[(8, 5), (8, 6), (8, 7)]);
 
-        let score = score_move(&board, Stone::Black, pos(7, 4), 4);
+        let score = score_move_fresh(&board, Stone::Black, pos(7, 4), 4);
 
         // 4 Black + 3 White + 1 placed = 8 stones total
         assert_eq!(score, Score::win_at_depth(8));
@@ -518,7 +568,7 @@ mod tests {
         place_stones(&mut board, Stone::Black, &[(7, 6), (7, 7), (7, 8)]);
 
         // Extends to _XXXX_ on row 7 — only pattern on the board
-        let score = score_move(&board, Stone::Black, pos(7, 5), 0);
+        let score = score_move_fresh(&board, Stone::Black, pos(7, 5), 0);
 
         assert_eq!(score, Score::OPEN_FOUR);
     }
@@ -530,7 +580,7 @@ mod tests {
         place_stones(&mut board, Stone::White, &[(7, 5)]);
 
         // Extends to OXXXX_ on row 7 (blocked on left by White)
-        let score = score_move(&board, Stone::Black, pos(7, 9), 0);
+        let score = score_move_fresh(&board, Stone::Black, pos(7, 9), 0);
 
         assert_eq!(score, Score::HALF_OPEN_FOUR);
     }
@@ -541,7 +591,7 @@ mod tests {
         place_stones(&mut board, Stone::Black, &[(7, 5), (7, 6), (7, 8)]);
 
         // Creates XX_XX on row 7 (gap at 7), plus two open twos
-        let score = score_move(&board, Stone::Black, pos(7, 9), 0);
+        let score = score_move_fresh(&board, Stone::Black, pos(7, 9), 0);
 
         assert_eq!(score, Score::HALF_OPEN_FOUR + Score::OPEN_TWO * 2);
     }
@@ -553,12 +603,12 @@ mod tests {
         place_stones(&mut board, Stone::White, &[(2, 2), (2, 3)]);
 
         // At depth 0: Black's open four minus White's open two at (2,2)-(2,3)
-        let shallow = score_move(&board, Stone::Black, pos(7, 5), 0);
+        let shallow = score_move_fresh(&board, Stone::Black, pos(7, 5), 0);
         assert_eq!(shallow, Score::OPEN_FOUR - Score::OPEN_TWO);
 
         // At depth 4, search discovers the forced win: opponent blocks one
         // end, Black completes the other → win at 8 stones
-        let deep = score_move(&board, Stone::Black, pos(7, 5), 4);
+        let deep = score_move_fresh(&board, Stone::Black, pos(7, 5), 4);
         assert_eq!(deep, Score::win_at_depth(8));
     }
 
@@ -568,8 +618,8 @@ mod tests {
         place_stones(&mut board, Stone::Black, &[(7, 5), (7, 6), (7, 7), (7, 8)]);
         place_stones(&mut board, Stone::White, &[(8, 5), (8, 6), (8, 7)]);
 
-        let winning = score_move(&board, Stone::Black, pos(7, 4), 4);
-        let other = score_move(&board, Stone::Black, pos(6, 5), 4);
+        let winning = score_move_fresh(&board, Stone::Black, pos(7, 4), 4);
+        let other = score_move_fresh(&board, Stone::Black, pos(6, 5), 4);
 
         assert!(winning > other);
     }
@@ -581,8 +631,8 @@ mod tests {
 
         // Place at (7,6) creates _XXX_ (open three on row 7).
         // Depth 1 gives no opponent response — same as depth 0.
-        let depth_0 = score_move(&board, Stone::Black, pos(7, 6), 0);
-        let depth_1 = score_move(&board, Stone::Black, pos(7, 6), 1);
+        let depth_0 = score_move_fresh(&board, Stone::Black, pos(7, 6), 0);
+        let depth_1 = score_move_fresh(&board, Stone::Black, pos(7, 6), 1);
 
         assert_eq!(depth_0, Score::OPEN_THREE);
         assert_eq!(depth_1, Score::OPEN_THREE);
@@ -595,7 +645,7 @@ mod tests {
 
         // Place at (7,6) creates _XXX_. At depth 2, White blocks one end,
         // reducing it to a half-open three.
-        let score = score_move(&board, Stone::Black, pos(7, 6), 2);
+        let score = score_move_fresh(&board, Stone::Black, pos(7, 6), 2);
 
         assert_eq!(score, Score::HALF_OPEN_THREE);
     }
@@ -608,7 +658,7 @@ mod tests {
         // Place at (7,5) creates _XXXX_. White can only block one end;
         // Black completes five on the other. Win at move count 6:
         //   mc=4 (initial place), mc=5 (White blocks), mc=6 (Black wins).
-        let score = score_move(&board, Stone::Black, pos(7, 5), 3);
+        let score = score_move_fresh(&board, Stone::Black, pos(7, 5), 3);
 
         assert_eq!(score, Score::win_at_depth(6));
     }
@@ -622,7 +672,7 @@ mod tests {
         // (7,5)), Black plays (7,10) creating the jump four XXX_X at (7,6..10)
         // with gap at (7,9), plus the half-open three (7,6..8) still scores
         // (one end blocked by White, the other open toward the gap).
-        let score = score_move(&board, Stone::Black, pos(7, 6), 3);
+        let score = score_move_fresh(&board, Stone::Black, pos(7, 6), 3);
 
         assert_eq!(score, Score::HALF_OPEN_FOUR + Score::HALF_OPEN_THREE);
     }
@@ -634,7 +684,7 @@ mod tests {
 
         // Place at (7,5) creates _XXXX_. At depth 2, White blocks one end,
         // reducing it to a half-open four.
-        let score = score_move(&board, Stone::Black, pos(7, 5), 2);
+        let score = score_move_fresh(&board, Stone::Black, pos(7, 5), 2);
 
         assert_eq!(score, Score::HALF_OPEN_FOUR);
     }
@@ -645,7 +695,7 @@ mod tests {
         place_stones(&mut board, Stone::Black, &[(7, 6), (7, 7), (7, 8)]);
 
         // White blocks Black's left side — board still favors Black
-        let score = score_move(&board, Stone::White, pos(7, 5), 0);
+        let score = score_move_fresh(&board, Stone::White, pos(7, 5), 0);
 
         assert_eq!(score, -Score::HALF_OPEN_THREE);
     }
