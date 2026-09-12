@@ -19,7 +19,7 @@ pub trait RunSelection {
 
 /// Enum for polymorphic selection dispatch.
 #[enum_dispatch(RunSelection)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Selection {
     Tournament,
 }

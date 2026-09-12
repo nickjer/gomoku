@@ -80,6 +80,12 @@ impl Evolver {
     }
 
     #[must_use]
+    pub fn selection(mut self, selection: Selection) -> Self {
+        self.selection = selection;
+        self
+    }
+
+    #[must_use]
     pub fn evaluators(mut self, evaluators: Vec<(FitnessEvaluator, FitnessWeight)>) -> Self {
         self.evaluators = evaluators;
         self
@@ -337,6 +343,16 @@ mod tests {
         assert_eq!(evolver.elitism, 4);
         assert!((evolver.crossover_rate - 0.9).abs() < f64::EPSILON);
         assert!((evolver.mutation_rate - 0.2).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn selection_builder_sets_selection() {
+        use super::super::selection::{Tournament, TournamentMode};
+
+        let selection: Selection = Tournament::new(2, TournamentMode::WithoutReplacement).into();
+        let evolver = Evolver::new().selection(selection);
+
+        assert_eq!(evolver.selection, selection);
     }
 
     #[test]

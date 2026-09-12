@@ -1,46 +1,44 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::{Result, bail};
-use clap::{Args, Subcommand};
+use anyhow::{Result, anyhow};
+use clap::Args;
 use tracing::{info, warn};
 
-use super::evolvable_strategies::{
-    EvolvableStrategies, load_strategies_from_directory, save_strategies_to_directory,
+use super::saved_strategy::{
+    SavedStrategy, StrategyKind, read_strategy_directory, write_strategy_directory,
 };
 use super::{create_rng, setup_logging};
 use crate::evolution::crossover::Crossover;
 use crate::evolution::fitness_weight::FitnessWeight;
 use crate::evolution::mutation::Mutation;
+use crate::evolution::selection::{Tournament as TournamentSelection, TournamentMode};
 use crate::evolution::{
     Evolver, MinimaxFitness, Population, ThreatDefenseFitness, TournamentFitness,
 };
 use crate::game::{Freestyle, Game, RandomOpening};
 use crate::nn::{ClusterSmall, ClusterTiny, ConvSmall, ConvTiny};
-use crate::strategy::EvolvableStrategy;
+use crate::strategy::{EvolvableStrategy, Strategy};
 use crate::tournament::Swiss;
 
-/// Strategy subcommands for evolution.
-#[derive(Debug, Subcommand)]
-pub enum EvolveCommand {
-    /// Evolve `ConvTiny` strategies (3x3 squares, 32 channels, ~10K params)
-    ConvTiny(EvolutionArgs),
-    /// Evolve `ConvSmall` strategies (3x3 squares, 64 channels, ~112K params)
-    ConvSmall(EvolutionArgs),
-    /// Evolve `ClusterTiny` strategies (cluster expansion, 32 channels, ~10K params)
-    ClusterTiny(EvolutionArgs),
-    /// Evolve `ClusterSmall` strategies (cluster expansion, 64 channels, ~112K params)
-    ClusterSmall(EvolutionArgs),
-}
-
-/// Common evolution parameters shared by all strategies.
+/// Arguments for evolving strategies.
 #[derive(Debug, Args)]
-pub struct CommonArgs {
+pub struct EvolveArgs {
+    /// Kind of strategy to evolve (read from the --input files when omitted)
+    #[arg(value_enum, required_unless_present = "input")]
+    pub kind: Option<StrategyKind>,
+
     /// Load strategies from directory (skips random generation)
     #[arg(short, long, value_name = "DIR")]
     pub input: Option<PathBuf>,
 
-    /// Number of random strategies to generate (required without --input)
-    #[arg(short, long, value_name = "N")]
+    /// Number of random strategies to generate
+    #[arg(
+        short,
+        long,
+        value_name = "N",
+        required_unless_present = "input",
+        conflicts_with = "input"
+    )]
     pub population: Option<usize>,
 
     /// Output directory for evolved strategies
@@ -55,6 +53,10 @@ pub struct CommonArgs {
     #[arg(short, long, default_value = "2")]
     pub elitism: usize,
 
+    /// How tournament selection samples the individuals it compares
+    #[arg(long, value_enum, default_value_t = TournamentMode::WithReplacement)]
+    pub selection: TournamentMode,
+
     /// Crossover probability (0.0 to 1.0)
     #[arg(long, default_value = "0.8")]
     pub crossover_rate: f64,
@@ -62,6 +64,10 @@ pub struct CommonArgs {
     /// Mutation probability (0.0 to 1.0)
     #[arg(long, default_value = "0.1")]
     pub mutation_rate: f64,
+
+    /// Gaussian mutation sigma
+    #[arg(long, default_value = "0.01")]
+    pub sigma: f32,
 
     /// RNG seed for reproducibility
     #[arg(long)]
@@ -100,78 +106,81 @@ pub struct CommonArgs {
     pub log_level: Option<String>,
 }
 
-/// Arguments for evolving strategies.
-#[derive(Debug, Args)]
-pub struct EvolutionArgs {
-    #[command(flatten)]
-    pub common: CommonArgs,
-
-    /// Gaussian mutation sigma
-    #[arg(long, default_value = "0.01")]
-    pub sigma: f32,
-}
-
 /// Runs the evolve subcommand.
 ///
 /// # Errors
 ///
 /// Returns an error if logging setup fails, strategy loading/generation fails,
 /// serialization fails, or file I/O fails.
-pub fn run_evolve(cmd: &EvolveCommand) -> Result<()> {
-    match cmd {
-        EvolveCommand::ConvTiny(args) => {
-            run_evolution::<ConvTiny>(args, "ConvTiny", extract_conv_tiny, wrap_conv_tiny)
+pub fn run_evolve(args: &EvolveArgs) -> Result<()> {
+    setup_logging(args.log_level.as_deref())?;
+
+    let loaded = match &args.input {
+        Some(dir) => {
+            let loaded = read_strategy_directory(dir)?;
+            info!(path = %dir.display(), count = loaded.len(), "Loaded strategies from directory");
+            Some(loaded)
         }
-        EvolveCommand::ConvSmall(args) => {
-            run_evolution::<ConvSmall>(args, "ConvSmall", extract_conv_small, wrap_conv_small)
-        }
-        EvolveCommand::ClusterTiny(args) => run_evolution::<ClusterTiny>(
-            args,
-            "ClusterTiny",
-            extract_cluster_tiny,
-            wrap_cluster_tiny,
-        ),
-        EvolveCommand::ClusterSmall(args) => run_evolution::<ClusterSmall>(
-            args,
-            "ClusterSmall",
-            extract_cluster_small,
-            wrap_cluster_small,
-        ),
+        None => None,
+    };
+
+    // An explicit kind wins; otherwise the loaded files say what they hold.
+    let kind = match (args.kind, &loaded) {
+        (Some(kind), _) => kind,
+        (None, Some(loaded)) => StrategyKind::from(&loaded[0]),
+        (None, None) => unreachable!("clap requires a kind or an --input directory"),
+    };
+    info!(?kind, "Starting evolution");
+
+    match kind {
+        StrategyKind::ConvTiny => run_evolution::<ConvTiny>(args, kind, loaded),
+        StrategyKind::ConvSmall => run_evolution::<ConvSmall>(args, kind, loaded),
+        StrategyKind::ClusterTiny => run_evolution::<ClusterTiny>(args, kind, loaded),
+        StrategyKind::ClusterSmall => run_evolution::<ClusterSmall>(args, kind, loaded),
     }
 }
 
-fn run_evolution<S: EvolvableStrategy>(
-    args: &EvolutionArgs,
-    type_name: &str,
-    extract: fn(EvolvableStrategies) -> Result<Vec<S>>,
-    wrap: fn(Vec<S>) -> EvolvableStrategies,
-) -> Result<()> {
-    setup_logging(args.common.log_level.as_deref())?;
-    let mut rng = create_rng(args.common.seed);
+fn run_evolution<S>(
+    args: &EvolveArgs,
+    kind: StrategyKind,
+    loaded: Option<Vec<SavedStrategy>>,
+) -> Result<()>
+where
+    S: EvolvableStrategy + Clone + Into<SavedStrategy> + TryFrom<SavedStrategy>,
+{
+    let mut rng = create_rng(args.seed);
 
-    let strategies = load_or_generate(&args.common, extract, &mut rng)?;
-    info!(
-        strategy_type = type_name,
-        population = strategies.len(),
-        "Starting evolution"
-    );
+    let strategies: Vec<S> = if let Some(loaded) = loaded {
+        loaded
+            .into_iter()
+            .map(|saved| {
+                let found = StrategyKind::from(&saved);
+                let label = saved.label().to_owned();
+                S::try_from(saved).map_err(|_| anyhow!("{label} holds a {found:?}, not a {kind:?}"))
+            })
+            .collect::<Result<_>>()?
+    } else {
+        let population = args
+            .population
+            .expect("clap requires --population without --input");
+        info!(count = population, "Generating random strategies");
+        (0..population)
+            .map(|i| S::random(format!("{i}"), &mut rng))
+            .collect()
+    };
 
-    let evolver = create_evolver(
-        &args.common,
-        Crossover::Uniform,
-        Mutation::Gaussian { sigma: args.sigma },
-    );
+    let evolver = create_evolver(args);
 
-    let output = &args.common.output;
-    let generations = args.common.generations;
-    let checkpoint_every = args.common.checkpoint_every;
+    let output = &args.output;
+    let generations = args.generations;
+    let checkpoint_every = args.checkpoint_every;
     let gen_width = generations.max(1).to_string().len();
 
     let population: Population<S> = evolver.evolve(strategies, &mut rng, |population| {
         let generation = population.generation();
         if checkpoint_every > 0 && generation % checkpoint_every == 0 {
             let dir = output.join(format!("gen_{generation:0gen_width$}"));
-            if let Err(err) = save_population(&dir, population, wrap) {
+            if let Err(err) = save_population(&dir, population) {
                 warn!(%err, "Failed to save checkpoint");
             }
         }
@@ -182,34 +191,30 @@ fn run_evolution<S: EvolvableStrategy>(
     let already_checkpointed = checkpoint_every > 0 && final_gen.is_multiple_of(checkpoint_every);
     if !already_checkpointed {
         let dir = output.join(format!("gen_{final_gen:0gen_width$}"));
-        save_population(&dir, &population, wrap)?;
+        save_population(&dir, &population)?;
     }
 
     Ok(())
 }
 
-fn save_population<S: EvolvableStrategy>(
+fn save_population<S: EvolvableStrategy + Clone + Into<SavedStrategy>>(
     dir: &Path,
     population: &Population<S>,
-    wrap: fn(Vec<S>) -> EvolvableStrategies,
 ) -> Result<()> {
-    let strategies: Vec<S> = population
+    let saved: Vec<SavedStrategy> = population
         .individuals()
         .iter()
-        .map(|ind| {
-            let strategy = ind.strategy();
-            S::from_genes(strategy.label().to_string(), strategy.genes().clone())
-        })
+        .map(|individual| individual.strategy().clone().into())
         .collect();
-    save_strategies_to_directory(dir, &wrap(strategies))?;
+    write_strategy_directory(dir, &saved)?;
     info!(path = %dir.display(), "Saved strategies");
     Ok(())
 }
 
-fn create_evolver(common: &CommonArgs, crossover: Crossover, mutation: Mutation) -> Evolver {
-    let game: Game = if common.opening_moves > 0 {
+fn create_evolver(args: &EvolveArgs) -> Evolver {
+    let game: Game = if args.opening_moves > 0 {
         RandomOpening {
-            moves: common.opening_moves,
+            moves: args.opening_moves,
         }
         .into()
     } else {
@@ -217,104 +222,91 @@ fn create_evolver(common: &CommonArgs, crossover: Crossover, mutation: Mutation)
     };
 
     let mut evaluators = Vec::new();
-    if common.tournament_weight > 0.0 {
+    if args.tournament_weight > 0.0 {
         evaluators.push((
             TournamentFitness::new(Swiss.into(), game.clone()).into(),
-            FitnessWeight::new(common.tournament_weight),
+            FitnessWeight::new(args.tournament_weight),
         ));
     }
-    if common.defense_weight > 0.0 {
+    if args.defense_weight > 0.0 {
         evaluators.push((
             ThreatDefenseFitness.into(),
-            FitnessWeight::new(common.defense_weight),
+            FitnessWeight::new(args.defense_weight),
         ));
     }
-    if common.minimax_weight > 0.0 {
+    if args.minimax_weight > 0.0 {
         evaluators.push((
             MinimaxFitness::new(
                 game.clone(),
-                common.minimax_depth.clone(),
-                common.minimax_scoring_depth,
+                args.minimax_depth.clone(),
+                args.minimax_scoring_depth,
             )
             .into(),
-            FitnessWeight::new(common.minimax_weight),
+            FitnessWeight::new(args.minimax_weight),
         ));
     }
 
     Evolver::new()
         .evaluators(evaluators)
-        .generations(common.generations)
-        .elitism(common.elitism)
-        .crossover(crossover)
-        .crossover_rate(common.crossover_rate)
-        .mutation(mutation)
-        .mutation_rate(common.mutation_rate)
+        .generations(args.generations)
+        .elitism(args.elitism)
+        .selection(TournamentSelection::new(3, args.selection).into())
+        .crossover(Crossover::Uniform)
+        .crossover_rate(args.crossover_rate)
+        .mutation(Mutation::Gaussian { sigma: args.sigma })
+        .mutation_rate(args.mutation_rate)
 }
 
-fn load_or_generate<S: EvolvableStrategy>(
-    common: &CommonArgs,
-    extract: fn(EvolvableStrategies) -> Result<Vec<S>>,
-    rng: &mut fastrand::Rng,
-) -> Result<Vec<S>> {
-    if let Some(ref input_dir) = common.input {
-        let strategies = load_strategies_from_directory(input_dir)?;
-        info!(path = %input_dir.display(), "Loaded strategies from directory");
-        extract(strategies)
-    } else {
-        let population = common
-            .population
-            .ok_or_else(|| anyhow::anyhow!("--population required when not using --input"))?;
-        info!(count = population, "Generating random strategies");
-        Ok(generate_random(population, rng))
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        args: EvolveArgs,
     }
-}
 
-fn generate_random<S: EvolvableStrategy>(population: usize, rng: &mut fastrand::Rng) -> Vec<S> {
-    (0..population)
-        .map(|i| S::random(format!("{i}"), rng))
-        .collect()
-}
+    #[test]
+    fn kind_and_population_are_required_without_input() {
+        assert!(TestCli::try_parse_from(["gomoku", "-p", "4", "-o", "out"]).is_err());
+        assert!(TestCli::try_parse_from(["gomoku", "conv-tiny", "-o", "out"]).is_err());
 
-fn extract_conv_tiny(strategies: EvolvableStrategies) -> Result<Vec<ConvTiny>> {
-    match strategies {
-        EvolvableStrategies::ConvTiny { strategies } => Ok(strategies),
-        _ => bail!("Expected ConvTiny strategies, found different type"),
+        let cli = TestCli::try_parse_from(["gomoku", "conv-tiny", "-p", "4", "-o", "out"]).unwrap();
+
+        assert_eq!(cli.args.kind, Some(StrategyKind::ConvTiny));
+        assert_eq!(cli.args.population, Some(4));
     }
-}
 
-fn extract_conv_small(strategies: EvolvableStrategies) -> Result<Vec<ConvSmall>> {
-    match strategies {
-        EvolvableStrategies::ConvSmall { strategies } => Ok(strategies),
-        _ => bail!("Expected ConvSmall strategies, found different type"),
+    #[test]
+    fn kind_is_optional_with_input() {
+        let cli = TestCli::try_parse_from(["gomoku", "-i", "dir", "-o", "out"]).unwrap();
+
+        assert_eq!(cli.args.kind, None);
+        assert_eq!(cli.args.input, Some(PathBuf::from("dir")));
     }
-}
 
-fn extract_cluster_tiny(strategies: EvolvableStrategies) -> Result<Vec<ClusterTiny>> {
-    match strategies {
-        EvolvableStrategies::ClusterTiny { strategies } => Ok(strategies),
-        _ => bail!("Expected ClusterTiny strategies, found different type"),
+    #[test]
+    fn population_conflicts_with_input() {
+        assert!(TestCli::try_parse_from(["gomoku", "-i", "dir", "-p", "4", "-o", "out"]).is_err());
     }
-}
 
-fn extract_cluster_small(strategies: EvolvableStrategies) -> Result<Vec<ClusterSmall>> {
-    match strategies {
-        EvolvableStrategies::ClusterSmall { strategies } => Ok(strategies),
-        _ => bail!("Expected ClusterSmall strategies, found different type"),
+    #[test]
+    fn selection_defaults_to_with_replacement() {
+        let cli = TestCli::try_parse_from(["gomoku", "-i", "dir", "-o", "out"]).unwrap();
+        assert_eq!(cli.args.selection, TournamentMode::WithReplacement);
+
+        let cli = TestCli::try_parse_from([
+            "gomoku",
+            "-i",
+            "dir",
+            "-o",
+            "out",
+            "--selection",
+            "without-replacement",
+        ])
+        .unwrap();
+        assert_eq!(cli.args.selection, TournamentMode::WithoutReplacement);
     }
-}
-
-fn wrap_conv_tiny(strategies: Vec<ConvTiny>) -> EvolvableStrategies {
-    EvolvableStrategies::ConvTiny { strategies }
-}
-
-fn wrap_conv_small(strategies: Vec<ConvSmall>) -> EvolvableStrategies {
-    EvolvableStrategies::ConvSmall { strategies }
-}
-
-fn wrap_cluster_tiny(strategies: Vec<ClusterTiny>) -> EvolvableStrategies {
-    EvolvableStrategies::ClusterTiny { strategies }
-}
-
-fn wrap_cluster_small(strategies: Vec<ClusterSmall>) -> EvolvableStrategies {
-    EvolvableStrategies::ClusterSmall { strategies }
 }

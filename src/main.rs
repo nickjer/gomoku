@@ -26,8 +26,8 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 use crate::cli::{
-    EvolveCommand, InspectArgs, InteractiveArgs, PlayArgs, run_evolve, run_inspect,
-    run_interactive, run_play,
+    EvolveArgs, InspectArgs, InteractiveArgs, PlayArgs, run_evolve, run_inspect, run_interactive,
+    run_play,
 };
 
 #[derive(Parser)]
@@ -41,8 +41,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Evolve strategies using a genetic algorithm
-    #[command(subcommand)]
-    Evolve(EvolveCommand),
+    Evolve(EvolveArgs),
     /// Print strategy summary statistics
     Inspect(InspectArgs),
     /// Play interactively against a strategy

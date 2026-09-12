@@ -47,6 +47,7 @@ Strategies implement the `Strategy` trait. Evolvable strategies additionally imp
 
 - **Neural network strategies (`ConvTiny`, `ConvSmall`, `ClusterTiny`, `ClusterSmall`)**: one `NeuralNetworkStrategy` in `src/nn/`, differing only in encoder and size
 - **InteractiveStrategy**: TUI-based human input, generic over `Backend` for testability
+- **`SavedStrategy`** (`src/cli/saved_strategy.rs`): the one list of strategy kinds the CLI knows, and the `.bin` file format (postcard, label included). One variant per kind; `derive_more::From`/`TryInto` wrap and unwrap it, `strum::EnumDiscriminants` derives `StrategyKind` for the `evolve <KIND>` argument, and the variant doc lines are the `--help` text. Adding a kind touches three places: the alias in `nn`, one variant here, and one arm in `run_evolve` (the compiler flags the missing arm).
 
 Move selection for neural network strategies:
 1. Ask the encoder for a board symmetry (random for `Square3x3`, none for `ClusterExpansion`)
@@ -96,7 +97,7 @@ The `Evolver` orchestrates the genetic algorithm. Call `evolve(strategies, rng, 
 
 **Subcommands:** `evolve`, `inspect`, `play`, `interactive`
 
-The `evolve` command has strategy-type subcommands: `conv-tiny`, `conv-small`, `cluster-tiny`, `cluster-small`.
+The `evolve` command takes the strategy kind as its first argument: `conv-tiny`, `conv-small`, `cluster-tiny`, `cluster-small`. With `-i` the kind is read from the files and may be omitted; giving it anyway checks that the files hold that kind.
 
 ```bash
 # Evolve ConvTiny CNN strategies
@@ -117,8 +118,11 @@ cargo run --release -- evolve conv-small -p 8 -o tmp/output -g 20 --checkpoint-e
 # Evolve with random opening positions (4 pre-placed stones per game)
 cargo run --release -- evolve conv-small -p 8 -o tmp/output -g 20 --opening-moves 4 --seed 42
 
-# Continue evolving from a checkpoint
-cargo run --release -- evolve conv-small -i tmp/output/gen_05 -o tmp/output2 -g 50
+# Continue evolving from a checkpoint (kind comes from the files)
+cargo run --release -- evolve -i tmp/output/gen_05 -o tmp/output2 -g 50
+
+# Tournament selection that never draws the same individual twice
+cargo run --release -- evolve conv-tiny -p 16 -o tmp/output --selection without-replacement
 
 # Inspect a strategy's summary statistics
 cargo run --release -- inspect tmp/output/gen_20/1_*.bin
@@ -137,14 +141,16 @@ cargo run --release -- interactive minimax:4 --opening-moves 6
 
 **Interactive controls:** Arrow keys/hjkl to move cursor, Enter/Space to place stone, q/Esc to quit.
 
-**Output format:** The output directory contains `gen_NNN/` sub-directories (zero-padded). Each sub-directory holds individual binary files `{rank}_{label}.bin` using postcard serialization. The final generation is always saved; intermediate checkpoints are controlled by `--checkpoint-every`.
+**Output format:** The output directory contains `gen_NNN/` sub-directories (zero-padded). Each sub-directory holds individual binary files `{rank}_{label}.bin`: a postcard-serialized `SavedStrategy` holding the label and the network. The final generation is always saved; intermediate checkpoints are controlled by `--checkpoint-every`.
 
 **Evolve options:**
-- `-p/--population` (required without `-i`): Number of random strategies to generate
+- `KIND` (required without `-i`): Strategy kind to evolve
+- `-p/--population` (required without `-i`, conflicts with it): Number of random strategies to generate
 - `-o/--output` (required): Output directory for evolved strategies
 - `-i/--input`: Load strategies from directory (skips random generation)
 - `-g/--generations` [10]: Number of generations to evolve
 - `-e/--elitism` [2]: Number of top performers preserved each generation
+- `--selection` [with-replacement]: How tournament selection draws the individuals it compares (`with-replacement` / `without-replacement`)
 - `--crossover-rate` [0.8]: Crossover probability
 - `--mutation-rate` [0.1]: Mutation probability
 - `--sigma` [0.01]: Gaussian mutation sigma

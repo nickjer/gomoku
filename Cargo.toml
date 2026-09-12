@@ -21,7 +21,7 @@ serde = { version = "1", features = ["derive"] }
 strum = { version = "0.27", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-derive_more = { version = "2.1.1", features = ["add", "add_assign", "not", "from"] }
+derive_more = { version = "2.1.1", features = ["add", "add_assign", "display", "not", "from", "try_into"] }
 
 [dev-dependencies]
 tempfile = "3"

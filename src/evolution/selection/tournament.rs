@@ -1,16 +1,16 @@
 use super::{HasFitness, RunSelection};
 
-/// Mode for tournament selection sampling.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// How tournament selection draws the individuals it compares.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum TournamentMode {
-    /// Same individual may appear multiple times in the tournament.
+    /// The same individual may be drawn more than once.
     WithReplacement,
-    /// Each individual can only appear once in the tournament.
+    /// Every drawn individual is distinct.
     WithoutReplacement,
 }
 
 /// Tournament selection: selects the best individual from a random sample.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Tournament {
     size: usize,
     mode: TournamentMode,

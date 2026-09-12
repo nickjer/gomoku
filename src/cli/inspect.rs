@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::Args;
 
-use super::load_strategy_data;
+use super::saved_strategy::read_strategy_file;
 
 /// Arguments for the inspect subcommand.
 #[derive(Debug, Args)]
@@ -18,10 +18,9 @@ pub struct InspectArgs {
 ///
 /// Returns an error if strategy loading fails.
 pub fn run_inspect(args: &InspectArgs) -> Result<()> {
-    let (label, data) = load_strategy_data(&args.path)?;
+    let strategy = read_strategy_file(&args.path)?;
 
-    println!("Label: {label}");
-    println!("{data}");
+    println!("{strategy}");
 
     Ok(())
 }

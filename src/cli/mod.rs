@@ -1,25 +1,22 @@
-mod evolvable_strategies;
 mod evolve;
 mod inspect;
 mod interactive;
 mod play;
+mod saved_strategy;
 
-pub use evolve::{EvolveCommand, run_evolve};
+pub use evolve::{EvolveArgs, run_evolve};
 pub use inspect::{InspectArgs, run_inspect};
 pub use interactive::{InteractiveArgs, run_interactive};
 pub use play::{PlayArgs, run_play};
 
-use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use clap::ValueEnum;
-use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use crate::minimax::{DEFAULT_DEPTH, MinimaxStrategy};
-use crate::nn::{ClusterSmall, ClusterTiny, ConvSmall, ConvTiny};
-use crate::strategy::{EvolvableStrategy, Strategy};
+use crate::strategy::Strategy;
+use saved_strategy::read_strategy_file;
 
 /// Sets up logging with the specified log level.
 ///
@@ -57,124 +54,6 @@ pub fn create_rng(seed: Option<u64>) -> fastrand::Rng {
     }
 }
 
-use crate::evolution::selection::{Selection, Tournament, TournamentMode};
-use crate::game::{Freestyle, Game};
-use crate::tournament::{Swiss, Tournament as CompetitionTournament};
-
-/// CLI-exposed game variants (excludes test-only variants).
-#[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum CliGame {
-    Freestyle,
-}
-
-impl From<CliGame> for Game {
-    fn from(cli: CliGame) -> Self {
-        match cli {
-            CliGame::Freestyle => Freestyle.into(),
-        }
-    }
-}
-
-/// CLI-exposed tournament variants (excludes test-only variants).
-#[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum CliTournament {
-    Swiss,
-}
-
-impl From<CliTournament> for CompetitionTournament {
-    fn from(cli: CliTournament) -> Self {
-        match cli {
-            CliTournament::Swiss => Swiss.into(),
-        }
-    }
-}
-
-/// CLI-exposed selection mode for tournament selection.
-#[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum CliSelectionMode {
-    WithReplacement,
-    WithoutReplacement,
-}
-
-impl From<CliSelectionMode> for Selection {
-    fn from(cli: CliSelectionMode) -> Self {
-        let mode = match cli {
-            CliSelectionMode::WithReplacement => TournamentMode::WithReplacement,
-            CliSelectionMode::WithoutReplacement => TournamentMode::WithoutReplacement,
-        };
-        Tournament::new(3, mode).into()
-    }
-}
-
-/// Binary-serializable strategy data (weights only, label comes from filename).
-#[derive(Debug, Serialize, Deserialize)]
-pub enum StrategyData {
-    ConvTiny {
-        weights: <ConvTiny as EvolvableStrategy>::Genes,
-    },
-    ConvSmall {
-        weights: <ConvSmall as EvolvableStrategy>::Genes,
-    },
-    ClusterTiny {
-        weights: <ClusterTiny as EvolvableStrategy>::Genes,
-    },
-    ClusterSmall {
-        weights: <ClusterSmall as EvolvableStrategy>::Genes,
-    },
-}
-
-impl std::fmt::Display for StrategyData {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::ConvTiny { weights } => write!(formatter, "{weights}"),
-            Self::ConvSmall { weights } => write!(formatter, "{weights}"),
-            Self::ClusterTiny { weights } => write!(formatter, "{weights}"),
-            Self::ClusterSmall { weights } => write!(formatter, "{weights}"),
-        }
-    }
-}
-
-/// Loads raw strategy data from a binary file.
-///
-/// Returns the label (derived from filename) and the deserialized [`StrategyData`].
-///
-/// # Errors
-///
-/// Returns an error if the file cannot be read or deserialization fails.
-pub fn load_strategy_data(path: &Path) -> Result<(String, StrategyData)> {
-    let cwd = std::env::current_dir().unwrap_or_default();
-    let label = path
-        .strip_prefix(&cwd)
-        .unwrap_or(path)
-        .display()
-        .to_string();
-
-    let bytes = fs::read(path).with_context(|| format!("Failed to read: {}", path.display()))?;
-
-    let data: StrategyData = postcard::from_bytes(&bytes)
-        .with_context(|| format!("Failed to deserialize: {}", path.display()))?;
-
-    Ok((label, data))
-}
-
-/// Loads a single strategy from a binary file as a trait object.
-///
-/// # Errors
-///
-/// Returns an error if the file cannot be read or deserialization fails.
-pub fn load_strategy_from_file(path: &Path) -> Result<Box<dyn Strategy>> {
-    let (label, data) = load_strategy_data(path)?;
-
-    Ok(match data {
-        StrategyData::ConvTiny { weights } => Box::new(ConvTiny::from_genes(label, weights)),
-        StrategyData::ConvSmall { weights } => Box::new(ConvSmall::from_genes(label, weights)),
-        StrategyData::ClusterTiny { weights } => Box::new(ClusterTiny::from_genes(label, weights)),
-        StrategyData::ClusterSmall { weights } => {
-            Box::new(ClusterSmall::from_genes(label, weights))
-        }
-    })
-}
-
 /// Loads a strategy from a specifier: `"minimax"` / `"minimax:DEPTH"` or a file path.
 ///
 /// # Errors
@@ -189,5 +68,5 @@ pub fn load_strategy(specifier: &Path) -> Result<Box<dyn Strategy>> {
         let depth: u32 = depth_str.parse().context("Invalid minimax depth")?;
         return Ok(Box::new(MinimaxStrategy::new(depth)));
     }
-    load_strategy_from_file(specifier)
+    Ok(Box::new(read_strategy_file(specifier)?))
 }

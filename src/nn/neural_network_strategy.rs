@@ -1,3 +1,6 @@
+use std::fmt;
+
+use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
 use crate::board::Board;
@@ -13,7 +16,7 @@ use super::square3x3::Square3x3;
 use super::stone_channels::board_to_stone_channels;
 
 /// Plays the empty position that a neural network scores highest.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NeuralNetworkStrategy<Encoder, const CHANNELS: usize, const LAYERS: usize> {
     label: String,
     network: NeuralNetwork<Encoder, CHANNELS, LAYERS>,
@@ -30,6 +33,15 @@ pub type ClusterTiny = NeuralNetworkStrategy<ClusterExpansion<CLUSTER_COUNT>, 32
 
 /// Full cluster expansion, 64 channels, 4 layers. ~112K parameters.
 pub type ClusterSmall = NeuralNetworkStrategy<ClusterExpansion<CLUSTER_COUNT>, 64, 4>;
+
+impl<Encoder: NeighborhoodEncoder, const CHANNELS: usize, const LAYERS: usize> fmt::Display
+    for NeuralNetworkStrategy<Encoder, CHANNELS, LAYERS>
+{
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(formatter, "Label: {}", self.label)?;
+        write!(formatter, "{}", self.network)
+    }
+}
 
 impl<Encoder: NeighborhoodEncoder, const CHANNELS: usize, const LAYERS: usize> Strategy
     for NeuralNetworkStrategy<Encoder, CHANNELS, LAYERS>
@@ -189,6 +201,16 @@ mod tests {
                 "seed {seed}: {chosen:?} is not empty"
             );
         }
+    }
+
+    #[test]
+    fn display_shows_label_then_network() {
+        let mut rng = fastrand::Rng::with_seed(42);
+        let strategy = SquareStrategy::random("shown", &mut rng);
+
+        let text = strategy.to_string();
+
+        assert!(text.starts_with("Label: shown\nNeural network"), "{text}");
     }
 
     #[test]
