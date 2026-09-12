@@ -210,3 +210,27 @@ impl EvolvableStrategy for FakeEvolvableStrategy {
         }
     }
 }
+
+/// A `fmt::Write` sink that accepts `budget` bytes and then fails.
+///
+/// Used to exercise the error-propagation paths (`?`) inside `Display` impls,
+/// which cannot fail with an ordinary `String` sink.
+pub struct LimitedWriter {
+    budget: usize,
+}
+
+impl LimitedWriter {
+    pub const fn with_budget(budget: usize) -> Self {
+        Self { budget }
+    }
+}
+
+impl std::fmt::Write for LimitedWriter {
+    fn write_str(&mut self, text: &str) -> std::fmt::Result {
+        if text.len() > self.budget {
+            return Err(std::fmt::Error);
+        }
+        self.budget -= text.len();
+        Ok(())
+    }
+}

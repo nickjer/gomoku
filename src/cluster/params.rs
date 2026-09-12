@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::evolution::crossover::uniform_crossover;
 use crate::evolution::mutation::gaussian_mutate;
 use crate::nn::he_std;
+use crate::position_id::PositionId;
 use crate::position_map::PositionMap;
 
 use super::features::{NEIGHBOR_OFFSETS, compute_features};
@@ -76,15 +77,17 @@ impl<const IN_C: usize, const OUT_C: usize, const F: usize> ClusterParams<IN_C, 
     /// Returns the weight slice in `[IN_C * F][OUT_C]` layout.
     #[must_use]
     pub fn weights(&self) -> &[f32] {
-        assert!(self.weights.len() == Self::EXPECTED_WEIGHTS);
+        assert_eq!(self.weights.len(), Self::EXPECTED_WEIGHTS);
         &self.weights
     }
 
-    /// Returns the bias slice of length `OUT_C`.
+    /// Returns the bias as a fixed-size array of `OUT_C` values.
     #[must_use]
-    pub fn bias(&self) -> &[f32] {
-        assert!(self.bias.len() == OUT_C);
-        &self.bias
+    pub fn bias(&self) -> &[f32; OUT_C] {
+        self.bias
+            .as_slice()
+            .try_into()
+            .expect("bias length must equal OUT_C")
     }
 
     /// Applies the cluster layer to the input: gather features, then dot product.
@@ -92,9 +95,13 @@ impl<const IN_C: usize, const OUT_C: usize, const F: usize> ClusterParams<IN_C, 
     /// All dimensions (`IN_C`, `OUT_C`, `F`) are encoded in `Self`, ensuring separate
     /// monomorphizations per layer configuration.
     #[must_use]
-    pub fn cluster2d(&self, input: &PositionMap<f32>) -> PositionMap<f32> {
+    pub fn cluster2d(&self, input: &PositionMap<f32, IN_C>) -> PositionMap<f32, OUT_C> {
         let workspace = Self::gather_features(input);
-        Self::cluster2d_from_workspace(self.weights(), self.bias(), &workspace)
+        Self::cluster2d_from_workspace(
+            self.weights(),
+            self.bias(),
+            workspace.iter().map(|features| features.as_flattened()),
+        )
     }
 
     /// Performs uniform crossover with another set of parameters.
@@ -115,59 +122,72 @@ impl<const IN_C: usize, const OUT_C: usize, const F: usize> ClusterParams<IN_C, 
         }
     }
 
-    /// Gathers D8-equivariant polynomial features into the workspace buffer.
-    ///
-    /// For each board position and input channel, fetches the center + 8 neighbors
-    /// (zero-padded at edges), computes all 9 polynomial features, then stores
-    /// the first `F` into the workspace (F-truncation).
-    ///
-    /// When `F == 1` (pointwise), only the center value is needed — neighbor
-    /// gathering and polynomial computation are skipped entirely.
-    fn gather_features(input: &PositionMap<f32>) -> PositionMap<f32> {
-        if F == 1 {
-            // Pointwise: feature 0 is just the center value, no neighbors needed.
-            return PositionMap::from_fn(0.0, Self::STRIDE, |pos, workspace| {
-                workspace.copy_from_slice(input.get(pos));
-            });
-        }
-        PositionMap::from_fn(0.0, Self::STRIDE, |pos, workspace| {
-            let mut neighbors = [[0.0f32; IN_C]; 9];
-            neighbors[0].copy_from_slice(input.get(pos));
-            for (idx, offset) in NEIGHBOR_OFFSETS.iter().enumerate() {
-                if let Some(neighbor) = pos.offset(*offset) {
-                    neighbors[idx + 1].copy_from_slice(input.get(neighbor));
+    /// Gathers the first `F` D8-equivariant polynomial features per input
+    /// channel for each position (F-truncation). Neighbors outside the board
+    /// are zero-padded.
+    fn gather_features(input: &PositionMap<f32, IN_C>) -> PositionMap<[f32; F], IN_C> {
+        let mut workspace = PositionMap::new([0.0; F]);
+
+        for (pos, features) in PositionId::iter().zip(workspace.iter_mut()) {
+            // Center first, then the 8 neighbors; off-board neighbors stay zero.
+            let mut neighbors = [[0.0; IN_C]; 9];
+            neighbors[0] = *input.get(pos);
+            for (slot, offset) in neighbors[1..].iter_mut().zip(NEIGHBOR_OFFSETS) {
+                if let Some(neighbor) = pos.offset(offset) {
+                    *slot = *input.get(neighbor);
                 }
             }
-            for channel in 0..IN_C {
+            for (channel, channel_features) in features.iter_mut().enumerate() {
                 let raw: [f32; 9] = std::array::from_fn(|i| neighbors[i][channel]);
-                let features = compute_features(&raw);
-                workspace[channel * F..][..F].copy_from_slice(&features[..F]);
+                channel_features.copy_from_slice(&compute_features(&raw)[..F]);
             }
-        })
+        }
+        workspace
     }
 
-    /// Dot product of workspace features against weights + bias.
+    /// Dot product of each position's `STRIDE` gathered values against weights + bias.
+    /// `positions` must yield one slice per position in [`PositionId::iter`] order.
     ///
     /// This is an associated function (no `&self`) so that `weights` and `bias` arrive
-    /// as independent `&[f32]` parameters — LLVM's alias analysis can then prove
-    /// no aliasing with the output buffer, enabling auto-vectorization.
+    /// as independent parameters. LLVM's alias analysis can then prove they do not
+    /// alias the freshly allocated output, enabling auto-vectorization.
     #[must_use]
-    fn cluster2d_from_workspace(
+    fn cluster2d_from_workspace<'a>(
         weights: &[f32],
-        bias: &[f32],
-        workspace: &PositionMap<f32>,
-    ) -> PositionMap<f32> {
-        PositionMap::from_fn(0.0, OUT_C, |pos, output_channels| {
-            output_channels.copy_from_slice(bias);
-            let features = workspace.get(pos);
-            assert!(features.len() == Self::STRIDE);
+        bias: &[f32; OUT_C],
+        positions: impl ExactSizeIterator<Item = &'a [f32]>,
+    ) -> PositionMap<f32, OUT_C> {
+        let (weight_rows, remainder) = weights.as_chunks::<OUT_C>();
+        assert!(remainder.is_empty());
+        assert_eq!(weight_rows.len(), Self::STRIDE);
+        assert_eq!(positions.len(), PositionId::COUNT);
 
-            for (&feature_val, weight_row) in features.iter().zip(weights.chunks_exact(OUT_C)) {
+        let mut output = PositionMap::new(0.0);
+        for (output_channels, features) in output.iter_mut().zip(positions) {
+            assert_eq!(features.len(), Self::STRIDE);
+            *output_channels = *bias;
+            for (&feature_val, weight_row) in features.iter().zip(weight_rows) {
                 for (out_ch, &weight) in output_channels.iter_mut().zip(weight_row) {
                     *out_ch += feature_val * weight;
                 }
             }
-        })
+        }
+        output
+    }
+}
+
+/// Pointwise layers (`F == 1`): each position's `IN_C` input values are
+/// already exactly what gathering would produce, so the dot product can read
+/// the input directly.
+impl<const IN_C: usize, const OUT_C: usize> ClusterParams<IN_C, OUT_C, 1> {
+    /// Applies the layer without gathering. Same result as `cluster2d`.
+    #[must_use]
+    pub fn pointwise2d(&self, input: &PositionMap<f32, IN_C>) -> PositionMap<f32, OUT_C> {
+        Self::cluster2d_from_workspace(
+            self.weights(),
+            self.bias(),
+            input.iter().map(<[f32; IN_C]>::as_slice),
+        )
     }
 }
 
@@ -322,7 +342,7 @@ mod tests {
 
     #[test]
     fn bias_only_produces_constant_output() {
-        let input = PositionMap::new(0.0f32, 1);
+        let input = PositionMap::<f32, 1>::new(0.0);
         let weights = vec![0.0f32; 1 * 9 * 2];
         let bias = vec![1.5, -0.5];
         let params = ClusterParams::<1, 2, 9>::new(weights, bias);
@@ -338,8 +358,8 @@ mod tests {
     fn center_feature_passes_through_with_f1() {
         // F=1 means only center feature (feature[0] = raw center value)
         let center = PositionId::center();
-        let mut input = PositionMap::new(0.0f32, 1);
-        input.get_mut(center)[0] = 7.0;
+        let mut input = PositionMap::<f32, 1>::new(0.0);
+        *input.get_mut(center) = [7.0];
 
         // Weight=1.0 for the single feature, bias=0.0
         let weights = vec![1.0f32];
@@ -355,8 +375,8 @@ mod tests {
     #[test]
     fn edge_positions_use_zero_padding() {
         let corner = pos(0, 0);
-        let mut input = PositionMap::new(0.0f32, 1);
-        input.get_mut(corner)[0] = 1.0;
+        let mut input = PositionMap::<f32, 1>::new(0.0);
+        *input.get_mut(corner) = [1.0];
 
         // Use F=3 (center + ortho + diag) with weight=1 for each feature
         let weights = vec![1.0f32; 3];
@@ -373,8 +393,8 @@ mod tests {
     #[test]
     fn multiple_input_channels_are_combined() {
         let center = PositionId::center();
-        let mut input = PositionMap::new(0.0f32, 2);
-        input.get_mut(center).copy_from_slice(&[2.0, 3.0]);
+        let mut input = PositionMap::<f32, 2>::new(0.0);
+        *input.get_mut(center) = [2.0, 3.0];
 
         // F=1 (pointwise): stride = 2*1 = 2
         // Weights in [STRIDE][OUT_C] layout, OUT_C=1: [w_ch0_f0, w_ch1_f0]
@@ -391,8 +411,8 @@ mod tests {
     #[test]
     fn multiple_output_channels() {
         let center = PositionId::center();
-        let mut input = PositionMap::new(0.0f32, 1);
-        input.get_mut(center)[0] = 5.0;
+        let mut input = PositionMap::<f32, 1>::new(0.0);
+        *input.get_mut(center) = [5.0];
 
         // F=1, IN_C=1, OUT_C=2: stride=1, weights len = 1*2 = 2
         let weights = vec![1.0, 2.0]; // [feature0→out0, feature0→out1]
@@ -406,7 +426,7 @@ mod tests {
 
     #[test]
     fn successive_calls_produce_independent_results() {
-        let mut input1 = PositionMap::new(0.0f32, 2);
+        let mut input1 = PositionMap::<f32, 2>::new(0.0);
         input1.get_mut(PositionId::center())[0] = 5.0;
 
         let weights = vec![1.0; 2 * 9 * 1];
@@ -415,11 +435,81 @@ mod tests {
 
         let output1 = params.cluster2d(&input1);
 
-        let input2 = PositionMap::new(0.0f32, 2);
+        let input2 = PositionMap::<f32, 2>::new(0.0);
         let output2 = params.cluster2d(&input2);
 
         // First call should have non-zero at center, second should be zero
         assert_ne!(output1.get(PositionId::center()), &[0.0]);
         assert_eq!(output2.get(PositionId::center()), &[0.0]);
+    }
+
+    #[test]
+    fn display_shows_dimensions_and_per_feature_stats() {
+        let params = ClusterParams::<2, 4, 9>::new(vec![0.5f32; 2 * 9 * 4], vec![0.0f32; 4]);
+
+        let rendered = params.to_string();
+
+        assert!(rendered.starts_with("Cluster 2 -> 4, F=9\n"), "{rendered}");
+        // Each feature row aggregates IN_C * OUT_C = 8 weights.
+        assert!(rendered.contains("F0 (   Center) [8]:"), "{rendered}");
+        assert!(rendered.contains("F8 ( Diag-180) [8]:"), "{rendered}");
+        assert!(rendered.contains("Bias            [4]:"), "{rendered}");
+    }
+
+    // Same `<2, 4, 9>` instantiation as above: `cargo llvm-cov` reports
+    // coverage per single best instantiation.
+
+    #[test]
+    fn display_propagates_header_write_error() {
+        use std::fmt::Write as _;
+        let params = ClusterParams::<2, 4, 9>::new(vec![0.0f32; 2 * 9 * 4], vec![0.0f32; 4]);
+        let mut sink = crate::test_utils::LimitedWriter::with_budget(0);
+
+        assert!(write!(sink, "{params}").is_err());
+    }
+
+    #[test]
+    fn display_propagates_feature_row_write_error() {
+        use std::fmt::Write as _;
+        let params = ClusterParams::<2, 4, 9>::new(vec![0.0f32; 2 * 9 * 4], vec![0.0f32; 4]);
+        // Exactly enough budget for the header line, so the first feature row fails.
+        let header = "Cluster 2 -> 4, F=9\n";
+        let mut sink = crate::test_utils::LimitedWriter::with_budget(header.len());
+
+        assert!(write!(sink, "{params}").is_err());
+    }
+
+    #[test]
+    fn pointwise2d_matches_cluster2d_for_f1() {
+        let mut rng = fastrand::Rng::with_seed(7);
+        let params = ClusterParams::<3, 2, 1>::random(&mut rng);
+        let mut input = PositionMap::<f32, 3>::new(0.0);
+        for channels in input.iter_mut() {
+            for value in channels {
+                *value = rng.f32();
+            }
+        }
+
+        let via_gather = params.cluster2d(&input);
+        let pointwise = params.pointwise2d(&input);
+
+        for pos in PositionId::iter() {
+            assert_eq!(pointwise.get(pos), via_gather.get(pos));
+        }
+    }
+
+    #[test]
+    fn pointwise2d_computes_weighted_sum_plus_bias() {
+        let center = PositionId::center();
+        let mut input = PositionMap::<f32, 2>::new(0.0);
+        *input.get_mut(center) = [3.0, 4.0];
+
+        // [STRIDE=2][OUT_C=1]: w_ch0 = 2.0, w_ch1 = 0.5; bias = 1.0
+        let params = ClusterParams::<2, 1, 1>::new(vec![2.0, 0.5], vec![1.0]);
+
+        let output = params.pointwise2d(&input);
+
+        assert_eq!(output.get(center), &[9.0]);
+        assert_eq!(output.get(pos(0, 0)), &[1.0]);
     }
 }

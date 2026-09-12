@@ -11,7 +11,7 @@ use crate::position_map::PositionMap;
 /// Panics if `empty_positions` is empty.
 pub fn select_best_position(
     empty_positions: &[PositionId],
-    policy: &PositionMap<f32>,
+    policy: &PositionMap<f32, 1>,
     rng: &mut fastrand::Rng,
 ) -> PositionId {
     let (&first, rest) = empty_positions
@@ -19,11 +19,11 @@ pub fn select_best_position(
         .expect("no empty positions to select from");
 
     let mut best_pos = first;
-    let mut best_value = policy.get(first)[0];
+    let [mut best_value] = *policy.get(first);
     let mut tie_count = 1;
 
     for &pos in rest {
-        let value = policy.get(pos)[0];
+        let [value] = *policy.get(pos);
 
         if value > best_value {
             best_value = value;
@@ -51,10 +51,10 @@ mod tests {
         PositionId::from_position(Position::new(row, col))
     }
 
-    fn policy_with_values(values: &[(PositionId, f32)]) -> PositionMap<f32> {
-        let mut map = PositionMap::new(f32::NEG_INFINITY, 1);
+    fn policy_with_values(values: &[(PositionId, f32)]) -> PositionMap<f32, 1> {
+        let mut map = PositionMap::new(f32::NEG_INFINITY);
         for &(pos, value) in values {
-            map.get_mut(pos)[0] = value;
+            *map.get_mut(pos) = [value];
         }
         map
     }
@@ -89,7 +89,7 @@ mod tests {
 
         let selected = select_best_position(&positions, &policy, &mut rng);
 
-        assert!(selected == pos(0, 0) || selected == pos(0, 1));
+        assert!([pos(0, 0), pos(0, 1)].contains(&selected), "{selected:?}");
     }
 
     #[test]
@@ -158,7 +158,7 @@ mod tests {
     #[should_panic(expected = "no empty positions")]
     fn panics_on_empty_positions() {
         let positions: Vec<PositionId> = vec![];
-        let policy = PositionMap::new(0.0f32, 1);
+        let policy = PositionMap::<f32, 1>::new(0.0);
         let mut rng = fastrand::Rng::with_seed(42);
 
         select_best_position(&positions, &policy, &mut rng);

@@ -33,83 +33,54 @@ impl<T> PositionArray<T> {
 
 // ── PositionMap ───────────────────────────────────────────────────────
 
-/// An owned map from board positions to values with a runtime stride.
-///
-/// Each position stores `stride` contiguous elements.
-/// Use `get`/`get_mut` to access `&[T]`/`&mut [T]` per position.
+/// A heap-allocated map from board positions to `C` channel values each.
 #[derive(Debug, Clone)]
-pub struct PositionMap<T> {
-    data: Vec<T>,
-    stride: usize,
+pub struct PositionMap<T, const C: usize> {
+    data: Box<[[T; C]; PositionId::COUNT]>,
 }
 
-impl<T: Clone> PositionMap<T> {
-    /// Creates a new map with `stride` elements per position, all set to `value`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `PositionId::COUNT * stride` overflows.
-    pub fn new(value: T, stride: usize) -> Self {
-        let len = PositionId::COUNT
-            .checked_mul(stride)
-            .expect("PositionMap::new: stride overflow");
-        Self {
-            data: vec![value; len],
-            stride,
-        }
-    }
-
-    /// Creates a map pre-filled with `fill`, then calls `f` for each position
-    /// with a mutable slice of `stride` elements for in-place modification.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `PositionId::COUNT * stride` overflows.
+impl<T: Copy, const C: usize> PositionMap<T, C> {
+    /// Creates a new map with every channel of every position set to `fill`.
     #[must_use]
-    pub fn from_fn(fill: T, stride: usize, mut f: impl FnMut(PositionId, &mut [T])) -> Self {
-        let mut map = Self::new(fill, stride);
-        for pos in PositionId::iter() {
-            f(pos, map.get_mut(pos));
-        }
-        map
+    pub fn new(fill: T) -> Self {
+        // `Box::new([[fill; C]; COUNT])` would build the whole table on the stack first.
+        let boxed: Box<[[T; C]]> = vec![[fill; C]; PositionId::COUNT].into_boxed_slice();
+        let data = boxed
+            .try_into()
+            // Drop the `Err` payload (the box) so `expect` needs no `T: Debug`.
+            .map_err(drop)
+            .expect("boxed slice has exactly PositionId::COUNT elements");
+        Self { data }
     }
 }
 
-impl<T> PositionMap<T> {
-    /// Returns the stride (number of elements per position).
+impl<T, const C: usize> PositionMap<T, C> {
+    /// Returns the channel values at the given position.
     #[must_use]
-    pub const fn stride(&self) -> usize {
-        self.stride
+    pub const fn get(&self, position: PositionId) -> &[T; C] {
+        &self.data[position.to_index()]
     }
 
-    /// Returns a reference to the elements at the given position.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `position_id` is out of bounds or on offset overflow.
-    #[must_use]
-    pub fn get(&self, position_id: PositionId) -> &[T] {
-        let start = usize::from(position_id)
-            .checked_mul(self.stride)
-            .expect("PositionMap::get: offset overflow");
-        &self.data[start..start + self.stride]
+    /// Returns the channel values at the given position, mutably.
+    pub const fn get_mut(&mut self, position: PositionId) -> &mut [T; C] {
+        &mut self.data[position.to_index()]
     }
 
-    /// Returns a mutable reference to the elements at the given position.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `position_id` is out of bounds or on offset overflow.
-    pub fn get_mut(&mut self, position_id: PositionId) -> &mut [T] {
-        let start = usize::from(position_id)
-            .checked_mul(self.stride)
-            .expect("PositionMap::get_mut: offset overflow");
-        &mut self.data[start..start + self.stride]
+    /// Iterates over every position's channel values in [`PositionId::iter`] order.
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = &[T; C]> {
+        self.data.iter()
     }
 
-    /// Returns the underlying data as a mutable slice.
-    pub fn as_mut_slice(&mut self) -> &mut [T] {
-        &mut self.data
+    /// Iterates mutably over every position's channel values in
+    /// [`PositionId::iter`] order.
+    pub fn iter_mut(&mut self) -> impl ExactSizeIterator<Item = &mut [T; C]> {
+        self.data.iter_mut()
+    }
+
+    /// Returns all values as one flat mutable slice of length
+    /// `PositionId::COUNT * C`, position-major.
+    pub const fn as_flattened_mut(&mut self) -> &mut [T] {
+        self.data.as_flattened_mut()
     }
 }
 
@@ -145,87 +116,78 @@ mod tests {
     // ── PositionMap tests ──────────────────────────────────────────
 
     #[test]
-    fn stride_map_get_returns_correct_pair() {
-        let mut map = PositionMap::new(0.0f32, 2);
-        map.get_mut(pos(3, 4)).copy_from_slice(&[1.0, 2.0]);
+    fn new_fills_every_channel_of_every_position() {
+        let map = PositionMap::<i32, 3>::new(42);
+
+        for position in PositionId::iter() {
+            assert_eq!(map.get(position), &[42, 42, 42]);
+        }
+    }
+
+    #[test]
+    fn get_mut_modifies_only_the_target_position() {
+        let mut map = PositionMap::<f32, 2>::new(0.0);
+        *map.get_mut(pos(3, 4)) = [1.0, 2.0];
 
         assert_eq!(map.get(pos(3, 4)), &[1.0, 2.0]);
         assert_eq!(map.get(pos(0, 0)), &[0.0, 0.0]);
+        assert_eq!(map.get(pos(3, 5)), &[0.0, 0.0]);
     }
 
     #[test]
-    fn stride_map_get_mut_modifies_correctly() {
-        let mut map = PositionMap::new(0i32, 2);
-        map.get_mut(pos(7, 7)).copy_from_slice(&[10, 20]);
+    fn iter_mut_visits_positions_in_id_order() {
+        let mut map = PositionMap::<usize, 1>::new(0);
+        for (position, channels) in PositionId::iter().zip(map.iter_mut()) {
+            *channels = [position.to_index()];
+        }
 
-        assert_eq!(map.get(pos(7, 7)), &[10, 20]);
-        assert_eq!(map.get(pos(7, 8)), &[0, 0]);
+        for position in PositionId::iter() {
+            assert_eq!(map.get(position), &[position.to_index()]);
+        }
     }
 
     #[test]
-    fn stride_map_stride_returns_stride() {
-        let map = PositionMap::new(0i32, 3);
+    fn iter_visits_positions_in_id_order() {
+        let mut map = PositionMap::<usize, 1>::new(0);
+        for position in PositionId::iter() {
+            *map.get_mut(position) = [position.to_index()];
+        }
 
-        assert_eq!(map.stride(), 3);
-    }
-
-    // ── PositionMap::from_fn tests ─────────────────────────────────────
-
-    #[test]
-    fn from_fn_produces_correct_stride() {
-        let map = PositionMap::from_fn(0i32, 3, |_, _| {});
-
-        assert_eq!(map.stride(), 3);
+        for (position, channels) in PositionId::iter().zip(map.iter()) {
+            assert_eq!(channels, &[position.to_index()]);
+        }
+        assert_eq!(map.iter().len(), PositionId::COUNT);
     }
 
     #[test]
-    fn from_fn_unmodified_positions_retain_fill_value() {
-        let map = PositionMap::from_fn(42i32, 2, |_, _| {});
+    fn iter_mut_yields_one_item_per_position() {
+        let mut map = PositionMap::<u8, 4>::new(0);
 
-        assert_eq!(map.get(pos(0, 0)), &[42, 42]);
-        assert_eq!(map.get(pos(14, 14)), &[42, 42]);
+        assert_eq!(map.iter_mut().count(), PositionId::COUNT);
     }
 
     #[test]
-    fn from_fn_closure_can_overwrite_values() {
-        let map = PositionMap::from_fn(0.0f32, 2, |position, slice| {
-            let idx = usize::from(position);
-            slice[0] = idx as f32;
-            slice[1] = idx as f32 * 10.0;
-        });
+    fn as_flattened_mut_is_position_major() {
+        let mut map = PositionMap::<f32, 2>::new(0.0);
+        let flat = map.as_flattened_mut();
 
+        assert_eq!(flat.len(), PositionId::COUNT * 2);
+
+        // Position 1 occupies flat indices 2 and 3.
+        flat[2] = 5.0;
+        flat[3] = 6.0;
+
+        assert_eq!(map.get(pos(0, 1)), &[5.0, 6.0]);
         assert_eq!(map.get(pos(0, 0)), &[0.0, 0.0]);
-        assert_eq!(map.get(pos(0, 1)), &[1.0, 10.0]);
-        assert_eq!(map.get(pos(1, 0)), &[15.0, 150.0]);
     }
 
     #[test]
-    fn from_fn_closure_receives_correct_position() {
-        let map = PositionMap::from_fn(0usize, 1, |position, slice| {
-            slice[0] = usize::from(position);
-        });
+    fn clone_is_independent_of_original() {
+        let mut original = PositionMap::<i32, 1>::new(1);
+        let copy = original.clone();
+        *original.get_mut(pos(7, 7)) = [99];
 
-        for position in PositionId::iter() {
-            assert_eq!(map.get(position), &[usize::from(position)]);
-        }
-    }
-
-    #[test]
-    fn from_fn_matches_manual_construction() {
-        let mut expected = PositionMap::new(0.0f32, 2);
-        expected.get_mut(pos(3, 4)).copy_from_slice(&[1.0, 2.0]);
-        expected.get_mut(pos(7, 7)).copy_from_slice(&[3.0, 4.0]);
-
-        let actual = PositionMap::from_fn(0.0f32, 2, |position, slice| {
-            if position == pos(3, 4) {
-                slice.copy_from_slice(&[1.0, 2.0]);
-            } else if position == pos(7, 7) {
-                slice.copy_from_slice(&[3.0, 4.0]);
-            }
-        });
-
-        for position in PositionId::iter() {
-            assert_eq!(actual.get(position), expected.get(position));
-        }
+        assert_eq!(copy.get(pos(7, 7)), &[1]);
+        assert_eq!(original.get(pos(7, 7)), &[99]);
     }
 }

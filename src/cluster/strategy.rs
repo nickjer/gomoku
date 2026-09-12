@@ -1,7 +1,7 @@
 use tracing::instrument;
 
 use crate::board::Board;
-use crate::nn::{encode_board, relu_inplace, select_best_position};
+use crate::nn::{INPUT_CHANNELS, encode_board, relu_inplace, select_best_position};
 use crate::position_id::PositionId;
 use crate::position_map::PositionMap;
 use crate::stone::Stone;
@@ -32,21 +32,21 @@ pub type ClusterSmall = ClusterStrategy<64, 4>;
 impl<const C: usize, const L: usize> ClusterStrategy<C, L> {
     /// Forward pass through the network.
     ///
-    /// Input: encoding with `INPUT_CHANNELS` channels per position.
-    /// Output: [`PositionMap<f32>`] with policy logits for each position.
-    fn forward(&self, input: &PositionMap<f32>) -> PositionMap<f32> {
+    /// Input: board encoding with `INPUT_CHANNELS` channels per position.
+    /// Output: one policy score per position.
+    fn forward(&self, input: &PositionMap<f32, INPUT_CHANNELS>) -> PositionMap<f32, 1> {
         // First cluster: INPUT_CHANNELS -> C channels
         let mut activations = self.weights.first().cluster2d(input);
-        relu_inplace(activations.as_mut_slice());
+        relu_inplace(activations.as_flattened_mut());
 
         // Hidden clusters: C -> C channels
         for hidden in self.weights.hidden() {
             activations = hidden.cluster2d(&activations);
-            relu_inplace(activations.as_mut_slice());
+            relu_inplace(activations.as_flattened_mut());
         }
 
         // Final cluster: C -> 1 channel (F=1 pointwise, no ReLU)
-        self.weights.last().cluster2d(&activations)
+        self.weights.last().pointwise2d(&activations)
     }
 }
 
@@ -96,20 +96,22 @@ impl<const C: usize, const L: usize> EvolvableStrategy for ClusterStrategy<C, L>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::nn::INPUT_CHANNELS;
 
     // Use smaller config for faster tests: 4 channels, 1 layer
     type TestStrategy = ClusterStrategy<4, 1>;
 
     #[test]
-    fn forward_produces_correct_output_size() {
+    fn forward_produces_finite_score_for_every_position() {
         let mut rng = fastrand::Rng::with_seed(42);
         let strategy = TestStrategy::random("test", &mut rng);
-        let input = PositionMap::new(0.0f32, INPUT_CHANNELS);
+        let input = PositionMap::new(0.0);
 
         let output = strategy.forward(&input);
 
-        assert_eq!(output.stride(), 1);
+        for pos in PositionId::iter() {
+            let [score] = *output.get(pos);
+            assert!(score.is_finite(), "score at {pos:?} is {score}");
+        }
     }
 
     #[test]
@@ -156,5 +158,20 @@ mod tests {
 
         assert_eq!(reconstructed.label(), "reconstructed");
         assert_eq!(reconstructed.genes(), original.genes());
+    }
+
+    #[test]
+    fn forward_with_hidden_layer_produces_finite_score_for_every_position() {
+        // L=2 adds one hidden C -> C layer, exercising the hidden-layer loop.
+        let mut rng = fastrand::Rng::with_seed(42);
+        let strategy = ClusterStrategy::<4, 2>::random("two_layers", &mut rng);
+        let input = encode_board(&Board::new(), Stone::Black);
+
+        let output = strategy.forward(&input);
+
+        for pos in PositionId::iter() {
+            let [score] = *output.get(pos);
+            assert!(score.is_finite(), "score at {pos:?} is {score}");
+        }
     }
 }

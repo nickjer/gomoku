@@ -5,6 +5,7 @@ use crate::evolution::crossover::uniform_crossover;
 use crate::evolution::mutation::gaussian_mutate;
 use crate::nn::he_std;
 use crate::offset::Offset;
+use crate::position_id::PositionId;
 use crate::position_map::PositionMap;
 
 /// A single convolutional layer's parameters (weights + bias).
@@ -78,15 +79,17 @@ impl<const IN_C: usize, const OUT_C: usize, const K: usize> ConvParams<IN_C, OUT
     /// Returns the weight slice in `[IN_C * K * K][OUT_C]` layout.
     #[must_use]
     pub fn weights(&self) -> &[f32] {
-        assert!(self.weights.len() == Self::EXPECTED_WEIGHTS);
+        assert_eq!(self.weights.len(), Self::EXPECTED_WEIGHTS);
         &self.weights
     }
 
-    /// Returns the bias slice of length `OUT_C`.
+    /// Returns the bias as a fixed-size array of `OUT_C` values.
     #[must_use]
-    pub fn bias(&self) -> &[f32] {
-        assert!(self.bias.len() == OUT_C);
-        &self.bias
+    pub fn bias(&self) -> &[f32; OUT_C] {
+        self.bias
+            .as_slice()
+            .try_into()
+            .expect("bias length must equal OUT_C")
     }
 
     /// Applies a 2D convolution to the input using workspace-based neighborhood gathering.
@@ -94,9 +97,15 @@ impl<const IN_C: usize, const OUT_C: usize, const K: usize> ConvParams<IN_C, OUT
     /// All dimensions (`IN_C`, `OUT_C`, `K`) are encoded in `Self`, ensuring separate
     /// monomorphizations for each layer configuration.
     #[must_use]
-    pub fn conv2d(&self, input: &PositionMap<f32>) -> PositionMap<f32> {
+    pub fn conv2d(&self, input: &PositionMap<f32, IN_C>) -> PositionMap<f32, OUT_C> {
         let workspace = Self::gather_workspace(input);
-        Self::conv2d_from_workspace(self.weights(), self.bias(), &workspace)
+        Self::conv2d_from_workspace(
+            self.weights(),
+            self.bias(),
+            workspace
+                .iter()
+                .map(|neighborhood| neighborhood.as_flattened().as_flattened()),
+        )
     }
 
     /// Performs uniform crossover with another set of parameters.
@@ -117,56 +126,75 @@ impl<const IN_C: usize, const OUT_C: usize, const K: usize> ConvParams<IN_C, OUT
         }
     }
 
-    /// Gathers zero-padded input neighborhoods into the workspace buffer.
-    ///
-    /// For each board position, collects the K×K neighborhood across all input channels
-    /// into a contiguous slice. Out-of-bounds positions are zero-padded.
-    fn gather_workspace(input: &PositionMap<f32>) -> PositionMap<f32> {
+    /// Gathers each position's K×K neighborhood per input channel.
+    /// Out-of-bounds positions are zero-padded.
+    fn gather_workspace(input: &PositionMap<f32, IN_C>) -> PositionMap<[[f32; K]; K], IN_C> {
+        // Kernel index `i` maps to board delta `i - K / 2`.
         let half_kernel = isize::try_from(K / 2).expect("kernel size too large");
+        let deltas: [isize; K] = std::array::from_fn(|i| {
+            isize::try_from(i).expect("kernel size too large") - half_kernel
+        });
+        let mut workspace = PositionMap::new([[0.0; K]; K]);
 
-        PositionMap::from_fn(0.0, Self::STRIDE, |pos, neighborhood| {
-            for kernel_row in 0..K {
-                for kernel_col in 0..K {
-                    let row_offset =
-                        isize::try_from(kernel_row).expect("kernel size too large") - half_kernel;
-                    let col_offset =
-                        isize::try_from(kernel_col).expect("kernel size too large") - half_kernel;
-                    let offset = Offset::new(row_offset, col_offset);
-
-                    if let Some(neighbor) = pos.offset(offset) {
-                        let channels = input.get(neighbor);
-                        for (&channel_val, kernel_plane) in
-                            channels.iter().zip(neighborhood.chunks_exact_mut(K * K))
+        for (pos, neighborhood) in PositionId::iter().zip(workspace.iter_mut()) {
+            for (kernel_row, &row_delta) in deltas.iter().enumerate() {
+                for (kernel_col, &col_delta) in deltas.iter().enumerate() {
+                    if let Some(neighbor) = pos.offset(Offset::new(row_delta, col_delta)) {
+                        for (kernel_plane, &value) in
+                            neighborhood.iter_mut().zip(input.get(neighbor))
                         {
-                            kernel_plane[kernel_row * K + kernel_col] = channel_val;
+                            kernel_plane[kernel_row][kernel_col] = value;
                         }
                     }
                 }
             }
-        })
+        }
+        workspace
     }
 
-    /// Convolution using pre-gathered workspace data.
+    /// Dot product of each position's `STRIDE` gathered values against weights + bias.
+    /// `positions` must yield one slice per position in [`PositionId::iter`] order.
     ///
     /// This is an associated function (no `&self`) so that `weights` and `bias` arrive
-    /// as independent `&[f32]` parameters. All three const generics (`IN_C`, `OUT_C`, `K`)
-    /// are used: the stride is computed as `IN_C * K * K`, producing distinct
-    /// monomorphizations per layer configuration.
+    /// as independent parameters. LLVM's alias analysis can then prove they do not
+    /// alias the freshly allocated output, enabling auto-vectorization.
     #[must_use]
-    fn conv2d_from_workspace(
+    fn conv2d_from_workspace<'a>(
         weights: &[f32],
-        bias: &[f32],
-        workspace: &PositionMap<f32>,
-    ) -> PositionMap<f32> {
-        PositionMap::from_fn(0.0, OUT_C, |pos, output_channels| {
-            output_channels.copy_from_slice(bias);
-            let neighborhood = workspace.get(pos);
-            for (&input_val, weight_row) in neighborhood.iter().zip(weights.chunks_exact(OUT_C)) {
+        bias: &[f32; OUT_C],
+        positions: impl ExactSizeIterator<Item = &'a [f32]>,
+    ) -> PositionMap<f32, OUT_C> {
+        let (weight_rows, remainder) = weights.as_chunks::<OUT_C>();
+        assert!(remainder.is_empty());
+        assert_eq!(weight_rows.len(), Self::STRIDE);
+        assert_eq!(positions.len(), PositionId::COUNT);
+
+        let mut output = PositionMap::new(0.0);
+        for (output_channels, neighborhood) in output.iter_mut().zip(positions) {
+            assert_eq!(neighborhood.len(), Self::STRIDE);
+            *output_channels = *bias;
+            for (&input_val, weight_row) in neighborhood.iter().zip(weight_rows) {
                 for (out_ch, &weight) in output_channels.iter_mut().zip(weight_row) {
                     *out_ch += input_val * weight;
                 }
             }
-        })
+        }
+        output
+    }
+}
+
+/// Pointwise layers (1×1 kernel): each position's `IN_C` input values are
+/// already exactly what gathering would produce, so the dot product can read
+/// the input directly.
+impl<const IN_C: usize, const OUT_C: usize> ConvParams<IN_C, OUT_C, 1> {
+    /// Applies the layer without gathering. Same result as `conv2d`.
+    #[must_use]
+    pub fn pointwise2d(&self, input: &PositionMap<f32, IN_C>) -> PositionMap<f32, OUT_C> {
+        Self::conv2d_from_workspace(
+            self.weights(),
+            self.bias(),
+            input.iter().map(<[f32; IN_C]>::as_slice),
+        )
     }
 }
 
@@ -199,15 +227,15 @@ mod tests {
 
     /// Helper to run conv2d.
     fn conv<const IN_C: usize, const OUT_C: usize, const K: usize>(
-        input: &PositionMap<f32>,
+        input: &PositionMap<f32, IN_C>,
         params: &ConvParams<IN_C, OUT_C, K>,
-    ) -> PositionMap<f32> {
+    ) -> PositionMap<f32, OUT_C> {
         params.conv2d(input)
     }
 
     /// Creates input with a single non-zero value at the given position in channel 0.
-    fn single_value_input(channels: usize, position: PositionId, value: f32) -> PositionMap<f32> {
-        let mut input = PositionMap::new(0.0, channels);
+    fn single_value_input<const C: usize>(position: PositionId, value: f32) -> PositionMap<f32, C> {
+        let mut input = PositionMap::new(0.0);
         input.get_mut(position)[0] = value;
         input
     }
@@ -346,32 +374,8 @@ mod tests {
         }
 
         #[test]
-        fn output_has_correct_shape_3x3_kernel() {
-            let input = PositionMap::new(0.0f32, 2);
-            let weights = vec![0.0f32; 4 * 2 * 3 * 3];
-            let bias = vec![0.0f32; 4];
-            let params = ConvParams::<2, 4, 3>::new(weights, bias);
-
-            let output = conv(&input, &params);
-
-            assert_eq!(output.stride(), 4);
-        }
-
-        #[test]
-        fn output_has_correct_shape_1x1_kernel() {
-            let input = PositionMap::new(0.0f32, 8);
-            let weights = vec![0.0f32; 1 * 8 * 1 * 1];
-            let bias = vec![0.0f32; 1];
-            let params = ConvParams::<8, 1, 1>::new(weights, bias);
-
-            let output = conv(&input, &params);
-
-            assert_eq!(output.stride(), 1);
-        }
-
-        #[test]
         fn bias_only_produces_constant_output() {
-            let input = PositionMap::new(0.0f32, 1);
+            let input = PositionMap::<f32, 1>::new(0.0);
             let weights = vec![0.0f32; 2 * 1 * 3 * 3];
             let bias = vec![1.5, -0.5];
             let params = ConvParams::<1, 2, 3>::new(weights, bias);
@@ -386,7 +390,7 @@ mod tests {
         #[test]
         fn identity_kernel_copies_input() {
             let center = PositionId::center();
-            let input = single_value_input(1, center, 7.0);
+            let input = single_value_input::<1>(center, 7.0);
 
             let mut weights = vec![0.0f32; 1 * 1 * 3 * 3];
             weights[4] = 1.0;
@@ -402,7 +406,7 @@ mod tests {
         #[test]
         fn shift_kernel_moves_value() {
             let input_pos = pos(5, 5);
-            let input = single_value_input(1, input_pos, 3.0);
+            let input = single_value_input::<1>(input_pos, 3.0);
 
             let mut weights = vec![0.0f32; 1 * 1 * 3 * 3];
             weights[0] = 1.0;
@@ -418,10 +422,10 @@ mod tests {
 
         #[test]
         fn summing_kernel_sums_neighbors() {
-            let mut input = PositionMap::new(0.0f32, 1);
+            let mut input = PositionMap::<f32, 1>::new(0.0);
             let positions = [pos(7, 7), pos(7, 8), pos(8, 7), pos(8, 8)];
             for &p in &positions {
-                input.get_mut(p)[0] = 1.0;
+                *input.get_mut(p) = [1.0];
             }
 
             let weights = vec![1.0f32; 1 * 1 * 3 * 3];
@@ -438,8 +442,8 @@ mod tests {
         #[test]
         fn multiple_input_channels_are_summed() {
             let center = PositionId::center();
-            let mut input = PositionMap::new(0.0f32, 2);
-            input.get_mut(center).copy_from_slice(&[2.0, 3.0]);
+            let mut input = PositionMap::<f32, 2>::new(0.0);
+            *input.get_mut(center) = [2.0, 3.0];
 
             let mut weights = vec![0.0f32; 1 * 2 * 3 * 3];
             weights[4] = 1.0;
@@ -455,7 +459,7 @@ mod tests {
         #[test]
         fn edge_position_uses_zero_padding() {
             let corner = pos(0, 0);
-            let input = single_value_input(1, corner, 9.0);
+            let input = single_value_input::<1>(corner, 9.0);
 
             let weights = vec![1.0f32; 1 * 1 * 3 * 3];
             let bias = vec![0.0f32; 1];
@@ -470,9 +474,9 @@ mod tests {
 
         #[test]
         fn weighted_kernel_applies_correctly() {
-            let mut input = PositionMap::new(0.0f32, 1);
-            input.get_mut(pos(7, 7))[0] = 2.0;
-            input.get_mut(pos(7, 8))[0] = 3.0;
+            let mut input = PositionMap::<f32, 1>::new(0.0);
+            *input.get_mut(pos(7, 7)) = [2.0];
+            *input.get_mut(pos(7, 8)) = [3.0];
 
             let mut weights = vec![0.0f32; 1 * 1 * 3 * 3];
             weights[4] = 2.0;
@@ -489,8 +493,8 @@ mod tests {
         #[test]
         fn one_by_one_kernel_acts_as_pointwise() {
             let center = PositionId::center();
-            let mut input = PositionMap::new(0.0f32, 2);
-            input.get_mut(center).copy_from_slice(&[3.0, 4.0]);
+            let mut input = PositionMap::<f32, 2>::new(0.0);
+            *input.get_mut(center) = [3.0, 4.0];
 
             let weights = vec![2.0, 0.5];
             let bias = vec![1.0];
@@ -505,7 +509,7 @@ mod tests {
         #[test]
         fn multiple_output_channels() {
             let center = PositionId::center();
-            let input = single_value_input(1, center, 5.0);
+            let input = single_value_input::<1>(center, 5.0);
 
             let mut weights = vec![0.0f32; 2 * 1 * 3 * 3];
             weights[center_weight_index(0, 0, 3, 2)] = 1.0;
@@ -521,8 +525,8 @@ mod tests {
         #[test]
         fn different_input_output_channels() {
             let center = PositionId::center();
-            let mut input = PositionMap::new(0.0f32, 2);
-            input.get_mut(center).copy_from_slice(&[1.0, 2.0]);
+            let mut input = PositionMap::<f32, 2>::new(0.0);
+            *input.get_mut(center) = [1.0, 2.0];
 
             let mut weights = vec![0.0f32; 3 * 2 * 3 * 3];
             weights[center_weight_index(0, 0, 3, 3)] = 1.0;
@@ -539,11 +543,11 @@ mod tests {
 
         #[test]
         fn all_corners_use_zero_padding() {
-            let mut input = PositionMap::new(0.0f32, 1);
-            input.get_mut(pos(0, 0))[0] = 1.0;
-            input.get_mut(pos(0, 14))[0] = 1.0;
-            input.get_mut(pos(14, 0))[0] = 1.0;
-            input.get_mut(pos(14, 14))[0] = 1.0;
+            let mut input = PositionMap::<f32, 1>::new(0.0);
+            *input.get_mut(pos(0, 0)) = [1.0];
+            *input.get_mut(pos(0, 14)) = [1.0];
+            *input.get_mut(pos(14, 0)) = [1.0];
+            *input.get_mut(pos(14, 14)) = [1.0];
 
             let weights = vec![1.0f32; 9];
             let bias = vec![0.0f32];
@@ -559,7 +563,7 @@ mod tests {
 
         #[test]
         fn successive_calls_produce_independent_results() {
-            let input1 = single_value_input(2, PositionId::center(), 5.0);
+            let input1 = single_value_input::<2>(PositionId::center(), 5.0);
             let mut weights = vec![0.0f32; 1 * 2 * 3 * 3];
             weights[4] = 1.0;
             let bias = vec![0.0];
@@ -567,11 +571,78 @@ mod tests {
 
             let output1 = params.conv2d(&input1);
 
-            let input2 = PositionMap::new(0.0f32, 2);
+            let input2 = PositionMap::<f32, 2>::new(0.0);
             let output2 = params.conv2d(&input2);
 
             assert_eq!(output1.get(PositionId::center()), &[5.0]);
             assert_eq!(output2.get(PositionId::center()), &[0.0]);
         }
+    }
+
+    #[test]
+    fn display_shows_dimensions_and_stats() {
+        let params = ConvParams::<2, 4, 3>::new(vec![0.5f32; 2 * 3 * 3 * 4], vec![0.0f32; 4]);
+
+        let rendered = params.to_string();
+
+        assert!(rendered.starts_with("Conv 2 -> 4, 3x3\n"), "{rendered}");
+        assert!(rendered.contains("Weights [72]:"), "{rendered}");
+        assert!(rendered.contains("Bias    [4]:"), "{rendered}");
+    }
+
+    #[test]
+    fn display_propagates_formatter_errors() {
+        use std::fmt::Write as _;
+        // Same `<2, 4, 3>` instantiation as above: `cargo llvm-cov` reports
+        // coverage per single best instantiation.
+        let params = ConvParams::<2, 4, 3>::new(vec![0.0f32; 2 * 3 * 3 * 4], vec![0.0f32; 4]);
+        let mut sink = crate::test_utils::LimitedWriter::with_budget(0);
+
+        assert!(write!(sink, "{params}").is_err());
+    }
+
+    #[test]
+    fn display_propagates_weights_line_write_error() {
+        use std::fmt::Write as _;
+        let params = ConvParams::<2, 4, 3>::new(vec![0.0f32; 2 * 3 * 3 * 4], vec![0.0f32; 4]);
+        // Exactly enough budget for the header line, so the weights line fails.
+        let header = "Conv 2 -> 4, 3x3\n";
+        let mut sink = crate::test_utils::LimitedWriter::with_budget(header.len());
+
+        assert!(write!(sink, "{params}").is_err());
+    }
+
+    #[test]
+    fn pointwise2d_matches_conv2d_for_1x1_kernel() {
+        let mut rng = fastrand::Rng::with_seed(7);
+        let params = ConvParams::<3, 2, 1>::random(&mut rng);
+        let mut input = PositionMap::<f32, 3>::new(0.0);
+        for channels in input.iter_mut() {
+            for value in channels {
+                *value = rng.f32();
+            }
+        }
+
+        let via_gather = params.conv2d(&input);
+        let pointwise = params.pointwise2d(&input);
+
+        for pos in PositionId::iter() {
+            assert_eq!(pointwise.get(pos), via_gather.get(pos));
+        }
+    }
+
+    #[test]
+    fn pointwise2d_computes_weighted_sum_plus_bias() {
+        let center = PositionId::center();
+        let mut input = PositionMap::<f32, 2>::new(0.0);
+        *input.get_mut(center) = [3.0, 4.0];
+
+        // [STRIDE=2][OUT_C=1]: w_ch0 = 2.0, w_ch1 = 0.5; bias = 1.0
+        let params = ConvParams::<2, 1, 1>::new(vec![2.0, 0.5], vec![1.0]);
+
+        let output = params.pointwise2d(&input);
+
+        assert_eq!(output.get(center), &[9.0]);
+        assert_eq!(output.get(pos(0, 0)), &[1.0]);
     }
 }

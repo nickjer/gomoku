@@ -11,17 +11,13 @@ pub const INPUT_CHANNELS: usize = 2;
 /// Returns a [`PositionMap`] with `INPUT_CHANNELS` channels per position:
 /// channel 0 is the current player's stones, channel 1 is the opponent's stones.
 /// Values are 1.0 (stone present) or 0.0.
-pub fn encode_board(board: &Board, current_stone: Stone) -> PositionMap<f32> {
-    let mut encoding = PositionMap::new(0.0, INPUT_CHANNELS);
+pub fn encode_board(board: &Board, current_stone: Stone) -> PositionMap<f32, INPUT_CHANNELS> {
+    let mut encoding = PositionMap::new(0.0);
 
     for pos in PositionId::iter() {
         match board.stone(pos) {
-            Some(stone) if stone == current_stone => {
-                encoding.get_mut(pos)[0] = 1.0;
-            }
-            Some(_) => {
-                encoding.get_mut(pos)[1] = 1.0;
-            }
+            Some(stone) if stone == current_stone => *encoding.get_mut(pos) = [1.0, 0.0],
+            Some(_) => *encoding.get_mut(pos) = [0.0, 1.0],
             None => {}
         }
     }
@@ -54,7 +50,6 @@ mod tests {
 
         let encoding = encode_board(&board, Stone::Black);
 
-        assert_eq!(encoding.stride(), INPUT_CHANNELS);
         for pos in PositionId::iter() {
             assert_eq!(encoding.get(pos), &[0.0, 0.0]);
         }
@@ -94,12 +89,12 @@ mod tests {
         let white_view = encode_board(&board, Stone::White);
 
         // From Black's perspective: center is own, adjacent is opponent
-        assert_eq!(black_view.get(center)[0], 1.0);
-        assert_eq!(black_view.get(adjacent)[1], 1.0);
+        assert_eq!(black_view.get(center), &[1.0, 0.0]);
+        assert_eq!(black_view.get(adjacent), &[0.0, 1.0]);
 
         // From White's perspective: adjacent is own, center is opponent
-        assert_eq!(white_view.get(adjacent)[0], 1.0);
-        assert_eq!(white_view.get(center)[1], 1.0);
+        assert_eq!(white_view.get(adjacent), &[1.0, 0.0]);
+        assert_eq!(white_view.get(center), &[0.0, 1.0]);
     }
 
     #[test]

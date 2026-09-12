@@ -30,7 +30,7 @@ cargo fmt                # Format code
 - **Offset**: Direction vectors for neighbor calculations
 
 ### Shared Neural Network Utilities (`src/nn/`)
-- **`encode_board()`**: Encodes board as 2-channel `PositionMap` (own stones, opponent stones)
+- **`encode_board()`**: Encodes board as a `PositionMap<f32, INPUT_CHANNELS>` (own stones, opponent stones)
 - **`select_best_position()`**: Argmax over empty positions with reservoir sampling for ties
 - **`he_std()`**: He initialization standard deviation
 - **`relu_inplace()`**: ReLU activation in-place
@@ -62,7 +62,7 @@ Each position's 8 neighbors are indexed clockwise (N, NE, E, SE, S, SW, W, NW). 
 - **Order 1**: Ortho sum, Diag sum
 - **Order 2**: Wedge-45, Ortho-90, Wedge-135, Ortho-180, Diag-90, Diag-180
 
-**F-truncation**: Features are ordered by polynomial order. `ClusterParams<IN_C, OUT_C, F>` stores only the first F features per channel. Spatial layers use F=9 (all features), the last layer uses F=1 (pointwise — only the center value).
+**F-truncation**: Features are ordered by polynomial order. `ClusterParams<IN_C, OUT_C, F>` stores only the first F features per channel. Spatial layers use F=9 (all features), the last layer uses F=1 (pointwise — only the center value). The last layer is applied with `pointwise2d`, an inherent method that exists only on `ClusterParams<_, _, 1>`; it feeds the input's flat channel data straight into the dot product with no gathering.
 
 ### Game
 The `Game` enum represents Gomoku rule variants using `enum_dispatch`:
@@ -230,8 +230,10 @@ hyperfine --warmup 1 \
 
 **Key optimization insights:**
 
-Both conv and cluster layers use a two-phase workspace pattern: gather input data into a contiguous buffer (per-position layout), then compute dot products against transposed weights (`[STRIDE][OUT_C]` layout). The workspace eliminates bounds checks from the hot dot-product loop. For conv, the stride is `IN_C * K * K`; for cluster, it is `IN_C * F`.
+Layer inputs and outputs are `PositionMap<f32, C>`: the channel count is a const generic and the storage is `Box<[[f32; C]; PositionId::COUNT]>`. Stacking layers with mismatched channel counts is a compile error, and every per-position channel loop has an exact, compile-time length. `PositionArray<T>` is the stack/const-friendly sibling used for lookup tables (a `Box` cannot live in a `const`).
 
-**LLVM alias analysis and `&self`:** Hot compute functions must NOT take `&self`. LLVM treats pointers loaded from a struct (e.g., `self.weights.ptr`) as "MayAlias" with fresh heap allocations (like the output buffer), which blocks auto-vectorization. The fix is to extract `&[f32]` slices in the caller and pass them as separate function parameters — LLVM's alias analysis can prove that function-parameter pointers don't alias with in-function allocations. See `ConvParams::conv2d_from_workspace` and `ClusterParams::cluster2d_from_workspace` (associated functions, no `&self`).
+Both conv and cluster layers use a two-phase workspace pattern: gather input data into a per-position workspace, then compute dot products against transposed weights (`[STRIDE][OUT_C]` layout). The stride is `IN_C * K * K` for conv and `IN_C * F` for cluster. That product cannot be written as an array length on stable Rust (`generic_const_exprs` is unstable, verified on 1.98), so the workspace is typed with nested arrays instead: `PositionMap<[[f32; K]; K], IN_C>` for conv and `PositionMap<[f32; F], IN_C>` for cluster. Each position is flattened with `as_flattened()` into a `&[f32]` whose length LLVM constant-folds after inlining. The dot-product functions take an iterator of these per-position slices, which lets the `pointwise2d` methods (K=1 / F=1) feed the input's own `[f32; IN_C]` rows in directly with no gathering. Weight rows are typed `&[[f32; OUT_C]]` via `as_chunks::<OUT_C>()`.
 
-**`assert!` for slice lengths in accessors:** `ConvParams::weights()` / `ClusterParams::weights()` and their `bias()` methods assert the Vec length equals the expected compile-time constant (e.g., `assert!(self.weights.len() == Self::EXPECTED_WEIGHTS)`). This tells LLVM the exact slice length, enabling it to eliminate bounds checks and fully unroll/vectorize loops that index into these slices.
+**LLVM alias analysis and `&self`:** Hot compute functions must NOT take `&self`. LLVM treats pointers loaded from a struct (e.g., `self.weights.ptr`) as "MayAlias" with fresh heap allocations (like the output buffer), which blocks auto-vectorization. The fix is to extract the weight slice (`&[f32]`) and bias array (`&[f32; OUT_C]`) in the caller and pass them as separate function parameters — LLVM's alias analysis can prove that function-parameter pointers don't alias with in-function allocations. See `ConvParams::conv2d_from_workspace` and `ClusterParams::cluster2d_from_workspace` (associated functions, no `&self`).
+
+**Exact lengths in accessors:** `ConvParams::weights()` / `ClusterParams::weights()` assert the Vec length equals the compile-time constant (`assert_eq!(self.weights.len(), Self::EXPECTED_WEIGHTS)`), which tells LLVM the exact slice length so it can eliminate bounds checks and fully unroll/vectorize loops over these slices. `bias()` goes one step further and returns `&[f32; OUT_C]` (via `try_into`), so the length is in the type.

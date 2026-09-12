@@ -6,7 +6,7 @@ use crate::position_map::PositionMap;
 use crate::stone::Stone;
 use crate::strategy::{EvolvableStrategy, Strategy};
 
-use crate::nn::{encode_board, relu_inplace, select_best_position};
+use crate::nn::{INPUT_CHANNELS, encode_board, relu_inplace, select_best_position};
 
 use super::symmetry::D8Transform;
 use super::weights::ConvWeights;
@@ -35,21 +35,21 @@ pub type ConvSmall = ConvStrategy<3, 64, 4, 0>;
 impl<const K: usize, const C: usize, const L: usize, const R: usize> ConvStrategy<K, C, L, R> {
     /// Forward pass through the network.
     ///
-    /// Input: encoding with `INPUT_CHANNELS` channels per position.
-    /// Output: [`PositionMap<f32>`] with policy logits for each position.
-    fn forward(&self, input: &PositionMap<f32>) -> PositionMap<f32> {
+    /// Input: board encoding with `INPUT_CHANNELS` channels per position.
+    /// Output: one policy score per position.
+    fn forward(&self, input: &PositionMap<f32, INPUT_CHANNELS>) -> PositionMap<f32, 1> {
         // First conv: INPUT_CHANNELS -> C channels
         let mut activations = self.weights.first().conv2d(input);
-        relu_inplace(activations.as_mut_slice());
+        relu_inplace(activations.as_flattened_mut());
 
         // Hidden convs: C -> C channels
         for hidden in self.weights.hidden() {
             activations = hidden.conv2d(&activations);
-            relu_inplace(activations.as_mut_slice());
+            relu_inplace(activations.as_flattened_mut());
         }
 
-        // Final conv: C -> 1 channel (1×1 kernel)
-        self.weights.last().conv2d(&activations)
+        // Final conv: C -> 1 channel (1×1 kernel, no ReLU)
+        self.weights.last().pointwise2d(&activations)
     }
 }
 
@@ -120,13 +120,13 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> EvolvableSt
 /// Transforms an encoding by applying a position transformation.
 ///
 /// For each position `p`, copies all channels from `encoding[p]` to `result[f(p)]`.
-fn transform_encoding(
-    encoding: &PositionMap<f32>,
+fn transform_encoding<const C: usize>(
+    encoding: &PositionMap<f32, C>,
     f: impl Fn(PositionId) -> PositionId,
-) -> PositionMap<f32> {
-    let mut result = PositionMap::new(0.0, encoding.stride());
+) -> PositionMap<f32, C> {
+    let mut result = PositionMap::new(0.0);
     for pos in PositionId::iter() {
-        result.get_mut(f(pos)).copy_from_slice(encoding.get(pos));
+        *result.get_mut(f(pos)) = *encoding.get(pos);
     }
     result
 }
@@ -134,20 +134,22 @@ fn transform_encoding(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::nn::INPUT_CHANNELS;
 
     // Use smaller config for faster tests: 3×3 kernel, 4 channels, 1 layer
     type TestStrategy = ConvStrategy<3, 4, 1, 0>;
 
     #[test]
-    fn forward_produces_correct_output_size() {
+    fn forward_produces_finite_score_for_every_position() {
         let mut rng = fastrand::Rng::with_seed(42);
         let strategy = TestStrategy::random("test", &mut rng);
-        let input = PositionMap::new(0.0f32, INPUT_CHANNELS);
+        let input = PositionMap::new(0.0);
 
         let output = strategy.forward(&input);
 
-        assert_eq!(output.stride(), 1);
+        for pos in PositionId::iter() {
+            let [score] = *output.get(pos);
+            assert!(score.is_finite(), "score at {pos:?} is {score}");
+        }
     }
 
     #[test]
@@ -221,11 +223,11 @@ mod tests {
 
     #[test]
     fn transform_encoding_with_invert_moves_values() {
-        let mut encoding = PositionMap::new(0.0f32, INPUT_CHANNELS);
+        let mut encoding = PositionMap::<f32, INPUT_CHANNELS>::new(0.0);
         let first_pos = PositionId::iter().next().unwrap();
         let last_pos = first_pos.invert();
 
-        encoding.get_mut(first_pos).copy_from_slice(&[1.0, 2.0]);
+        *encoding.get_mut(first_pos) = [1.0, 2.0];
 
         let result = transform_encoding(&encoding, PositionId::invert);
 
@@ -350,6 +352,21 @@ mod tests {
             let mut data: Vec<f32> = vec![];
             relu_inplace(&mut data);
             assert!(data.is_empty());
+        }
+    }
+
+    #[test]
+    fn forward_with_hidden_layer_produces_finite_score_for_every_position() {
+        // L=2 adds one hidden C -> C layer, exercising the hidden-layer loop.
+        let mut rng = fastrand::Rng::with_seed(42);
+        let strategy = ConvStrategy::<3, 4, 2, 0>::random("two_layers", &mut rng);
+        let input = encode_board(&Board::new(), Stone::Black);
+
+        let output = strategy.forward(&input);
+
+        for pos in PositionId::iter() {
+            let [score] = *output.get(pos);
+            assert!(score.is_finite(), "score at {pos:?} is {score}");
         }
     }
 }
