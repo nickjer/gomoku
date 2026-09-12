@@ -6,7 +6,6 @@ use super::crossover::Crossover;
 use super::fitness_evaluator::{EvaluateFitness, FitnessEvaluator, TournamentFitness};
 use super::fitness_score::FitnessScore;
 use super::fitness_weight::FitnessWeight;
-use super::genes::EvolvableGenes;
 use super::mutation::Mutation;
 use super::selection::{HasFitness, RunSelection, Selection};
 use super::{Individual, Population};
@@ -193,23 +192,18 @@ impl Evolver {
             (first, second)
         });
 
-        let child_genes = debug_span!("crossover").in_scope(|| {
+        let mut child_genes = debug_span!("crossover").in_scope(|| {
             if rng.f64() < self.crossover_rate {
-                parent1.strategy().genes().crossover(
-                    parent2.strategy().genes(),
-                    self.crossover,
-                    rng,
-                )
+                self.crossover
+                    .apply(parent1.strategy().genes(), parent2.strategy().genes(), rng)
             } else {
                 parent1.strategy().genes().clone()
             }
         });
 
-        let child_genes = debug_span!("mutation").in_scope(|| {
+        debug_span!("mutation").in_scope(|| {
             if rng.f64() < self.mutation_rate {
-                child_genes.mutate(self.mutation, rng)
-            } else {
-                child_genes
+                self.mutation.apply(&mut child_genes, rng);
             }
         });
 

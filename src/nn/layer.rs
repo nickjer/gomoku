@@ -4,8 +4,7 @@ use std::marker::PhantomData;
 use fastrand_contrib::RngExt;
 use serde::{Deserialize, Serialize};
 
-use crate::evolution::crossover::uniform_crossover;
-use crate::evolution::mutation::gaussian_mutate;
+use crate::evolution::genes::EvolvableGenes;
 use crate::position_id::PositionId;
 use crate::position_map::PositionMap;
 
@@ -112,24 +111,6 @@ impl<Encoder: NeighborhoodEncoder, const IN_CHANNELS: usize, const OUT_CHANNELS:
         )
     }
 
-    /// Builds a child layer, taking each weight from one parent or the other at random.
-    #[must_use]
-    pub fn uniform_crossover(&self, other: &Self, rng: &mut fastrand::Rng) -> Self {
-        Self::new(
-            uniform_crossover(&self.weights, &other.weights, rng),
-            uniform_crossover(&self.bias, &other.bias, rng),
-        )
-    }
-
-    /// Builds a copy with random noise of size `sigma` added to every weight and bias.
-    #[must_use]
-    pub fn gaussian_mutate(&self, sigma: f32, rng: &mut fastrand::Rng) -> Self {
-        Self::new(
-            gaussian_mutate(&self.weights, sigma, rng),
-            gaussian_mutate(&self.bias, sigma, rng),
-        )
-    }
-
     /// Multiplies each position's inputs by the weights and adds the bias.
     /// `positions` yields one list of inputs per position, in board order.
     ///
@@ -172,6 +153,18 @@ impl<Encoder: NeighborhoodEncoder, const IN_CHANNELS: usize, const OUT_CHANNELS:
         )?;
         Encoder::fmt_weight_stats::<IN_CHANNELS, OUT_CHANNELS>(formatter, self.weights())?;
         write!(formatter, "  Bias    {}", format_slice_stats(self.bias()))
+    }
+}
+
+impl<Encoder: NeighborhoodEncoder, const IN_CHANNELS: usize, const OUT_CHANNELS: usize>
+    EvolvableGenes for Layer<Encoder, IN_CHANNELS, OUT_CHANNELS>
+{
+    fn gene_groups(&self) -> impl Iterator<Item = &[f32]> {
+        [self.weights.as_slice(), self.bias.as_slice()].into_iter()
+    }
+
+    fn gene_groups_mut(&mut self) -> impl Iterator<Item = &mut [f32]> {
+        [self.weights.as_mut_slice(), self.bias.as_mut_slice()].into_iter()
     }
 }
 
@@ -255,27 +248,24 @@ mod tests {
     }
 
     #[test]
-    fn uniform_crossover_takes_each_value_from_a_parent() {
-        let mut rng = fastrand::Rng::with_seed(42);
-        let parent1 = TestLayer::random(&mut rng);
-        let parent2 = TestLayer::random(&mut rng);
+    fn gene_groups_are_weights_then_bias() {
+        let layer = TestLayer::new(vec![0.5; 8], vec![1.5; 4]);
 
-        let child = parent1.uniform_crossover(&parent2, &mut rng);
+        let gene_groups: Vec<&[f32]> = layer.gene_groups().collect();
 
-        for (idx, &val) in child.weights().iter().enumerate() {
-            assert!(val == parent1.weights()[idx] || val == parent2.weights()[idx]);
-        }
+        assert_eq!(gene_groups, [&[0.5; 8][..], &[1.5; 4][..]]);
     }
 
     #[test]
-    fn gaussian_mutate_changes_values() {
-        let layer = TestLayer::new(vec![0.0; 8], vec![0.0; 4]);
-        let mut rng = fastrand::Rng::with_seed(42);
+    fn gene_groups_mut_changes_weights_and_bias() {
+        let mut layer = TestLayer::new(vec![0.0; 8], vec![0.0; 4]);
 
-        let result = layer.gaussian_mutate(1.0, &mut rng);
+        for (gene_group, fill_value) in layer.gene_groups_mut().zip([1.0, 2.0]) {
+            gene_group.fill(fill_value);
+        }
 
-        let changed = result.weights().iter().filter(|&&val| val != 0.0).count();
-        assert!(changed > 0, "some weights should change");
+        assert_eq!(layer.weights(), &[1.0; 8]);
+        assert_eq!(layer.bias(), &[2.0; 4]);
     }
 
     #[test]

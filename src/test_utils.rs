@@ -4,6 +4,7 @@ use std::cell::Cell;
 
 use crate::board::Board;
 use crate::evolution::fitness_score::FitnessScore;
+use crate::evolution::genes::EvolvableGenes;
 use crate::evolution::selection::HasFitness;
 use crate::nn::ConvTiny;
 use crate::position::Position;
@@ -207,6 +208,21 @@ impl EvolvableStrategy for FakeEvolvableStrategy {
             label: label.into(),
             network: genes,
         }
+    }
+}
+
+/// Test genes: a list of groups of numbers, for exercising the operators
+/// without a network.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TestGenes(pub Vec<Vec<f32>>);
+
+impl EvolvableGenes for TestGenes {
+    fn gene_groups(&self) -> impl Iterator<Item = &[f32]> {
+        self.0.iter().map(Vec::as_slice)
+    }
+
+    fn gene_groups_mut(&mut self) -> impl Iterator<Item = &mut [f32]> {
+        self.0.iter_mut().map(Vec::as_mut_slice)
     }
 }
 

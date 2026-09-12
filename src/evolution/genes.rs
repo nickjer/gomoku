@@ -1,13 +1,11 @@
-use super::crossover::Crossover;
-use super::mutation::Mutation;
-
-/// Trait for gene types that can be evolved through crossover and mutation.
+/// Genes the genetic algorithm can evolve: a fixed shape holding numbers.
+///
+/// The numbers come in groups that belong together, always in the same
+/// order. Operators change the numbers inside the groups but never the shape.
 pub trait EvolvableGenes: Clone {
-    /// Performs crossover with another gene set.
-    #[must_use]
-    fn crossover(&self, other: &Self, crossover: Crossover, rng: &mut fastrand::Rng) -> Self;
+    /// The groups of numbers, in a fixed order.
+    fn gene_groups(&self) -> impl Iterator<Item = &[f32]>;
 
-    /// Performs mutation on this gene set.
-    #[must_use]
-    fn mutate(&self, mutation: Mutation, rng: &mut fastrand::Rng) -> Self;
+    /// The same groups in the same order, for changing in place.
+    fn gene_groups_mut(&mut self) -> impl Iterator<Item = &mut [f32]>;
 }

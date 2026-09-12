@@ -2,9 +2,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::evolution::crossover::Crossover;
 use crate::evolution::genes::EvolvableGenes;
-use crate::evolution::mutation::Mutation;
 use crate::position_map::PositionMap;
 
 use super::layer::Layer;
@@ -60,14 +58,7 @@ impl<Encoder: NeighborhoodEncoder, const CHANNELS: usize, const LAYERS: usize>
 
     /// Total number of weights and biases.
     fn parameter_count(&self) -> usize {
-        let layer_count = |weights: &[f32], bias: &[f32]| weights.len() + bias.len();
-        layer_count(self.board_layer.weights(), self.board_layer.bias())
-            + self
-                .middle_layers
-                .iter()
-                .map(|layer| layer_count(layer.weights(), layer.bias()))
-                .sum::<usize>()
-            + layer_count(self.scoring_layer.weights(), self.scoring_layer.bias())
+        self.gene_groups().map(<[f32]>::len).sum()
     }
 }
 
@@ -98,35 +89,22 @@ impl<Encoder: NeighborhoodEncoder, const CHANNELS: usize, const LAYERS: usize> f
 impl<Encoder: NeighborhoodEncoder, const CHANNELS: usize, const LAYERS: usize> EvolvableGenes
     for NeuralNetwork<Encoder, CHANNELS, LAYERS>
 {
-    fn crossover(&self, other: &Self, crossover: Crossover, rng: &mut fastrand::Rng) -> Self {
-        match crossover {
-            Crossover::Uniform => Self {
-                board_layer: self.board_layer.uniform_crossover(&other.board_layer, rng),
-                middle_layers: self
-                    .middle_layers
-                    .iter()
-                    .zip(&other.middle_layers)
-                    .map(|(a, b)| a.uniform_crossover(b, rng))
-                    .collect(),
-                scoring_layer: self
-                    .scoring_layer
-                    .uniform_crossover(&other.scoring_layer, rng),
-            },
-        }
+    fn gene_groups(&self) -> impl Iterator<Item = &[f32]> {
+        self.board_layer
+            .gene_groups()
+            .chain(self.middle_layers.iter().flat_map(Layer::gene_groups))
+            .chain(self.scoring_layer.gene_groups())
     }
 
-    fn mutate(&self, mutation: Mutation, rng: &mut fastrand::Rng) -> Self {
-        match mutation {
-            Mutation::Gaussian { sigma } => Self {
-                board_layer: self.board_layer.gaussian_mutate(sigma, rng),
-                middle_layers: self
-                    .middle_layers
-                    .iter()
-                    .map(|layer| layer.gaussian_mutate(sigma, rng))
-                    .collect(),
-                scoring_layer: self.scoring_layer.gaussian_mutate(sigma, rng),
-            },
-        }
+    fn gene_groups_mut(&mut self) -> impl Iterator<Item = &mut [f32]> {
+        self.board_layer
+            .gene_groups_mut()
+            .chain(
+                self.middle_layers
+                    .iter_mut()
+                    .flat_map(Layer::gene_groups_mut),
+            )
+            .chain(self.scoring_layer.gene_groups_mut())
     }
 }
 
@@ -200,29 +178,56 @@ mod tests {
     }
 
     #[test]
-    fn crossover_with_uniform_produces_valid_child() {
-        let mut rng = fastrand::Rng::with_seed(42);
-        let parent1 = TestNetwork::random(&mut rng);
-        let parent2 = TestNetwork::random(&mut rng);
-
-        let child = parent1.crossover(&parent2, Crossover::Uniform, &mut rng);
-
-        assert_eq!(child.middle_layers.len(), parent1.middle_layers.len());
-        for (i, &val) in child.board_layer.weights().iter().enumerate() {
-            assert!(
-                val == parent1.board_layer.weights()[i] || val == parent2.board_layer.weights()[i]
-            );
-        }
-    }
-
-    #[test]
-    fn mutate_with_gaussian_changes_values() {
+    fn gene_groups_walk_every_layer_in_order() {
         let mut rng = fastrand::Rng::with_seed(42);
         let network = TestNetwork::random(&mut rng);
 
-        let mutated = network.mutate(Mutation::Gaussian { sigma: 1.0 }, &mut rng);
+        let group_lengths: Vec<usize> = network.gene_groups().map(<[f32]>::len).collect();
 
-        assert_ne!(network, mutated);
+        // Board weights and bias, middle weights and bias, scoring weights and bias.
+        assert_eq!(group_lengths, [2 * 9 * 8, 8, 8 * 9 * 8, 8, 8, 1]);
+    }
+
+    #[test]
+    fn gene_groups_mut_reaches_the_same_values() {
+        let mut rng = fastrand::Rng::with_seed(42);
+        let mut network = TestNetwork::random(&mut rng);
+
+        for (gene_group, fill_value) in network
+            .gene_groups_mut()
+            .zip([0.0, 1.0, 2.0, 3.0, 4.0, 5.0])
+        {
+            gene_group.fill(fill_value);
+        }
+
+        assert!(
+            network
+                .board_layer
+                .weights()
+                .iter()
+                .all(|&weight| weight == 0.0)
+        );
+        assert!(network.board_layer.bias().iter().all(|&bias| bias == 1.0));
+        assert!(
+            network.middle_layers[0]
+                .weights()
+                .iter()
+                .all(|&weight| weight == 2.0)
+        );
+        assert!(
+            network.middle_layers[0]
+                .bias()
+                .iter()
+                .all(|&bias| bias == 3.0)
+        );
+        assert!(
+            network
+                .scoring_layer
+                .weights()
+                .iter()
+                .all(|&weight| weight == 4.0)
+        );
+        assert_eq!(network.scoring_layer.bias(), &[5.0]);
     }
 
     #[test]

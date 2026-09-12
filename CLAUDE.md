@@ -86,8 +86,9 @@ The `Evolver` orchestrates the genetic algorithm. Call `evolve(strategies, rng, 
 
 - **Fitness**: Weighted combination of tournament ranking, threat defense evaluation, and minimax challenge
 - **Selection** enum: `Tournament` (configured via `TournamentMode::WithReplacement` or `WithoutReplacement`)
-- **Crossover** enum: `Uniform`
-- **Mutation** enum: `Gaussian { sigma }`
+- **Crossover** enum: `Uniform`; `apply(parent1, parent2, rng)` builds the child
+- **Mutation** enum: `Gaussian { sigma }`; `apply(&mut genes, rng)` changes them in place
+- **EvolvableGenes** (`evolution/genes.rs`): what the operators act on. A gene type exposes its numbers as ordered groups via `gene_groups` / `gene_groups_mut`; operators overwrite inside the groups and can never change the shape. Each operator's `apply` holds the only `match` on its enum, so a new operator is one variant and one arm, and gene types never mention operator names. Operators cut within a group, never across groups, so one-point or two-point crossover would blend every layer rather than move whole layers between parents.
 - **Elitism**: Preserve top N performers unchanged each generation
 - **Game**: Game variant to use for matches (defaults to `Freestyle`)
 
