@@ -4,115 +4,128 @@ use crate::evolution::crossover::Crossover;
 use crate::evolution::genes::EvolvableGenes;
 use crate::evolution::mutation::Mutation;
 
-use crate::nn::INPUT_CHANNELS;
+use crate::nn::STONE_CHANNELS;
 
 use super::params::ConvParams;
 
 /// Weights for a convolutional neural network with const-generic architecture.
 ///
 /// # Type Parameters
-/// - `K`: Kernel size (e.g., 3 for 3×3 kernels)
-/// - `C`: Number of channels in hidden layers
-/// - `L`: Number of convolutional layers (must be >= 1)
-/// - `R`: Number of residual blocks (must be 0 until implemented)
+/// - `SIDE`: Kernel size (e.g., 3 for 3×3 kernels)
+/// - `CHANNELS`: Number of channels in middle layers
+/// - `LAYERS`: Number of convolutional layers (must be >= 1)
+/// - `RESIDUAL_BLOCKS`: Number of residual blocks (must be 0 until implemented)
 ///
 /// # Architecture
-/// - First conv: 2 input channels → C channels, K×K kernel
-/// - L-1 hidden convs: C → C channels, K×K kernel
-/// - Final conv: C → 1 channel, 1×1 kernel (position scoring)
+/// - First conv: 2 input channels → CHANNELS channels, SIDE×SIDE kernel
+/// - LAYERS-1 middle convs: CHANNELS → CHANNELS channels, SIDE×SIDE kernel
+/// - Final conv: CHANNELS → 1 channel, 1×1 kernel (position scoring)
 ///
 /// # Weight Layout
-/// Weights are stored in `[IN_C * K * K][OUT_C]` layout (transposed from the standard
-/// `[OUT_C][IN_C * K * K]`). This allows efficient dot products against the workspace buffer.
+/// Weights are stored in `[IN_CHANNELS * SIDE * SIDE][OUT_CHANNELS]` layout (transposed from the standard
+/// `[OUT_CHANNELS][IN_CHANNELS * SIDE * SIDE]`). This allows efficient dot products against the workspace buffer.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ConvWeights<const K: usize, const C: usize, const L: usize, const R: usize> {
-    first: ConvParams<{ INPUT_CHANNELS }, C, K>,
-    hidden: Vec<ConvParams<C, C, K>>,
-    last: ConvParams<C, 1, 1>,
+pub struct ConvWeights<
+    const SIDE: usize,
+    const CHANNELS: usize,
+    const LAYERS: usize,
+    const RESIDUAL_BLOCKS: usize,
+> {
+    board_layer: ConvParams<{ STONE_CHANNELS }, CHANNELS, SIDE>,
+    middle_layers: Vec<ConvParams<CHANNELS, CHANNELS, SIDE>>,
+    scoring_layer: ConvParams<CHANNELS, 1, 1>,
 }
 
-impl<const K: usize, const C: usize, const L: usize, const R: usize> ConvWeights<K, C, L, R> {
+impl<const SIDE: usize, const CHANNELS: usize, const LAYERS: usize, const RESIDUAL_BLOCKS: usize>
+    ConvWeights<SIDE, CHANNELS, LAYERS, RESIDUAL_BLOCKS>
+{
     /// Creates weights initialized using He initialization.
     ///
     /// Uses `N(0, √(2/n_in))` for each layer, which is optimal for `ReLU` networks.
     ///
     /// # Panics
     ///
-    /// Panics if `L < 1` or `R > 0` (residual blocks not yet implemented).
+    /// Panics if `LAYERS < 1` or `RESIDUAL_BLOCKS > 0` (residual blocks not yet implemented).
     #[must_use]
     pub fn random(rng: &mut fastrand::Rng) -> Self {
-        assert!(L >= 1, "must have at least 1 layer");
-        assert!(R == 0, "residual blocks not yet implemented");
+        assert!(LAYERS >= 1, "must have at least 1 layer");
+        assert!(RESIDUAL_BLOCKS == 0, "residual blocks not yet implemented");
 
         Self {
-            first: ConvParams::random(rng),
-            hidden: (0..(L - 1)).map(|_| ConvParams::random(rng)).collect(),
-            last: ConvParams::random(rng),
+            board_layer: ConvParams::random(rng),
+            middle_layers: (0..(LAYERS - 1)).map(|_| ConvParams::random(rng)).collect(),
+            scoring_layer: ConvParams::random(rng),
         }
     }
 
-    /// Returns a reference to the first conv layer parameters.
+    /// Returns a reference to the board conv layer parameters.
     #[must_use]
-    pub fn first(&self) -> &ConvParams<{ INPUT_CHANNELS }, C, K> {
-        &self.first
+    pub fn board_layer(&self) -> &ConvParams<{ STONE_CHANNELS }, CHANNELS, SIDE> {
+        &self.board_layer
     }
 
-    /// Returns the hidden conv layer parameters.
+    /// Returns the middle conv layer parameters.
     #[must_use]
-    pub fn hidden(&self) -> &[ConvParams<C, C, K>] {
-        &self.hidden
+    pub fn middle_layers(&self) -> &[ConvParams<CHANNELS, CHANNELS, SIDE>] {
+        &self.middle_layers
     }
 
     /// Returns a reference to the final conv layer parameters.
     #[must_use]
-    pub fn last(&self) -> &ConvParams<C, 1, 1> {
-        &self.last
+    pub fn scoring_layer(&self) -> &ConvParams<CHANNELS, 1, 1> {
+        &self.scoring_layer
     }
 }
 
-impl<const K: usize, const C: usize, const L: usize, const R: usize> std::fmt::Display
-    for ConvWeights<K, C, L, R>
+impl<const SIDE: usize, const CHANNELS: usize, const LAYERS: usize, const RESIDUAL_BLOCKS: usize>
+    std::fmt::Display for ConvWeights<SIDE, CHANNELS, LAYERS, RESIDUAL_BLOCKS>
 {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(
             formatter,
-            "ConvWeights ({K}x{K} kernel, {C} channels, {L} layers)"
+            "ConvWeights ({SIDE}x{SIDE} kernel, {CHANNELS} channels, {LAYERS} layers)"
         )?;
         writeln!(formatter)?;
-        writeln!(formatter, "Layer 1 (first): {}", self.first)?;
-        for (idx, layer) in self.hidden.iter().enumerate() {
-            writeln!(formatter, "Layer {} (hidden): {layer}", idx + 2)?;
+        writeln!(formatter, "Layer 1 (board): {}", self.board_layer)?;
+        for (idx, layer) in self.middle_layers.iter().enumerate() {
+            writeln!(formatter, "Layer {} (middle): {layer}", idx + 2)?;
         }
-        let last_idx = 2 + self.hidden.len();
-        writeln!(formatter, "Layer {last_idx} (last): {}", self.last)?;
+        let last_idx = 2 + self.middle_layers.len();
+        writeln!(
+            formatter,
+            "Layer {last_idx} (scoring): {}",
+            self.scoring_layer
+        )?;
 
-        let total: usize = self.first.weights().len()
-            + self.first.bias().len()
+        let total: usize = self.board_layer.weights().len()
+            + self.board_layer.bias().len()
             + self
-                .hidden
+                .middle_layers
                 .iter()
                 .map(|layer| layer.weights().len() + layer.bias().len())
                 .sum::<usize>()
-            + self.last.weights().len()
-            + self.last.bias().len();
+            + self.scoring_layer.weights().len()
+            + self.scoring_layer.bias().len();
         write!(formatter, "Total parameters: {total}")
     }
 }
 
-impl<const K: usize, const C: usize, const L: usize, const R: usize> EvolvableGenes
-    for ConvWeights<K, C, L, R>
+impl<const SIDE: usize, const CHANNELS: usize, const LAYERS: usize, const RESIDUAL_BLOCKS: usize>
+    EvolvableGenes for ConvWeights<SIDE, CHANNELS, LAYERS, RESIDUAL_BLOCKS>
 {
     fn crossover(&self, other: &Self, crossover: Crossover, rng: &mut fastrand::Rng) -> Self {
         match crossover {
             Crossover::Uniform => Self {
-                first: self.first.uniform_crossover(&other.first, rng),
-                hidden: self
-                    .hidden
+                board_layer: self.board_layer.uniform_crossover(&other.board_layer, rng),
+                middle_layers: self
+                    .middle_layers
                     .iter()
-                    .zip(&other.hidden)
+                    .zip(&other.middle_layers)
                     .map(|(a, b)| a.uniform_crossover(b, rng))
                     .collect(),
-                last: self.last.uniform_crossover(&other.last, rng),
+                scoring_layer: self
+                    .scoring_layer
+                    .uniform_crossover(&other.scoring_layer, rng),
             },
         }
     }
@@ -120,13 +133,13 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> EvolvableGe
     fn mutate(&self, mutation: Mutation, rng: &mut fastrand::Rng) -> Self {
         match mutation {
             Mutation::Gaussian { sigma } => Self {
-                first: self.first.gaussian_mutate(sigma, rng),
-                hidden: self
-                    .hidden
+                board_layer: self.board_layer.gaussian_mutate(sigma, rng),
+                middle_layers: self
+                    .middle_layers
                     .iter()
                     .map(|layer| layer.gaussian_mutate(sigma, rng))
                     .collect(),
-                last: self.last.gaussian_mutate(sigma, rng),
+                scoring_layer: self.scoring_layer.gaussian_mutate(sigma, rng),
             },
         }
     }
@@ -144,18 +157,18 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(42);
         let weights = TestWeights::random(&mut rng);
 
-        // First: IN_C=2, OUT_C=8, K=3
-        assert_eq!(weights.first().weights().len(), 2 * 8 * 3 * 3);
-        assert_eq!(weights.first().bias().len(), 8);
+        // First: IN_CHANNELS=2, OUT_CHANNELS=8, SIDE=3
+        assert_eq!(weights.board_layer().weights().len(), 2 * 8 * 3 * 3);
+        assert_eq!(weights.board_layer().bias().len(), 8);
 
-        // Hidden: L-1 = 1 layer, IN_C=8, OUT_C=8, K=3
-        assert_eq!(weights.hidden().len(), 1);
-        assert_eq!(weights.hidden()[0].weights().len(), 8 * 8 * 3 * 3);
-        assert_eq!(weights.hidden()[0].bias().len(), 8);
+        // Middle: LAYERS-1 = 1 layer, IN_CHANNELS=8, OUT_CHANNELS=8, SIDE=3
+        assert_eq!(weights.middle_layers().len(), 1);
+        assert_eq!(weights.middle_layers()[0].weights().len(), 8 * 8 * 3 * 3);
+        assert_eq!(weights.middle_layers()[0].bias().len(), 8);
 
-        // Last: IN_C=8, OUT_C=1, K=1
-        assert_eq!(weights.last().weights().len(), 8);
-        assert_eq!(weights.last().bias().len(), 1);
+        // Last: IN_CHANNELS=8, OUT_CHANNELS=1, SIDE=1
+        assert_eq!(weights.scoring_layer().weights().len(), 8);
+        assert_eq!(weights.scoring_layer().bias().len(), 1);
     }
 
     #[test]
@@ -164,7 +177,7 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(42);
         let weights = SingleLayer::random(&mut rng);
 
-        assert!(weights.hidden().is_empty());
+        assert!(weights.middle_layers().is_empty());
     }
 
     #[test]
@@ -180,9 +193,9 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(42);
         let weights = TestWeights::random(&mut rng);
 
-        assert!(weights.first().bias().iter().all(|&b| b == 0.0));
-        assert!(weights.hidden()[0].bias().iter().all(|&b| b == 0.0));
-        assert!(weights.last().bias().iter().all(|&b| b == 0.0));
+        assert!(weights.board_layer().bias().iter().all(|&b| b == 0.0));
+        assert!(weights.middle_layers()[0].bias().iter().all(|&b| b == 0.0));
+        assert!(weights.scoring_layer().bias().iter().all(|&b| b == 0.0));
     }
 
     #[test]
@@ -194,11 +207,14 @@ mod tests {
         let child = parent1.crossover(&parent2, Crossover::Uniform, &mut rng);
 
         // Child should have same structure
-        assert_eq!(child.hidden().len(), parent1.hidden().len());
+        assert_eq!(child.middle_layers().len(), parent1.middle_layers().len());
 
         // Each weight comes from one parent
-        for (i, &val) in child.first().weights().iter().enumerate() {
-            assert!(val == parent1.first().weights()[i] || val == parent2.first().weights()[i]);
+        for (i, &val) in child.board_layer().weights().iter().enumerate() {
+            assert!(
+                val == parent1.board_layer().weights()[i]
+                    || val == parent2.board_layer().weights()[i]
+            );
         }
     }
 

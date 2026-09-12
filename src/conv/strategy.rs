@@ -6,22 +6,29 @@ use crate::position_map::PositionMap;
 use crate::stone::Stone;
 use crate::strategy::{EvolvableStrategy, Strategy};
 
-use crate::nn::{INPUT_CHANNELS, encode_board, relu_inplace, select_best_position};
+use crate::nn::{
+    STONE_CHANNELS, board_to_stone_channels, highest_scored_empty_position, zero_negatives_inplace,
+};
 
-use super::symmetry::D8Transform;
 use super::weights::ConvWeights;
+use crate::nn::BoardSymmetry;
 
 /// A convolutional neural network strategy for Gomoku.
 ///
 /// # Type Parameters
-/// - `K`: Kernel size (e.g., 3 for 3×3 kernels)
-/// - `C`: Number of channels in hidden layers
-/// - `L`: Number of convolutional layers (must be >= 1)
-/// - `R`: Number of residual blocks (must be 0 until implemented)
+/// - `SIDE`: Kernel size (e.g., 3 for 3×3 kernels)
+/// - `CHANNELS`: Number of channels in middle layers
+/// - `LAYERS`: Number of convolutional layers (must be >= 1)
+/// - `RESIDUAL_BLOCKS`: Number of residual blocks (must be 0 until implemented)
 #[derive(Debug, Clone)]
-pub struct ConvStrategy<const K: usize, const C: usize, const L: usize, const R: usize> {
+pub struct ConvStrategy<
+    const SIDE: usize,
+    const CHANNELS: usize,
+    const LAYERS: usize,
+    const RESIDUAL_BLOCKS: usize,
+> {
     label: String,
-    weights: ConvWeights<K, C, L, R>,
+    weights: ConvWeights<SIDE, CHANNELS, LAYERS, RESIDUAL_BLOCKS>,
 }
 
 /// A tiny convolutional strategy: 3×3 kernels, 32 channels, 2 layers, no residual blocks.
@@ -32,29 +39,31 @@ pub type ConvTiny = ConvStrategy<3, 32, 2, 0>;
 /// ~112K parameters.
 pub type ConvSmall = ConvStrategy<3, 64, 4, 0>;
 
-impl<const K: usize, const C: usize, const L: usize, const R: usize> ConvStrategy<K, C, L, R> {
+impl<const SIDE: usize, const CHANNELS: usize, const LAYERS: usize, const RESIDUAL_BLOCKS: usize>
+    ConvStrategy<SIDE, CHANNELS, LAYERS, RESIDUAL_BLOCKS>
+{
     /// Forward pass through the network.
     ///
-    /// Input: board encoding with `INPUT_CHANNELS` channels per position.
-    /// Output: one policy score per position.
-    fn forward(&self, input: &PositionMap<f32, INPUT_CHANNELS>) -> PositionMap<f32, 1> {
-        // First conv: INPUT_CHANNELS -> C channels
-        let mut activations = self.weights.first().conv2d(input);
-        relu_inplace(activations.as_flattened_mut());
+    /// Input: board encoding with `STONE_CHANNELS` channels per position.
+    /// Output: one score per position.
+    fn score_positions(&self, input: &PositionMap<f32, STONE_CHANNELS>) -> PositionMap<f32, 1> {
+        // First conv: STONE_CHANNELS -> CHANNELS channels
+        let mut activations = self.weights.board_layer().conv2d(input);
+        zero_negatives_inplace(activations.as_flattened_mut());
 
-        // Hidden convs: C -> C channels
-        for hidden in self.weights.hidden() {
-            activations = hidden.conv2d(&activations);
-            relu_inplace(activations.as_flattened_mut());
+        // Middle convs: CHANNELS -> CHANNELS channels
+        for middle in self.weights.middle_layers() {
+            activations = middle.conv2d(&activations);
+            zero_negatives_inplace(activations.as_flattened_mut());
         }
 
-        // Final conv: C -> 1 channel (1×1 kernel, no ReLU)
-        self.weights.last().pointwise2d(&activations)
+        // Final conv: CHANNELS -> 1 channel (1×1 kernel, no ReLU)
+        self.weights.scoring_layer().pointwise2d(&activations)
     }
 }
 
-impl<const K: usize, const C: usize, const L: usize, const R: usize> Strategy
-    for ConvStrategy<K, C, L, R>
+impl<const SIDE: usize, const CHANNELS: usize, const LAYERS: usize, const RESIDUAL_BLOCKS: usize>
+    Strategy for ConvStrategy<SIDE, CHANNELS, LAYERS, RESIDUAL_BLOCKS>
 {
     #[instrument(level = "trace", skip_all)]
     fn choose_move(
@@ -63,29 +72,29 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> Strategy
         board: &Board,
         rng: &mut fastrand::Rng,
     ) -> PositionId {
-        let encoding = encode_board(board, current_stone);
+        let encoding = board_to_stone_channels(board, current_stone);
 
-        // Random D8 transform for data augmentation (AlphaGo Zero style)
-        let transform = D8Transform::random(rng);
+        // Random D8 symmetry for data augmentation (AlphaGo Zero style)
+        let symmetry = BoardSymmetry::random(rng);
 
         // Transform input encoding
-        let transformed_encoding = transform_encoding(&encoding, |pos| transform.apply(pos));
+        let transformed_encoding = apply_board_symmetry(&encoding, |pos| symmetry.apply(pos));
 
         // Forward pass
-        let policy = self.forward(&transformed_encoding);
+        let scores = self.score_positions(&transformed_encoding);
 
         // Transform empty positions to transformed space
         let transformed_empty: Vec<PositionId> = board
             .empty_position_ids()
             .iter()
-            .map(|&pos| transform.apply(pos))
+            .map(|&pos| symmetry.apply(pos))
             .collect();
 
         // Select best position in transformed space
-        let transformed_pos = select_best_position(&transformed_empty, &policy, rng);
+        let transformed_pos = highest_scored_empty_position(&transformed_empty, &scores, rng);
 
         // Map selected position back to original orientation
-        transform.apply_inverse(transformed_pos)
+        symmetry.apply_inverse(transformed_pos)
     }
 
     fn label(&self) -> &str {
@@ -93,10 +102,10 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> Strategy
     }
 }
 
-impl<const K: usize, const C: usize, const L: usize, const R: usize> EvolvableStrategy
-    for ConvStrategy<K, C, L, R>
+impl<const SIDE: usize, const CHANNELS: usize, const LAYERS: usize, const RESIDUAL_BLOCKS: usize>
+    EvolvableStrategy for ConvStrategy<SIDE, CHANNELS, LAYERS, RESIDUAL_BLOCKS>
 {
-    type Genes = ConvWeights<K, C, L, R>;
+    type Genes = ConvWeights<SIDE, CHANNELS, LAYERS, RESIDUAL_BLOCKS>;
 
     fn random(label: impl Into<String>, rng: &mut fastrand::Rng) -> Self {
         Self {
@@ -120,10 +129,10 @@ impl<const K: usize, const C: usize, const L: usize, const R: usize> EvolvableSt
 /// Transforms an encoding by applying a position transformation.
 ///
 /// For each position `p`, copies all channels from `encoding[p]` to `result[f(p)]`.
-fn transform_encoding<const C: usize>(
-    encoding: &PositionMap<f32, C>,
+fn apply_board_symmetry<const CHANNELS: usize>(
+    encoding: &PositionMap<f32, CHANNELS>,
     f: impl Fn(PositionId) -> PositionId,
-) -> PositionMap<f32, C> {
+) -> PositionMap<f32, CHANNELS> {
     let mut result = PositionMap::new(0.0);
     for pos in PositionId::iter() {
         *result.get_mut(f(pos)) = *encoding.get(pos);
@@ -144,7 +153,7 @@ mod tests {
         let strategy = TestStrategy::random("test", &mut rng);
         let input = PositionMap::new(0.0);
 
-        let output = strategy.forward(&input);
+        let output = strategy.score_positions(&input);
 
         for pos in PositionId::iter() {
             let [score] = *output.get(pos);
@@ -212,9 +221,9 @@ mod tests {
 
     #[test]
     fn transform_encoding_with_identity_preserves_values() {
-        let encoding = encode_board(&Board::new(), Stone::Black);
+        let encoding = board_to_stone_channels(&Board::new(), Stone::Black);
 
-        let result = transform_encoding(&encoding, |pos| pos);
+        let result = apply_board_symmetry(&encoding, |pos| pos);
 
         for pos in PositionId::iter() {
             assert_eq!(result.get(pos), encoding.get(pos));
@@ -223,13 +232,13 @@ mod tests {
 
     #[test]
     fn transform_encoding_with_invert_moves_values() {
-        let mut encoding = PositionMap::<f32, INPUT_CHANNELS>::new(0.0);
+        let mut encoding = PositionMap::<f32, STONE_CHANNELS>::new(0.0);
         let first_pos = PositionId::iter().next().unwrap();
         let last_pos = first_pos.invert();
 
         *encoding.get_mut(first_pos) = [1.0, 2.0];
 
-        let result = transform_encoding(&encoding, PositionId::invert);
+        let result = apply_board_symmetry(&encoding, PositionId::invert);
 
         assert_eq!(result.get(last_pos), &[1.0, 2.0]);
     }
@@ -244,13 +253,13 @@ mod tests {
 
         #[test]
         fn transform_then_inverse_returns_original_position() {
-            for transform in D8Transform::ALL {
+            for symmetry in BoardSymmetry::ALL {
                 for original_pos in PositionId::iter() {
-                    let transformed = transform.apply(original_pos);
-                    let back = transform.apply_inverse(transformed);
+                    let transformed = symmetry.apply(original_pos);
+                    let back = symmetry.apply_inverse(transformed);
                     assert_eq!(
                         back, original_pos,
-                        "{transform:?}: {original_pos:?} -> {transformed:?} -> {back:?}"
+                        "{symmetry:?}: {original_pos:?} -> {transformed:?} -> {back:?}"
                     );
                 }
             }
@@ -263,18 +272,16 @@ mod tests {
 
             let empty_positions = state.empty_position_ids();
 
-            for transform in D8Transform::ALL {
-                let transformed_empty: Vec<PositionId> = empty_positions
-                    .iter()
-                    .map(|&p| transform.apply(p))
-                    .collect();
+            for symmetry in BoardSymmetry::ALL {
+                let transformed_empty: Vec<PositionId> =
+                    empty_positions.iter().map(|&p| symmetry.apply(p)).collect();
 
                 let transformed_pos = transformed_empty[0];
-                let original_pos = transform.apply_inverse(transformed_pos);
+                let original_pos = symmetry.apply_inverse(transformed_pos);
 
                 assert!(
                     empty_positions.contains(&original_pos),
-                    "{transform:?}: inverse of {transformed_pos:?} = {original_pos:?} not in empty"
+                    "{symmetry:?}: inverse of {transformed_pos:?} = {original_pos:?} not in empty"
                 );
             }
         }
@@ -322,47 +329,47 @@ mod tests {
         #[test]
         fn positive_values_unchanged() {
             let mut data = vec![1.0, 2.5, 0.001];
-            relu_inplace(&mut data);
+            zero_negatives_inplace(&mut data);
             assert_eq!(data, vec![1.0, 2.5, 0.001]);
         }
 
         #[test]
         fn negative_values_become_zero() {
             let mut data = vec![-1.0, -0.001, -100.0];
-            relu_inplace(&mut data);
+            zero_negatives_inplace(&mut data);
             assert_eq!(data, vec![0.0, 0.0, 0.0]);
         }
 
         #[test]
         fn zero_unchanged() {
             let mut data = vec![0.0];
-            relu_inplace(&mut data);
+            zero_negatives_inplace(&mut data);
             assert_eq!(data, vec![0.0]);
         }
 
         #[test]
         fn mixed_values() {
             let mut data = vec![-2.0, 0.0, 3.0, -0.5, 1.0];
-            relu_inplace(&mut data);
+            zero_negatives_inplace(&mut data);
             assert_eq!(data, vec![0.0, 0.0, 3.0, 0.0, 1.0]);
         }
 
         #[test]
         fn empty_slice() {
             let mut data: Vec<f32> = vec![];
-            relu_inplace(&mut data);
+            zero_negatives_inplace(&mut data);
             assert!(data.is_empty());
         }
     }
 
     #[test]
     fn forward_with_hidden_layer_produces_finite_score_for_every_position() {
-        // L=2 adds one hidden C -> C layer, exercising the hidden-layer loop.
+        // LAYERS=2 adds one middle CHANNELS -> CHANNELS layer, exercising the middle-layer loop.
         let mut rng = fastrand::Rng::with_seed(42);
         let strategy = ConvStrategy::<3, 4, 2, 0>::random("two_layers", &mut rng);
-        let input = encode_board(&Board::new(), Stone::Black);
+        let input = board_to_stone_channels(&Board::new(), Stone::Black);
 
-        let output = strategy.forward(&input);
+        let output = strategy.score_positions(&input);
 
         for pos in PositionId::iter() {
             let [score] = *output.get(pos);

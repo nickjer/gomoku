@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::evolution::crossover::uniform_crossover;
 use crate::evolution::mutation::gaussian_mutate;
-use crate::nn::he_std;
+use crate::nn::initial_weight_spread;
 use crate::offset::Offset;
 use crate::position_id::PositionId;
 use crate::position_map::PositionMap;
@@ -14,49 +14,51 @@ use crate::position_map::PositionMap;
 /// Validated at construction time.
 ///
 /// # Type Parameters
-/// - `IN_C`: Number of input channels
-/// - `OUT_C`: Number of output channels
-/// - `K`: Kernel size (e.g., 3 for 3×3 kernels)
+/// - `IN_CHANNELS`: Number of input channels
+/// - `OUT_CHANNELS`: Number of output channels
+/// - `SIDE`: Kernel size (e.g., 3 for 3×3 kernels)
 ///
 /// # Weight Layout
-/// Weights are in `[IN_C * K * K][OUT_C]` layout.
+/// Weights are in `[IN_CHANNELS * SIDE * SIDE][OUT_CHANNELS]` layout.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ConvParams<const IN_C: usize, const OUT_C: usize, const K: usize> {
+pub struct ConvParams<const IN_CHANNELS: usize, const OUT_CHANNELS: usize, const SIDE: usize> {
     weights: Vec<f32>,
     bias: Vec<f32>,
 }
 
-impl<const IN_C: usize, const OUT_C: usize, const K: usize> ConvParams<IN_C, OUT_C, K> {
+impl<const IN_CHANNELS: usize, const OUT_CHANNELS: usize, const SIDE: usize>
+    ConvParams<IN_CHANNELS, OUT_CHANNELS, SIDE>
+{
     /// Workspace stride: number of elements per position in the gathered neighborhood.
-    const STRIDE: usize = IN_C
-        .checked_mul(K)
-        .expect("STRIDE overflow")
-        .checked_mul(K)
-        .expect("STRIDE overflow");
+    const INPUTS_PER_POSITION: usize = IN_CHANNELS
+        .checked_mul(SIDE)
+        .expect("INPUTS_PER_POSITION overflow")
+        .checked_mul(SIDE)
+        .expect("INPUTS_PER_POSITION overflow");
 
-    /// Expected weights length: `IN_C * K * K * OUT_C`.
-    const EXPECTED_WEIGHTS: usize = Self::STRIDE
-        .checked_mul(OUT_C)
-        .expect("EXPECTED_WEIGHTS overflow");
+    /// Expected weights length: `IN_CHANNELS * SIDE * SIDE * OUT_CHANNELS`.
+    const WEIGHT_COUNT: usize = Self::INPUTS_PER_POSITION
+        .checked_mul(OUT_CHANNELS)
+        .expect("WEIGHT_COUNT overflow");
 
     /// Creates a new `ConvParams` with validated dimensions.
     ///
     /// # Panics
     ///
-    /// Panics if `weights.len() != IN_C * K * K * OUT_C` or `bias.len() != OUT_C`.
+    /// Panics if `weights.len() != IN_CHANNELS * SIDE * SIDE * OUT_CHANNELS` or `bias.len() != OUT_CHANNELS`.
     #[must_use]
     pub fn new(weights: Vec<f32>, bias: Vec<f32>) -> Self {
         assert_eq!(
             weights.len(),
-            Self::EXPECTED_WEIGHTS,
+            Self::WEIGHT_COUNT,
             "weights length mismatch: expected {}, got {}",
-            Self::EXPECTED_WEIGHTS,
+            Self::WEIGHT_COUNT,
             weights.len()
         );
         assert_eq!(
             bias.len(),
-            OUT_C,
-            "bias length mismatch: expected {OUT_C}, got {}",
+            OUT_CHANNELS,
+            "bias length mismatch: expected {OUT_CHANNELS}, got {}",
             bias.len()
         );
         Self { weights, bias }
@@ -68,38 +70,38 @@ impl<const IN_C: usize, const OUT_C: usize, const K: usize> ConvParams<IN_C, OUT
     /// Biases are initialized to zero.
     #[must_use]
     pub fn random(rng: &mut fastrand::Rng) -> Self {
-        let std = he_std(Self::STRIDE);
-        let weights: Vec<f32> = (0..Self::EXPECTED_WEIGHTS)
+        let std = initial_weight_spread(Self::INPUTS_PER_POSITION);
+        let weights: Vec<f32> = (0..Self::WEIGHT_COUNT)
             .map(|_| rng.f32_normal(0.0, std))
             .collect();
-        let bias = vec![0.0; OUT_C];
+        let bias = vec![0.0; OUT_CHANNELS];
         Self::new(weights, bias)
     }
 
-    /// Returns the weight slice in `[IN_C * K * K][OUT_C]` layout.
+    /// Returns the weight slice in `[IN_CHANNELS * SIDE * SIDE][OUT_CHANNELS]` layout.
     #[must_use]
     pub fn weights(&self) -> &[f32] {
-        assert_eq!(self.weights.len(), Self::EXPECTED_WEIGHTS);
+        assert_eq!(self.weights.len(), Self::WEIGHT_COUNT);
         &self.weights
     }
 
-    /// Returns the bias as a fixed-size array of `OUT_C` values.
+    /// Returns the bias as a fixed-size array of `OUT_CHANNELS` values.
     #[must_use]
-    pub fn bias(&self) -> &[f32; OUT_C] {
+    pub fn bias(&self) -> &[f32; OUT_CHANNELS] {
         self.bias
             .as_slice()
             .try_into()
-            .expect("bias length must equal OUT_C")
+            .expect("bias length must equal OUT_CHANNELS")
     }
 
     /// Applies a 2D convolution to the input using workspace-based neighborhood gathering.
     ///
-    /// All dimensions (`IN_C`, `OUT_C`, `K`) are encoded in `Self`, ensuring separate
+    /// All dimensions (`IN_CHANNELS`, `OUT_CHANNELS`, `SIDE`) are encoded in `Self`, ensuring separate
     /// monomorphizations for each layer configuration.
     #[must_use]
-    pub fn conv2d(&self, input: &PositionMap<f32, IN_C>) -> PositionMap<f32, OUT_C> {
+    pub fn conv2d(&self, input: &PositionMap<f32, IN_CHANNELS>) -> PositionMap<f32, OUT_CHANNELS> {
         let workspace = Self::gather_workspace(input);
-        Self::conv2d_from_workspace(
+        Self::weighted_sums(
             self.weights(),
             self.bias(),
             workspace
@@ -126,15 +128,17 @@ impl<const IN_C: usize, const OUT_C: usize, const K: usize> ConvParams<IN_C, OUT
         }
     }
 
-    /// Gathers each position's K×K neighborhood per input channel.
+    /// Gathers each position's SIDE×SIDE neighborhood per input channel.
     /// Out-of-bounds positions are zero-padded.
-    fn gather_workspace(input: &PositionMap<f32, IN_C>) -> PositionMap<[[f32; K]; K], IN_C> {
-        // Kernel index `i` maps to board delta `i - K / 2`.
-        let half_kernel = isize::try_from(K / 2).expect("kernel size too large");
-        let deltas: [isize; K] = std::array::from_fn(|i| {
+    fn gather_workspace(
+        input: &PositionMap<f32, IN_CHANNELS>,
+    ) -> PositionMap<[[f32; SIDE]; SIDE], IN_CHANNELS> {
+        // Kernel index `i` maps to board delta `i - SIDE / 2`.
+        let half_kernel = isize::try_from(SIDE / 2).expect("kernel size too large");
+        let deltas: [isize; SIDE] = std::array::from_fn(|i| {
             isize::try_from(i).expect("kernel size too large") - half_kernel
         });
-        let mut workspace = PositionMap::new([[0.0; K]; K]);
+        let mut workspace = PositionMap::new([[0.0; SIDE]; SIDE]);
 
         for (pos, neighborhood) in PositionId::iter().zip(workspace.iter_mut()) {
             for (kernel_row, &row_delta) in deltas.iter().enumerate() {
@@ -152,26 +156,26 @@ impl<const IN_C: usize, const OUT_C: usize, const K: usize> ConvParams<IN_C, OUT
         workspace
     }
 
-    /// Dot product of each position's `STRIDE` gathered values against weights + bias.
+    /// Dot product of each position's `INPUTS_PER_POSITION` gathered values against weights + bias.
     /// `positions` must yield one slice per position in [`PositionId::iter`] order.
     ///
     /// This is an associated function (no `&self`) so that `weights` and `bias` arrive
     /// as independent parameters. LLVM's alias analysis can then prove they do not
     /// alias the freshly allocated output, enabling auto-vectorization.
     #[must_use]
-    fn conv2d_from_workspace<'a>(
+    fn weighted_sums<'a>(
         weights: &[f32],
-        bias: &[f32; OUT_C],
+        bias: &[f32; OUT_CHANNELS],
         positions: impl ExactSizeIterator<Item = &'a [f32]>,
-    ) -> PositionMap<f32, OUT_C> {
-        let (weight_rows, remainder) = weights.as_chunks::<OUT_C>();
+    ) -> PositionMap<f32, OUT_CHANNELS> {
+        let (weight_rows, remainder) = weights.as_chunks::<OUT_CHANNELS>();
         assert!(remainder.is_empty());
-        assert_eq!(weight_rows.len(), Self::STRIDE);
+        assert_eq!(weight_rows.len(), Self::INPUTS_PER_POSITION);
         assert_eq!(positions.len(), PositionId::COUNT);
 
         let mut output = PositionMap::new(0.0);
         for (output_channels, neighborhood) in output.iter_mut().zip(positions) {
-            assert_eq!(neighborhood.len(), Self::STRIDE);
+            assert_eq!(neighborhood.len(), Self::INPUTS_PER_POSITION);
             *output_channels = *bias;
             for (&input_val, weight_row) in neighborhood.iter().zip(weight_rows) {
                 for (out_ch, &weight) in output_channels.iter_mut().zip(weight_row) {
@@ -183,28 +187,34 @@ impl<const IN_C: usize, const OUT_C: usize, const K: usize> ConvParams<IN_C, OUT
     }
 }
 
-/// Pointwise layers (1×1 kernel): each position's `IN_C` input values are
+/// Pointwise layers (1×1 kernel): each position's `IN_CHANNELS` input values are
 /// already exactly what gathering would produce, so the dot product can read
 /// the input directly.
-impl<const IN_C: usize, const OUT_C: usize> ConvParams<IN_C, OUT_C, 1> {
+impl<const IN_CHANNELS: usize, const OUT_CHANNELS: usize> ConvParams<IN_CHANNELS, OUT_CHANNELS, 1> {
     /// Applies the layer without gathering. Same result as `conv2d`.
     #[must_use]
-    pub fn pointwise2d(&self, input: &PositionMap<f32, IN_C>) -> PositionMap<f32, OUT_C> {
-        Self::conv2d_from_workspace(
+    pub fn pointwise2d(
+        &self,
+        input: &PositionMap<f32, IN_CHANNELS>,
+    ) -> PositionMap<f32, OUT_CHANNELS> {
+        Self::weighted_sums(
             self.weights(),
             self.bias(),
-            input.iter().map(<[f32; IN_C]>::as_slice),
+            input.iter().map(<[f32; IN_CHANNELS]>::as_slice),
         )
     }
 }
 
-impl<const IN_C: usize, const OUT_C: usize, const K: usize> std::fmt::Display
-    for ConvParams<IN_C, OUT_C, K>
+impl<const IN_CHANNELS: usize, const OUT_CHANNELS: usize, const SIDE: usize> std::fmt::Display
+    for ConvParams<IN_CHANNELS, OUT_CHANNELS, SIDE>
 {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use crate::nn::format_slice_stats;
 
-        writeln!(formatter, "Conv {IN_C} -> {OUT_C}, {K}x{K}")?;
+        writeln!(
+            formatter,
+            "Conv {IN_CHANNELS} -> {OUT_CHANNELS}, {SIDE}x{SIDE}"
+        )?;
         writeln!(
             formatter,
             "  Weights {}",
@@ -226,15 +236,18 @@ mod tests {
     }
 
     /// Helper to run conv2d.
-    fn conv<const IN_C: usize, const OUT_C: usize, const K: usize>(
-        input: &PositionMap<f32, IN_C>,
-        params: &ConvParams<IN_C, OUT_C, K>,
-    ) -> PositionMap<f32, OUT_C> {
+    fn conv<const IN_CHANNELS: usize, const OUT_CHANNELS: usize, const SIDE: usize>(
+        input: &PositionMap<f32, IN_CHANNELS>,
+        params: &ConvParams<IN_CHANNELS, OUT_CHANNELS, SIDE>,
+    ) -> PositionMap<f32, OUT_CHANNELS> {
         params.conv2d(input)
     }
 
     /// Creates input with a single non-zero value at the given position in channel 0.
-    fn single_value_input<const C: usize>(position: PositionId, value: f32) -> PositionMap<f32, C> {
+    fn single_value_input<const CHANNELS: usize>(
+        position: PositionId,
+        value: f32,
+    ) -> PositionMap<f32, CHANNELS> {
         let mut input = PositionMap::new(0.0);
         input.get_mut(position)[0] = value;
         input
@@ -307,7 +320,7 @@ mod tests {
         let std_dev = variance.sqrt();
 
         // Expected std: sqrt(2 / (2 * 9)) = sqrt(1/9) ≈ 0.333
-        let expected_std = he_std(2 * 3 * 3);
+        let expected_std = initial_weight_spread(2 * 3 * 3);
         assert!(
             (std_dev - expected_std).abs() < 0.1,
             "std_dev {std_dev} not close to expected {expected_std}"
@@ -356,7 +369,7 @@ mod tests {
             patch_idx * out_channels + out_ch
         }
 
-        /// Shorthand for center kernel position (kr=K/2, kc=K/2).
+        /// Shorthand for center kernel position (kr=SIDE/2, kc=SIDE/2).
         const fn center_weight_index(
             in_ch: usize,
             out_ch: usize,
@@ -637,7 +650,7 @@ mod tests {
         let mut input = PositionMap::<f32, 2>::new(0.0);
         *input.get_mut(center) = [3.0, 4.0];
 
-        // [STRIDE=2][OUT_C=1]: w_ch0 = 2.0, w_ch1 = 0.5; bias = 1.0
+        // [INPUTS_PER_POSITION=2][OUT_CHANNELS=1]: w_ch0 = 2.0, w_ch1 = 0.5; bias = 1.0
         let params = ConvParams::<2, 1, 1>::new(vec![2.0, 0.5], vec![1.0]);
 
         let output = params.pointwise2d(&input);

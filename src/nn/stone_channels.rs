@@ -4,14 +4,17 @@ use crate::position_map::PositionMap;
 use crate::stone::Stone;
 
 /// Number of input channels for board encoding (own stones, opponent stones).
-pub const INPUT_CHANNELS: usize = 2;
+pub const STONE_CHANNELS: usize = 2;
 
 /// Encodes the board from the perspective of the current player.
 ///
-/// Returns a [`PositionMap`] with `INPUT_CHANNELS` channels per position:
+/// Returns a [`PositionMap`] with `STONE_CHANNELS` channels per position:
 /// channel 0 is the current player's stones, channel 1 is the opponent's stones.
 /// Values are 1.0 (stone present) or 0.0.
-pub fn encode_board(board: &Board, current_stone: Stone) -> PositionMap<f32, INPUT_CHANNELS> {
+pub fn board_to_stone_channels(
+    board: &Board,
+    current_stone: Stone,
+) -> PositionMap<f32, STONE_CHANNELS> {
     let mut encoding = PositionMap::new(0.0);
 
     for pos in PositionId::iter() {
@@ -48,7 +51,7 @@ mod tests {
     fn empty_board_encodes_to_all_zeros() {
         let board = Board::new();
 
-        let encoding = encode_board(&board, Stone::Black);
+        let encoding = board_to_stone_channels(&board, Stone::Black);
 
         for pos in PositionId::iter() {
             assert_eq!(encoding.get(pos), &[0.0, 0.0]);
@@ -61,7 +64,7 @@ mod tests {
         let center = PositionId::center();
         board.place(center, Stone::Black).unwrap();
 
-        let encoding = encode_board(&board, Stone::Black);
+        let encoding = board_to_stone_channels(&board, Stone::Black);
 
         assert_eq!(encoding.get(center), &[1.0, 0.0]);
     }
@@ -72,7 +75,7 @@ mod tests {
         let center = PositionId::center();
         board.place(center, Stone::White).unwrap();
 
-        let encoding = encode_board(&board, Stone::Black);
+        let encoding = board_to_stone_channels(&board, Stone::Black);
 
         assert_eq!(encoding.get(center), &[0.0, 1.0]);
     }
@@ -85,8 +88,8 @@ mod tests {
         board.place(center, Stone::Black).unwrap();
         board.place(adjacent, Stone::White).unwrap();
 
-        let black_view = encode_board(&board, Stone::Black);
-        let white_view = encode_board(&board, Stone::White);
+        let black_view = board_to_stone_channels(&board, Stone::Black);
+        let white_view = board_to_stone_channels(&board, Stone::White);
 
         // From Black's perspective: center is own, adjacent is opponent
         assert_eq!(black_view.get(center), &[1.0, 0.0]);
@@ -105,7 +108,7 @@ mod tests {
             board.place(p, Stone::Black).unwrap();
         }
 
-        let encoding = encode_board(&board, Stone::Black);
+        let encoding = board_to_stone_channels(&board, Stone::Black);
 
         // All three positions should be 1.0 in own channel
         for &p in &positions {

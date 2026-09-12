@@ -3,103 +3,117 @@ use serde::{Deserialize, Serialize};
 use crate::evolution::crossover::Crossover;
 use crate::evolution::genes::EvolvableGenes;
 use crate::evolution::mutation::Mutation;
-use crate::nn::INPUT_CHANNELS;
+use crate::nn::STONE_CHANNELS;
 
 use super::params::ClusterParams;
 
 /// Weights for a cluster neural network with const-generic architecture.
 ///
 /// # Type Parameters
-/// - `F`: Number of features per channel for spatial layers (typically `FEATURE_COUNT`)
-/// - `C`: Number of channels in hidden layers
-/// - `L`: Number of cluster layers (must be >= 1)
+/// - `CLUSTERS`: Number of clusters per channel for spatial layers (typically `CLUSTER_COUNT`)
+/// - `CHANNELS`: Number of channels in middle layers
+/// - `LAYERS`: Number of cluster layers (must be >= 1)
 ///
 /// # Architecture
-/// - First cluster: 2 input channels → C channels, F features + `ReLU`
-/// - L-1 hidden clusters: C → C channels, F features + `ReLU`
-/// - Final cluster: C → 1 channel, F=1 (pointwise, no `ReLU`)
+/// - First cluster: 2 input channels → CHANNELS channels, CLUSTERS clusters + `ReLU`
+/// - LAYERS-1 middle clusters: CHANNELS → CHANNELS channels, CLUSTERS clusters + `ReLU`
+/// - Final cluster: CHANNELS → 1 channel, CLUSTERS=1 (pointwise, no `ReLU`)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ClusterWeights<const F: usize, const C: usize, const L: usize> {
-    first: ClusterParams<{ INPUT_CHANNELS }, C, F>,
-    hidden: Vec<ClusterParams<C, C, F>>,
-    last: ClusterParams<C, 1, 1>,
+pub struct ClusterWeights<const CLUSTERS: usize, const CHANNELS: usize, const LAYERS: usize> {
+    board_layer: ClusterParams<{ STONE_CHANNELS }, CHANNELS, CLUSTERS>,
+    middle_layers: Vec<ClusterParams<CHANNELS, CHANNELS, CLUSTERS>>,
+    scoring_layer: ClusterParams<CHANNELS, 1, 1>,
 }
 
-impl<const F: usize, const C: usize, const L: usize> ClusterWeights<F, C, L> {
+impl<const CLUSTERS: usize, const CHANNELS: usize, const LAYERS: usize>
+    ClusterWeights<CLUSTERS, CHANNELS, LAYERS>
+{
     /// Creates weights initialized using He initialization.
     ///
     /// # Panics
     ///
-    /// Panics if `L < 1`.
+    /// Panics if `LAYERS < 1`.
     #[must_use]
     pub fn random(rng: &mut fastrand::Rng) -> Self {
-        assert!(L >= 1, "must have at least 1 layer");
+        assert!(LAYERS >= 1, "must have at least 1 layer");
 
         Self {
-            first: ClusterParams::random(rng),
-            hidden: (0..(L - 1)).map(|_| ClusterParams::random(rng)).collect(),
-            last: ClusterParams::random(rng),
+            board_layer: ClusterParams::random(rng),
+            middle_layers: (0..(LAYERS - 1))
+                .map(|_| ClusterParams::random(rng))
+                .collect(),
+            scoring_layer: ClusterParams::random(rng),
         }
     }
 
-    /// Returns a reference to the first cluster layer parameters.
+    /// Returns a reference to the board cluster layer parameters.
     #[must_use]
-    pub fn first(&self) -> &ClusterParams<{ INPUT_CHANNELS }, C, F> {
-        &self.first
+    pub fn board_layer(&self) -> &ClusterParams<{ STONE_CHANNELS }, CHANNELS, CLUSTERS> {
+        &self.board_layer
     }
 
-    /// Returns the hidden cluster layer parameters.
+    /// Returns the middle cluster layer parameters.
     #[must_use]
-    pub fn hidden(&self) -> &[ClusterParams<C, C, F>] {
-        &self.hidden
+    pub fn middle_layers(&self) -> &[ClusterParams<CHANNELS, CHANNELS, CLUSTERS>] {
+        &self.middle_layers
     }
 
-    /// Returns a reference to the final cluster layer parameters (pointwise, F=1).
+    /// Returns a reference to the final cluster layer parameters (pointwise, CLUSTERS=1).
     #[must_use]
-    pub fn last(&self) -> &ClusterParams<C, 1, 1> {
-        &self.last
+    pub fn scoring_layer(&self) -> &ClusterParams<CHANNELS, 1, 1> {
+        &self.scoring_layer
     }
 }
 
-impl<const F: usize, const C: usize, const L: usize> std::fmt::Display for ClusterWeights<F, C, L> {
+impl<const CLUSTERS: usize, const CHANNELS: usize, const LAYERS: usize> std::fmt::Display
+    for ClusterWeights<CLUSTERS, CHANNELS, LAYERS>
+{
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(
             formatter,
-            "ClusterWeights ({F} features, {C} channels, {L} layers)"
+            "ClusterWeights ({CLUSTERS} clusters, {CHANNELS} channels, {LAYERS} layers)"
         )?;
         writeln!(formatter)?;
-        writeln!(formatter, "Layer 1 (first): {}", self.first)?;
-        for (idx, layer) in self.hidden.iter().enumerate() {
-            writeln!(formatter, "Layer {} (hidden): {layer}", idx + 2)?;
+        writeln!(formatter, "Layer 1 (board): {}", self.board_layer)?;
+        for (idx, layer) in self.middle_layers.iter().enumerate() {
+            writeln!(formatter, "Layer {} (middle): {layer}", idx + 2)?;
         }
-        let last_idx = 2 + self.hidden.len();
-        writeln!(formatter, "Layer {last_idx} (last): {}", self.last)?;
+        let last_idx = 2 + self.middle_layers.len();
+        writeln!(
+            formatter,
+            "Layer {last_idx} (scoring): {}",
+            self.scoring_layer
+        )?;
 
-        let total: usize = self.first.weights().len()
-            + self.first.bias().len()
+        let total: usize = self.board_layer.weights().len()
+            + self.board_layer.bias().len()
             + self
-                .hidden
+                .middle_layers
                 .iter()
                 .map(|layer| layer.weights().len() + layer.bias().len())
                 .sum::<usize>()
-            + self.last.weights().len()
-            + self.last.bias().len();
+            + self.scoring_layer.weights().len()
+            + self.scoring_layer.bias().len();
         write!(formatter, "Total parameters: {total}")
     }
 }
 
-impl<const F: usize, const C: usize, const L: usize> EvolvableGenes for ClusterWeights<F, C, L> {
+impl<const CLUSTERS: usize, const CHANNELS: usize, const LAYERS: usize> EvolvableGenes
+    for ClusterWeights<CLUSTERS, CHANNELS, LAYERS>
+{
     fn crossover(&self, other: &Self, crossover: Crossover, rng: &mut fastrand::Rng) -> Self {
         match crossover {
             Crossover::Uniform => Self {
-                first: self.first.uniform_crossover(&other.first, rng),
-                hidden: self
-                    .hidden
+                board_layer: self.board_layer.uniform_crossover(&other.board_layer, rng),
+                middle_layers: self
+                    .middle_layers
                     .iter()
-                    .zip(&other.hidden)
+                    .zip(&other.middle_layers)
                     .map(|(a, b)| a.uniform_crossover(b, rng))
                     .collect(),
-                last: self.last.uniform_crossover(&other.last, rng),
+                scoring_layer: self
+                    .scoring_layer
+                    .uniform_crossover(&other.scoring_layer, rng),
             },
         }
     }
@@ -107,13 +121,13 @@ impl<const F: usize, const C: usize, const L: usize> EvolvableGenes for ClusterW
     fn mutate(&self, mutation: Mutation, rng: &mut fastrand::Rng) -> Self {
         match mutation {
             Mutation::Gaussian { sigma } => Self {
-                first: self.first.gaussian_mutate(sigma, rng),
-                hidden: self
-                    .hidden
+                board_layer: self.board_layer.gaussian_mutate(sigma, rng),
+                middle_layers: self
+                    .middle_layers
                     .iter()
                     .map(|layer| layer.gaussian_mutate(sigma, rng))
                     .collect(),
-                last: self.last.gaussian_mutate(sigma, rng),
+                scoring_layer: self.scoring_layer.gaussian_mutate(sigma, rng),
             },
         }
     }
@@ -122,37 +136,37 @@ impl<const F: usize, const C: usize, const L: usize> EvolvableGenes for ClusterW
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cluster::features::FEATURE_COUNT;
+    use crate::nn::CLUSTER_COUNT;
 
-    // Type alias for testing: 9 features, 8 channels, 2 layers
-    type TestWeights = ClusterWeights<FEATURE_COUNT, 8, 2>;
+    // Type alias for testing: 9 clusters, 8 channels, 2 layers
+    type TestWeights = ClusterWeights<CLUSTER_COUNT, 8, 2>;
 
     #[test]
     fn random_creates_correct_structure() {
         let mut rng = fastrand::Rng::with_seed(42);
         let weights = TestWeights::random(&mut rng);
 
-        // First: IN_C=2, OUT_C=8, F=9
-        assert_eq!(weights.first().weights().len(), 2 * 9 * 8);
-        assert_eq!(weights.first().bias().len(), 8);
+        // First: IN_CHANNELS=2, OUT_CHANNELS=8, CLUSTERS=9
+        assert_eq!(weights.board_layer().weights().len(), 2 * 9 * 8);
+        assert_eq!(weights.board_layer().bias().len(), 8);
 
-        // Hidden: L-1 = 1 layer, IN_C=8, OUT_C=8, F=9
-        assert_eq!(weights.hidden().len(), 1);
-        assert_eq!(weights.hidden()[0].weights().len(), 8 * 9 * 8);
-        assert_eq!(weights.hidden()[0].bias().len(), 8);
+        // Middle: LAYERS-1 = 1 layer, IN_CHANNELS=8, OUT_CHANNELS=8, CLUSTERS=9
+        assert_eq!(weights.middle_layers().len(), 1);
+        assert_eq!(weights.middle_layers()[0].weights().len(), 8 * 9 * 8);
+        assert_eq!(weights.middle_layers()[0].bias().len(), 8);
 
-        // Last: IN_C=8, OUT_C=1, F=1 (pointwise)
-        assert_eq!(weights.last().weights().len(), 8);
-        assert_eq!(weights.last().bias().len(), 1);
+        // Last: IN_CHANNELS=8, OUT_CHANNELS=1, CLUSTERS=1 (pointwise)
+        assert_eq!(weights.scoring_layer().weights().len(), 8);
+        assert_eq!(weights.scoring_layer().bias().len(), 1);
     }
 
     #[test]
     fn random_single_layer() {
-        type SingleLayer = ClusterWeights<FEATURE_COUNT, 8, 1>;
+        type SingleLayer = ClusterWeights<CLUSTER_COUNT, 8, 1>;
         let mut rng = fastrand::Rng::with_seed(42);
         let weights = SingleLayer::random(&mut rng);
 
-        assert!(weights.hidden().is_empty());
+        assert!(weights.middle_layers().is_empty());
     }
 
     #[test]
@@ -160,9 +174,20 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(42);
         let weights = TestWeights::random(&mut rng);
 
-        assert!(weights.first().bias().iter().all(|&bias| bias == 0.0));
-        assert!(weights.hidden()[0].bias().iter().all(|&bias| bias == 0.0));
-        assert!(weights.last().bias().iter().all(|&bias| bias == 0.0));
+        assert!(weights.board_layer().bias().iter().all(|&bias| bias == 0.0));
+        assert!(
+            weights.middle_layers()[0]
+                .bias()
+                .iter()
+                .all(|&bias| bias == 0.0)
+        );
+        assert!(
+            weights
+                .scoring_layer()
+                .bias()
+                .iter()
+                .all(|&bias| bias == 0.0)
+        );
     }
 
     #[test]
@@ -174,11 +199,14 @@ mod tests {
         let child = parent1.crossover(&parent2, Crossover::Uniform, &mut rng);
 
         // Child should have same structure
-        assert_eq!(child.hidden().len(), parent1.hidden().len());
+        assert_eq!(child.middle_layers().len(), parent1.middle_layers().len());
 
         // Each weight comes from one parent
-        for (idx, &val) in child.first().weights().iter().enumerate() {
-            assert!(val == parent1.first().weights()[idx] || val == parent2.first().weights()[idx]);
+        for (idx, &val) in child.board_layer().weights().iter().enumerate() {
+            assert!(
+                val == parent1.board_layer().weights()[idx]
+                    || val == parent2.board_layer().weights()[idx]
+            );
         }
     }
 

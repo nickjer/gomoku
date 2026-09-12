@@ -30,39 +30,41 @@ cargo fmt                # Format code
 - **Offset**: Direction vectors for neighbor calculations
 
 ### Shared Neural Network Utilities (`src/nn/`)
-- **`encode_board()`**: Encodes board as a `PositionMap<f32, INPUT_CHANNELS>` (own stones, opponent stones)
-- **`select_best_position()`**: Argmax over empty positions with reservoir sampling for ties
-- **`he_std()`**: He initialization standard deviation
-- **`relu_inplace()`**: ReLU activation in-place
+- **`board_to_stone_channels()`**: Encodes board as a `PositionMap<f32, STONE_CHANNELS>` (own stones, opponent stones)
+- **`highest_scored_empty_position()`**: Argmax over empty positions with reservoir sampling for ties
+- **`initial_weight_spread()`**: He initialization standard deviation
+- **`zero_negatives_inplace()`**: ReLU activation in-place
+- **`BoardSymmetry`**: The 8 rotations and reflections of the board (D8), used for augmentation
+- **`cluster_sums()`**, `CLUSTER_COUNT`, `CLUSTER_NAMES`: Cluster expansion of a position's 8 neighbors
 
 ### Strategy
 Strategies implement the `Strategy` trait. Evolvable strategies additionally implement `EvolvableStrategy` with gene manipulation methods.
 
-- **Conv strategies (`ConvTiny`, `ConvSmall`)**: CNN-based policy networks with 3×3 kernels in `src/conv/`
-- **Cluster strategies (`ClusterTiny`, `ClusterSmall`)**: D8-equivariant polynomial feature networks in `src/cluster/`
+- **Conv strategies (`ConvTiny`, `ConvSmall`)**: CNN-based position-scoring networks with 3×3 kernels in `src/conv/`
+- **Cluster strategies (`ClusterTiny`, `ClusterSmall`)**: networks over D8-equivalent neighbor cluster sums in `src/cluster/`
 - **InteractiveStrategy**: TUI-based human input, generic over `Backend` for testability
 
 Move selection for conv strategies:
 1. Encode board as 2-channel tensor (own stones, opponent stones)
 2. Apply random D8 transform for data augmentation
 3. Forward pass through CNN layers
-4. Select position with highest policy output (reservoir sampling for ties)
+4. Select position with highest score (reservoir sampling for ties)
 5. Apply inverse transform to get original coordinates
 
 Move selection for cluster strategies:
 1. Encode board as 2-channel tensor (own stones, opponent stones)
-2. Forward pass through cluster layers (no D8 augmentation — features are inherently D8-equivariant)
-3. Select position with highest policy output (reservoir sampling for ties)
+2. Forward pass through cluster layers (no D8 augmentation — cluster sums are inherently D8-equivariant)
+3. Select position with highest score (reservoir sampling for ties)
 
 ### Cluster Architecture
-Cluster layers replace linear 3×3 convolution with **D8-equivariant polynomial features** — sums of products of neighbor values grouped by geometric equivalence classes. This detects topological shapes (bridges, wedges, T-shapes) that linear kernels cannot express in a single layer.
+Cluster layers replace linear 3×3 convolution with a **cluster expansion** — sums of products of neighbor values over clusters (single neighbors, neighbor pairs) grouped into D8-equivalent orbits. This detects topological shapes (bridges, wedges, T-shapes) that linear kernels cannot express in a single layer.
 
-Each position's 8 neighbors are indexed clockwise (N, NE, E, SE, S, SW, W, NW). The 9 features (orders 0-2) are:
+Each position's 8 neighbors are indexed clockwise (N, NE, E, SE, S, SW, W, NW). The 9 clusters (orders 0-2) are:
 - **Order 0**: Center value
 - **Order 1**: Ortho sum, Diag sum
 - **Order 2**: Wedge-45, Ortho-90, Wedge-135, Ortho-180, Diag-90, Diag-180
 
-**F-truncation**: Features are ordered by polynomial order. `ClusterParams<IN_C, OUT_C, F>` stores only the first F features per channel. Spatial layers use F=9 (all features), the last layer uses F=1 (pointwise — only the center value). The last layer is applied with `pointwise2d`, an inherent method that exists only on `ClusterParams<_, _, 1>`; it feeds the input's flat channel data straight into the dot product with no gathering.
+**Truncating the expansion**: Clusters are ordered by size. `ClusterParams<IN_CHANNELS, OUT_CHANNELS, CLUSTERS>` stores only the first CLUSTERS cluster sums per channel. Spatial layers use CLUSTERS=9 (all clusters), the last layer uses CLUSTERS=1 (pointwise — only the center value). The last layer is applied with `pointwise2d`, an inherent method that exists only on `ClusterParams<_, _, 1>`; it feeds the input's flat channel data straight into the dot product with no gathering.
 
 ### Game
 The `Game` enum represents Gomoku rule variants using `enum_dispatch`:
@@ -232,8 +234,8 @@ hyperfine --warmup 1 \
 
 Layer inputs and outputs are `PositionMap<f32, C>`: the channel count is a const generic and the storage is `Box<[[f32; C]; PositionId::COUNT]>`. Stacking layers with mismatched channel counts is a compile error, and every per-position channel loop has an exact, compile-time length. `PositionArray<T>` is the stack/const-friendly sibling used for lookup tables (a `Box` cannot live in a `const`).
 
-Both conv and cluster layers use a two-phase workspace pattern: gather input data into a per-position workspace, then compute dot products against transposed weights (`[STRIDE][OUT_C]` layout). The stride is `IN_C * K * K` for conv and `IN_C * F` for cluster. That product cannot be written as an array length on stable Rust (`generic_const_exprs` is unstable, verified on 1.98), so the workspace is typed with nested arrays instead: `PositionMap<[[f32; K]; K], IN_C>` for conv and `PositionMap<[f32; F], IN_C>` for cluster. Each position is flattened with `as_flattened()` into a `&[f32]` whose length LLVM constant-folds after inlining. The dot-product functions take an iterator of these per-position slices, which lets the `pointwise2d` methods (K=1 / F=1) feed the input's own `[f32; IN_C]` rows in directly with no gathering. Weight rows are typed `&[[f32; OUT_C]]` via `as_chunks::<OUT_C>()`.
+Both conv and cluster layers use a two-phase workspace pattern: gather input data into a per-position workspace, then compute dot products against transposed weights (`[INPUTS_PER_POSITION][OUT_CHANNELS]` layout). The stride is `IN_CHANNELS * SIDE * SIDE` for conv and `IN_CHANNELS * CLUSTERS` for cluster. That product cannot be written as an array length on stable Rust (`generic_const_exprs` is unstable, verified on 1.98), so the workspace is typed with nested arrays instead: `PositionMap<[[f32; SIDE]; SIDE], IN_CHANNELS>` for conv and `PositionMap<[f32; CLUSTERS], IN_CHANNELS>` for cluster. Each position is flattened with `as_flattened()` into a `&[f32]` whose length LLVM constant-folds after inlining. The dot-product functions take an iterator of these per-position slices, which lets the `pointwise2d` methods (SIDE=1 / CLUSTERS=1) feed the input's own `[f32; IN_CHANNELS]` rows in directly with no gathering. Weight rows are typed `&[[f32; OUT_CHANNELS]]` via `as_chunks::<OUT_CHANNELS>()`.
 
-**LLVM alias analysis and `&self`:** Hot compute functions must NOT take `&self`. LLVM treats pointers loaded from a struct (e.g., `self.weights.ptr`) as "MayAlias" with fresh heap allocations (like the output buffer), which blocks auto-vectorization. The fix is to extract the weight slice (`&[f32]`) and bias array (`&[f32; OUT_C]`) in the caller and pass them as separate function parameters — LLVM's alias analysis can prove that function-parameter pointers don't alias with in-function allocations. See `ConvParams::conv2d_from_workspace` and `ClusterParams::cluster2d_from_workspace` (associated functions, no `&self`).
+**LLVM alias analysis and `&self`:** Hot compute functions must NOT take `&self`. LLVM treats pointers loaded from a struct (e.g., `self.weights.ptr`) as "MayAlias" with fresh heap allocations (like the output buffer), which blocks auto-vectorization. The fix is to extract the weight slice (`&[f32]`) and bias array (`&[f32; OUT_CHANNELS]`) in the caller and pass them as separate function parameters — LLVM's alias analysis can prove that function-parameter pointers don't alias with in-function allocations. See `ConvParams::weighted_sums` and `ClusterParams::weighted_sums` (associated functions, no `&self`).
 
-**Exact lengths in accessors:** `ConvParams::weights()` / `ClusterParams::weights()` assert the Vec length equals the compile-time constant (`assert_eq!(self.weights.len(), Self::EXPECTED_WEIGHTS)`), which tells LLVM the exact slice length so it can eliminate bounds checks and fully unroll/vectorize loops over these slices. `bias()` goes one step further and returns `&[f32; OUT_C]` (via `try_into`), so the length is in the type.
+**Exact lengths in accessors:** `ConvParams::weights()` / `ClusterParams::weights()` assert the Vec length equals the compile-time constant (`assert_eq!(self.weights.len(), Self::WEIGHT_COUNT)`), which tells LLVM the exact slice length so it can eliminate bounds checks and fully unroll/vectorize loops over these slices. `bias()` goes one step further and returns `&[f32; OUT_CHANNELS]` (via `try_into`), so the length is in the type.

@@ -5,26 +5,26 @@ use crate::position_id::PositionId;
 /// The D8 group has 8 elements: 4 rotations and 4 reflections.
 /// Used for data augmentation during move selection (`AlphaGo` Zero style).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum D8Transform {
+pub enum BoardSymmetry {
     Identity,
     Rotate90,
     Rotate180,
     Rotate270,
-    FlipH,
-    FlipV,
+    FlipHorizontal,
+    FlipVertical,
     FlipDiagonal,
     FlipAntiDiagonal,
 }
 
-impl D8Transform {
+impl BoardSymmetry {
     /// All 8 D8 transformations.
     pub const ALL: [Self; 8] = [
         Self::Identity,
         Self::Rotate90,
         Self::Rotate180,
         Self::Rotate270,
-        Self::FlipH,
-        Self::FlipV,
+        Self::FlipHorizontal,
+        Self::FlipVertical,
         Self::FlipDiagonal,
         Self::FlipAntiDiagonal,
     ];
@@ -43,8 +43,8 @@ impl D8Transform {
             Self::Rotate90 => pos.transpose().flip_horizontal(),
             Self::Rotate180 => pos.invert(),
             Self::Rotate270 => pos.transpose().flip_vertical(),
-            Self::FlipH => pos.flip_horizontal(),
-            Self::FlipV => pos.flip_vertical(),
+            Self::FlipHorizontal => pos.flip_horizontal(),
+            Self::FlipVertical => pos.flip_vertical(),
             Self::FlipDiagonal => pos.transpose(),
             Self::FlipAntiDiagonal => pos.transpose().invert(),
         }
@@ -60,8 +60,8 @@ impl D8Transform {
             Self::Rotate90 => pos.transpose().flip_vertical(),
             Self::Rotate180 => pos.invert(),
             Self::Rotate270 => pos.transpose().flip_horizontal(),
-            Self::FlipH => pos.flip_horizontal(),
-            Self::FlipV => pos.flip_vertical(),
+            Self::FlipHorizontal => pos.flip_horizontal(),
+            Self::FlipVertical => pos.flip_vertical(),
             Self::FlipDiagonal => pos.transpose(),
             Self::FlipAntiDiagonal => pos.transpose().invert(),
         }
@@ -80,29 +80,29 @@ mod tests {
     #[test]
     fn identity_preserves_position() {
         for p in PositionId::iter() {
-            assert_eq!(D8Transform::Identity.apply(p), p);
+            assert_eq!(BoardSymmetry::Identity.apply(p), p);
         }
     }
 
     #[test]
     fn rotate90_transforms_corners() {
         // (0,0) -> transpose -> (0,0) -> flip_h -> (0,14)
-        assert_eq!(D8Transform::Rotate90.apply(pos(0, 0)), pos(0, 14));
+        assert_eq!(BoardSymmetry::Rotate90.apply(pos(0, 0)), pos(0, 14));
         // (0,14) -> transpose -> (14,0) -> flip_h -> (14,14)
-        assert_eq!(D8Transform::Rotate90.apply(pos(0, 14)), pos(14, 14));
+        assert_eq!(BoardSymmetry::Rotate90.apply(pos(0, 14)), pos(14, 14));
         // (14,14) -> transpose -> (14,14) -> flip_h -> (14,0)
-        assert_eq!(D8Transform::Rotate90.apply(pos(14, 14)), pos(14, 0));
+        assert_eq!(BoardSymmetry::Rotate90.apply(pos(14, 14)), pos(14, 0));
         // (14,0) -> transpose -> (0,14) -> flip_h -> (0,0)
-        assert_eq!(D8Transform::Rotate90.apply(pos(14, 0)), pos(0, 0));
+        assert_eq!(BoardSymmetry::Rotate90.apply(pos(14, 0)), pos(0, 0));
     }
 
     #[test]
     fn rotate90_four_times_is_identity() {
         for p in PositionId::iter() {
-            let r1 = D8Transform::Rotate90.apply(p);
-            let r2 = D8Transform::Rotate90.apply(r1);
-            let r3 = D8Transform::Rotate90.apply(r2);
-            let r4 = D8Transform::Rotate90.apply(r3);
+            let r1 = BoardSymmetry::Rotate90.apply(p);
+            let r2 = BoardSymmetry::Rotate90.apply(r1);
+            let r3 = BoardSymmetry::Rotate90.apply(r2);
+            let r4 = BoardSymmetry::Rotate90.apply(r3);
             assert_eq!(r4, p);
         }
     }
@@ -110,22 +110,22 @@ mod tests {
     #[test]
     fn rotate180_is_invert() {
         for p in PositionId::iter() {
-            assert_eq!(D8Transform::Rotate180.apply(p), p.invert());
+            assert_eq!(BoardSymmetry::Rotate180.apply(p), p.invert());
         }
     }
 
     #[test]
     fn rotate270_is_rotate90_inverse() {
         for p in PositionId::iter() {
-            let r90 = D8Transform::Rotate90.apply(p);
-            let back = D8Transform::Rotate270.apply(r90);
+            let r90 = BoardSymmetry::Rotate90.apply(p);
+            let back = BoardSymmetry::Rotate270.apply(r90);
             assert_eq!(back, p);
         }
     }
 
     #[test]
     fn all_transforms_are_invertible() {
-        for t in D8Transform::ALL {
+        for t in BoardSymmetry::ALL {
             for p in PositionId::iter() {
                 let transformed = t.apply(p);
                 let back = t.apply_inverse(transformed);
@@ -137,34 +137,34 @@ mod tests {
     #[test]
     fn center_is_fixed_by_all_transforms() {
         let center = PositionId::center();
-        for t in D8Transform::ALL {
+        for t in BoardSymmetry::ALL {
             assert_eq!(t.apply(center), center, "{:?} should fix center", t);
         }
     }
 
     #[test]
     fn flip_h_mirrors_horizontally() {
-        assert_eq!(D8Transform::FlipH.apply(pos(0, 0)), pos(0, 14));
-        assert_eq!(D8Transform::FlipH.apply(pos(5, 3)), pos(5, 11));
+        assert_eq!(BoardSymmetry::FlipHorizontal.apply(pos(0, 0)), pos(0, 14));
+        assert_eq!(BoardSymmetry::FlipHorizontal.apply(pos(5, 3)), pos(5, 11));
     }
 
     #[test]
     fn flip_v_mirrors_vertically() {
-        assert_eq!(D8Transform::FlipV.apply(pos(0, 0)), pos(14, 0));
-        assert_eq!(D8Transform::FlipV.apply(pos(3, 5)), pos(11, 5));
+        assert_eq!(BoardSymmetry::FlipVertical.apply(pos(0, 0)), pos(14, 0));
+        assert_eq!(BoardSymmetry::FlipVertical.apply(pos(3, 5)), pos(11, 5));
     }
 
     #[test]
     fn flip_diagonal_transposes() {
-        assert_eq!(D8Transform::FlipDiagonal.apply(pos(0, 5)), pos(5, 0));
-        assert_eq!(D8Transform::FlipDiagonal.apply(pos(2, 3)), pos(3, 2));
+        assert_eq!(BoardSymmetry::FlipDiagonal.apply(pos(0, 5)), pos(5, 0));
+        assert_eq!(BoardSymmetry::FlipDiagonal.apply(pos(2, 3)), pos(3, 2));
     }
 
     #[test]
     fn flip_anti_diagonal_combines_transpose_and_invert() {
         for p in PositionId::iter() {
             assert_eq!(
-                D8Transform::FlipAntiDiagonal.apply(p),
+                BoardSymmetry::FlipAntiDiagonal.apply(p),
                 p.transpose().invert()
             );
         }
@@ -174,8 +174,8 @@ mod tests {
     fn random_returns_valid_transform() {
         let mut rng = fastrand::Rng::with_seed(42);
         for _ in 0..100 {
-            let t = D8Transform::random(&mut rng);
-            assert!(D8Transform::ALL.contains(&t));
+            let t = BoardSymmetry::random(&mut rng);
+            assert!(BoardSymmetry::ALL.contains(&t));
         }
     }
 
@@ -184,8 +184,8 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(42);
         let mut seen = [false; 8];
         for _ in 0..1000 {
-            let t = D8Transform::random(&mut rng);
-            let idx = D8Transform::ALL.iter().position(|&x| x == t).unwrap();
+            let t = BoardSymmetry::random(&mut rng);
+            let idx = BoardSymmetry::ALL.iter().position(|&x| x == t).unwrap();
             seen[idx] = true;
         }
         assert!(seen.iter().all(|&x| x), "Should see all transforms");

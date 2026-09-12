@@ -1,58 +1,60 @@
 use tracing::instrument;
 
 use crate::board::Board;
-use crate::nn::{INPUT_CHANNELS, encode_board, relu_inplace, select_best_position};
+use crate::nn::{
+    STONE_CHANNELS, board_to_stone_channels, highest_scored_empty_position, zero_negatives_inplace,
+};
 use crate::position_id::PositionId;
 use crate::position_map::PositionMap;
 use crate::stone::Stone;
 use crate::strategy::{EvolvableStrategy, Strategy};
 
-use super::features::FEATURE_COUNT;
 use super::weights::ClusterWeights;
+use crate::nn::CLUSTER_COUNT;
 
-/// A cluster strategy for Gomoku using D8-equivariant polynomial features.
+/// A cluster strategy for Gomoku using sums over D8-equivalent neighbor clusters.
 ///
 /// # Type Parameters
-/// - `C`: Number of channels in hidden layers
-/// - `L`: Number of cluster layers (must be >= 1)
+/// - `CHANNELS`: Number of channels in middle layers
+/// - `LAYERS`: Number of cluster layers (must be >= 1)
 #[derive(Debug, Clone)]
-pub struct ClusterStrategy<const C: usize, const L: usize> {
+pub struct ClusterStrategy<const CHANNELS: usize, const LAYERS: usize> {
     label: String,
-    weights: ClusterWeights<{ FEATURE_COUNT }, C, L>,
+    weights: ClusterWeights<{ CLUSTER_COUNT }, CHANNELS, LAYERS>,
 }
 
-/// A tiny cluster strategy: 9 features, 32 channels, 2 layers.
+/// A tiny cluster strategy: 9 clusters, 32 channels, 2 layers.
 /// ~10K parameters.
 pub type ClusterTiny = ClusterStrategy<32, 2>;
 
-/// A small cluster strategy: 9 features, 64 channels, 4 layers.
+/// A small cluster strategy: 9 clusters, 64 channels, 4 layers.
 /// ~112K parameters.
 pub type ClusterSmall = ClusterStrategy<64, 4>;
 
-impl<const C: usize, const L: usize> ClusterStrategy<C, L> {
+impl<const CHANNELS: usize, const LAYERS: usize> ClusterStrategy<CHANNELS, LAYERS> {
     /// Forward pass through the network.
     ///
-    /// Input: board encoding with `INPUT_CHANNELS` channels per position.
-    /// Output: one policy score per position.
-    fn forward(&self, input: &PositionMap<f32, INPUT_CHANNELS>) -> PositionMap<f32, 1> {
-        // First cluster: INPUT_CHANNELS -> C channels
-        let mut activations = self.weights.first().cluster2d(input);
-        relu_inplace(activations.as_flattened_mut());
+    /// Input: board encoding with `STONE_CHANNELS` channels per position.
+    /// Output: one score per position.
+    fn score_positions(&self, input: &PositionMap<f32, STONE_CHANNELS>) -> PositionMap<f32, 1> {
+        // First cluster: STONE_CHANNELS -> CHANNELS channels
+        let mut activations = self.weights.board_layer().cluster2d(input);
+        zero_negatives_inplace(activations.as_flattened_mut());
 
-        // Hidden clusters: C -> C channels
-        for hidden in self.weights.hidden() {
-            activations = hidden.cluster2d(&activations);
-            relu_inplace(activations.as_flattened_mut());
+        // Middle clusters: CHANNELS -> CHANNELS channels
+        for middle in self.weights.middle_layers() {
+            activations = middle.cluster2d(&activations);
+            zero_negatives_inplace(activations.as_flattened_mut());
         }
 
-        // Final cluster: C -> 1 channel (F=1 pointwise, no ReLU)
-        self.weights.last().pointwise2d(&activations)
+        // Final cluster: CHANNELS -> 1 channel (CLUSTERS=1 pointwise, no ReLU)
+        self.weights.scoring_layer().pointwise2d(&activations)
     }
 }
 
-impl<const C: usize, const L: usize> Strategy for ClusterStrategy<C, L> {
-    /// Selects a move using cluster features. No D8 augmentation needed —
-    /// the features are inherently D8-equivariant.
+impl<const CHANNELS: usize, const LAYERS: usize> Strategy for ClusterStrategy<CHANNELS, LAYERS> {
+    /// Selects a move using cluster sums. No D8 augmentation needed —
+    /// the cluster sums are inherently D8-equivariant.
     #[instrument(level = "trace", skip_all)]
     fn choose_move(
         &self,
@@ -60,10 +62,10 @@ impl<const C: usize, const L: usize> Strategy for ClusterStrategy<C, L> {
         board: &Board,
         rng: &mut fastrand::Rng,
     ) -> PositionId {
-        let encoding = encode_board(board, current_stone);
-        let policy = self.forward(&encoding);
+        let encoding = board_to_stone_channels(board, current_stone);
+        let scores = self.score_positions(&encoding);
         let empty = board.empty_position_ids();
-        select_best_position(&empty, &policy, rng)
+        highest_scored_empty_position(&empty, &scores, rng)
     }
 
     fn label(&self) -> &str {
@@ -71,8 +73,10 @@ impl<const C: usize, const L: usize> Strategy for ClusterStrategy<C, L> {
     }
 }
 
-impl<const C: usize, const L: usize> EvolvableStrategy for ClusterStrategy<C, L> {
-    type Genes = ClusterWeights<{ FEATURE_COUNT }, C, L>;
+impl<const CHANNELS: usize, const LAYERS: usize> EvolvableStrategy
+    for ClusterStrategy<CHANNELS, LAYERS>
+{
+    type Genes = ClusterWeights<{ CLUSTER_COUNT }, CHANNELS, LAYERS>;
 
     fn random(label: impl Into<String>, rng: &mut fastrand::Rng) -> Self {
         Self {
@@ -106,7 +110,7 @@ mod tests {
         let strategy = TestStrategy::random("test", &mut rng);
         let input = PositionMap::new(0.0);
 
-        let output = strategy.forward(&input);
+        let output = strategy.score_positions(&input);
 
         for pos in PositionId::iter() {
             let [score] = *output.get(pos);
@@ -162,12 +166,12 @@ mod tests {
 
     #[test]
     fn forward_with_hidden_layer_produces_finite_score_for_every_position() {
-        // L=2 adds one hidden C -> C layer, exercising the hidden-layer loop.
+        // LAYERS=2 adds one middle CHANNELS -> CHANNELS layer, exercising the middle-layer loop.
         let mut rng = fastrand::Rng::with_seed(42);
         let strategy = ClusterStrategy::<4, 2>::random("two_layers", &mut rng);
-        let input = encode_board(&Board::new(), Stone::Black);
+        let input = board_to_stone_channels(&Board::new(), Stone::Black);
 
-        let output = strategy.forward(&input);
+        let output = strategy.score_positions(&input);
 
         for pos in PositionId::iter() {
             let [score] = *output.get(pos);

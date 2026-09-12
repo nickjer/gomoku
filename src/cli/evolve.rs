@@ -27,9 +27,9 @@ pub enum EvolveCommand {
     ConvTiny(EvolutionArgs),
     /// Evolve `ConvSmall` strategies (CNN with 3x3 kernels, 64 channels, ~112K params)
     ConvSmall(EvolutionArgs),
-    /// Evolve `ClusterTiny` strategies (cluster with 9 features, 32 channels, ~10K params)
+    /// Evolve `ClusterTiny` strategies (cluster with 9 clusters, 32 channels, ~10K params)
     ClusterTiny(EvolutionArgs),
-    /// Evolve `ClusterSmall` strategies (cluster with 9 features, 64 channels, ~112K params)
+    /// Evolve `ClusterSmall` strategies (cluster with 9 clusters, 64 channels, ~112K params)
     ClusterSmall(EvolutionArgs),
 }
 
