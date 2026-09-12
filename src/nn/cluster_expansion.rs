@@ -3,6 +3,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::offset::Offset;
+use crate::position_id::PositionId;
 use crate::position_map::PositionMap;
 
 use super::format_slice_stats;
@@ -15,6 +16,9 @@ use super::neighborhood_encoder::NeighborhoodEncoder;
 /// expansion: 1 is the position only, 3 adds single neighbors, 9 adds every
 /// neighbor pair.
 pub const CLUSTER_COUNT: usize = 9;
+
+/// A position and its eight neighbors.
+const NEIGHBORHOOD_SIZE: usize = Offset::CENTER_AND_NEIGHBORS.len();
 
 /// A name for each cluster, in expansion order.
 const CLUSTER_NAMES: [&str; CLUSTER_COUNT] = [
@@ -46,8 +50,8 @@ const CLUSTER_NAMES: [&str; CLUSTER_COUNT] = [
 /// | 6 |   2   | Ortho-180  |   2   |
 /// | 7 |   2   | Diag-90    |   4   |
 /// | 8 |   2   | Diag-180   |   2   |
-fn cluster_sums(center_and_neighbors: &[f32; 9]) -> [f32; CLUSTER_COUNT] {
-    let [center, n0, n1, n2, n3, n4, n5, n6, n7] = *center_and_neighbors;
+fn cluster_sums(neighborhood: &[f32; NEIGHBORHOOD_SIZE]) -> [f32; CLUSTER_COUNT] {
+    let [center, n0, n1, n2, n3, n4, n5, n6, n7] = *neighborhood;
     [
         // 0th order (1 cluster)
         center,
@@ -92,11 +96,32 @@ impl<const CLUSTERS: usize> NeighborhoodEncoder for ClusterExpansion<CLUSTERS> {
             );
         }
 
-        input.map_neighborhoods(&Offset::CENTER_AND_NEIGHBORS, 0.0, |square| {
-            let mut kept = [0.0; CLUSTERS];
-            kept.copy_from_slice(&cluster_sums(square)[..CLUSTERS]);
-            kept
-        })
+        // At every position, for each input channel, that channel's first
+        // CLUSTERS cluster sums.
+        let mut encoded = PositionMap::new([0.0; CLUSTERS]);
+
+        for (position, sums_per_channel) in PositionId::iter().zip(encoded.iter_mut()) {
+            // The input at this position and its eight neighbors: nine
+            // positions, each holding IN_CHANNELS values. Off the board reads as zero.
+            let mut neighborhood = [[0.0; IN_CHANNELS]; NEIGHBORHOOD_SIZE];
+            for (values, &offset) in neighborhood.iter_mut().zip(&Offset::CENTER_AND_NEIGHBORS) {
+                if let Some(neighbor) = position.offset(offset) {
+                    *values = *input.get(neighbor);
+                }
+            }
+
+            for (channel_idx, sums) in sums_per_channel.iter_mut().enumerate() {
+                // This channel's value at each of the nine positions.
+                let channel_neighborhood: [f32; NEIGHBORHOOD_SIZE] =
+                    std::array::from_fn(|neighbor_idx| neighborhood[neighbor_idx][channel_idx]);
+
+                // Sum every cluster, keep the first CLUSTERS of them.
+                let all_sums = cluster_sums(&channel_neighborhood);
+                *sums = std::array::from_fn(|cluster_idx| all_sums[cluster_idx]);
+            }
+        }
+
+        encoded
     }
 
     /// One line of statistics per cluster, gathered across all input channels.
@@ -128,7 +153,6 @@ mod tests {
     use super::*;
     use crate::nn::layer::Layer;
     use crate::position::Position;
-    use crate::position_id::PositionId;
     use crate::test_utils::LimitedWriter;
 
     fn pos(row: usize, col: usize) -> PositionId {

@@ -3,6 +3,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::offset::Offset;
+use crate::position_id::PositionId;
 use crate::position_map::PositionMap;
 
 use super::board_symmetry::BoardSymmetry;
@@ -23,13 +24,34 @@ impl fmt::Display for Square3x3 {
     }
 }
 
+/// A position and its eight neighbors.
+const NEIGHBORHOOD_SIZE: usize = Offset::CENTER_AND_NEIGHBORS.len();
+
 impl NeighborhoodEncoder for Square3x3 {
-    type Neighborhood = [f32; Offset::CENTER_AND_NEIGHBORS.len()];
+    type Neighborhood = [f32; NEIGHBORHOOD_SIZE];
 
     fn encode<const IN_CHANNELS: usize>(
         input: PositionMap<f32, IN_CHANNELS>,
     ) -> PositionMap<Self::Neighborhood, IN_CHANNELS> {
-        input.neighborhoods(&Offset::CENTER_AND_NEIGHBORS, 0.0)
+        // At every position, for each input channel, that channel's value at
+        // the position and its eight neighbors, exactly as they are.
+        let mut encoded = PositionMap::new([0.0; NEIGHBORHOOD_SIZE]);
+
+        for (position, neighborhood_per_channel) in PositionId::iter().zip(encoded.iter_mut()) {
+            // Copy each on-board neighbor's IN_CHANNELS values into that
+            // neighbor's slot of every channel. Off the board stays zero.
+            for (neighbor_idx, &offset) in Offset::CENTER_AND_NEIGHBORS.iter().enumerate() {
+                if let Some(neighbor) = position.offset(offset) {
+                    for (channel_neighborhood, &value) in
+                        neighborhood_per_channel.iter_mut().zip(input.get(neighbor))
+                    {
+                        channel_neighborhood[neighbor_idx] = value;
+                    }
+                }
+            }
+        }
+
+        encoded
     }
 
     fn board_symmetry(rng: &mut fastrand::Rng) -> BoardSymmetry {
