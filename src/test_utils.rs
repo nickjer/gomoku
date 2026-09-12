@@ -3,10 +3,9 @@
 use std::cell::Cell;
 
 use crate::board::Board;
-use crate::conv::ConvTiny;
-use crate::conv::weights::ConvWeights;
 use crate::evolution::fitness_score::FitnessScore;
 use crate::evolution::selection::HasFitness;
+use crate::nn::ConvTiny;
 use crate::position::Position;
 use crate::position_id::PositionId;
 use crate::stone::Stone;
@@ -168,10 +167,10 @@ impl Strategy for StubStrategy {
 
 /// A fake evolvable strategy for evolution tests.
 ///
-/// Uses `ConvTiny` weights as its gene type for lightweight testing.
+/// Uses `ConvTiny`'s network as its gene type for lightweight testing.
 pub struct FakeEvolvableStrategy {
     label: String,
-    weights: <ConvTiny as EvolvableStrategy>::Genes,
+    network: <ConvTiny as EvolvableStrategy>::Genes,
 }
 
 impl Strategy for FakeEvolvableStrategy {
@@ -190,23 +189,23 @@ impl Strategy for FakeEvolvableStrategy {
 }
 
 impl EvolvableStrategy for FakeEvolvableStrategy {
-    type Genes = ConvWeights<3, 32, 2, 0>;
+    type Genes = <ConvTiny as EvolvableStrategy>::Genes;
 
     fn random(label: impl Into<String>, rng: &mut fastrand::Rng) -> Self {
         Self {
             label: label.into(),
-            weights: ConvWeights::random(rng),
+            network: <Self::Genes>::random(rng),
         }
     }
 
     fn genes(&self) -> &Self::Genes {
-        &self.weights
+        &self.network
     }
 
     fn from_genes(label: impl Into<String>, genes: Self::Genes) -> Self {
         Self {
             label: label.into(),
-            weights: genes,
+            network: genes,
         }
     }
 }

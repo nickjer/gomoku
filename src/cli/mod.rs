@@ -17,11 +17,8 @@ use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-use crate::cluster::weights::ClusterWeights;
-use crate::cluster::{ClusterSmall, ClusterTiny};
-use crate::conv::weights::ConvWeights;
-use crate::conv::{ConvSmall, ConvTiny};
 use crate::minimax::{DEFAULT_DEPTH, MinimaxStrategy};
+use crate::nn::{ClusterSmall, ClusterTiny, ConvSmall, ConvTiny};
 use crate::strategy::{EvolvableStrategy, Strategy};
 
 /// Sets up logging with the specified log level.
@@ -112,10 +109,18 @@ impl From<CliSelectionMode> for Selection {
 /// Binary-serializable strategy data (weights only, label comes from filename).
 #[derive(Debug, Serialize, Deserialize)]
 pub enum StrategyData {
-    ConvTiny { weights: ConvWeights<3, 32, 2, 0> },
-    ConvSmall { weights: ConvWeights<3, 64, 4, 0> },
-    ClusterTiny { weights: ClusterWeights<9, 32, 2> },
-    ClusterSmall { weights: ClusterWeights<9, 64, 4> },
+    ConvTiny {
+        weights: <ConvTiny as EvolvableStrategy>::Genes,
+    },
+    ConvSmall {
+        weights: <ConvSmall as EvolvableStrategy>::Genes,
+    },
+    ClusterTiny {
+        weights: <ClusterTiny as EvolvableStrategy>::Genes,
+    },
+    ClusterSmall {
+        weights: <ClusterSmall as EvolvableStrategy>::Genes,
+    },
 }
 
 impl std::fmt::Display for StrategyData {

@@ -4,8 +4,7 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 
 use super::{StrategyData, load_strategy_data};
-use crate::cluster::{ClusterSmall, ClusterTiny};
-use crate::conv::{ConvSmall, ConvTiny};
+use crate::nn::{ClusterSmall, ClusterTiny, ConvSmall, ConvTiny};
 use crate::strategy::EvolvableStrategy;
 
 /// A homogeneous collection of strategies that can be evolved together.

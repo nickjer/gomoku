@@ -8,8 +8,6 @@ use super::evolvable_strategies::{
     EvolvableStrategies, load_strategies_from_directory, save_strategies_to_directory,
 };
 use super::{create_rng, setup_logging};
-use crate::cluster::{ClusterSmall, ClusterTiny};
-use crate::conv::{ConvSmall, ConvTiny};
 use crate::evolution::crossover::Crossover;
 use crate::evolution::fitness_weight::FitnessWeight;
 use crate::evolution::mutation::Mutation;
@@ -17,19 +15,20 @@ use crate::evolution::{
     Evolver, MinimaxFitness, Population, ThreatDefenseFitness, TournamentFitness,
 };
 use crate::game::{Freestyle, Game, RandomOpening};
+use crate::nn::{ClusterSmall, ClusterTiny, ConvSmall, ConvTiny};
 use crate::strategy::EvolvableStrategy;
 use crate::tournament::Swiss;
 
 /// Strategy subcommands for evolution.
 #[derive(Debug, Subcommand)]
 pub enum EvolveCommand {
-    /// Evolve `ConvTiny` strategies (CNN with 3x3 kernels, 32 channels, ~10K params)
+    /// Evolve `ConvTiny` strategies (3x3 squares, 32 channels, ~10K params)
     ConvTiny(EvolutionArgs),
-    /// Evolve `ConvSmall` strategies (CNN with 3x3 kernels, 64 channels, ~112K params)
+    /// Evolve `ConvSmall` strategies (3x3 squares, 64 channels, ~112K params)
     ConvSmall(EvolutionArgs),
-    /// Evolve `ClusterTiny` strategies (cluster with 9 clusters, 32 channels, ~10K params)
+    /// Evolve `ClusterTiny` strategies (cluster expansion, 32 channels, ~10K params)
     ClusterTiny(EvolutionArgs),
-    /// Evolve `ClusterSmall` strategies (cluster with 9 clusters, 64 channels, ~112K params)
+    /// Evolve `ClusterSmall` strategies (cluster expansion, 64 channels, ~112K params)
     ClusterSmall(EvolutionArgs),
 }
 

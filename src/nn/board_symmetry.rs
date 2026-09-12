@@ -1,9 +1,8 @@
 use crate::position_id::PositionId;
+use crate::position_map::PositionMap;
 
-/// D8 symmetry group transformations for the board.
-///
-/// The D8 group has 8 elements: 4 rotations and 4 reflections.
-/// Used for data augmentation during move selection (`AlphaGo` Zero style).
+/// One of the eight ways to turn a square board over onto itself: four
+/// rotations and four reflections.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BoardSymmetry {
     Identity,
@@ -17,7 +16,7 @@ pub enum BoardSymmetry {
 }
 
 impl BoardSymmetry {
-    /// All 8 D8 transformations.
+    /// Every symmetry, identity first.
     pub const ALL: [Self; 8] = [
         Self::Identity,
         Self::Rotate90,
@@ -29,13 +28,13 @@ impl BoardSymmetry {
         Self::FlipAntiDiagonal,
     ];
 
-    /// Returns a random D8 transformation.
+    /// A random symmetry.
     #[must_use]
     pub fn random(rng: &mut fastrand::Rng) -> Self {
         Self::ALL[rng.usize(0..8)]
     }
 
-    /// Applies this transformation to a position.
+    /// Where this symmetry sends a position.
     #[must_use]
     pub fn apply(self, pos: PositionId) -> PositionId {
         match self {
@@ -50,9 +49,7 @@ impl BoardSymmetry {
         }
     }
 
-    /// Applies the inverse transformation to a position directly.
-    ///
-    /// Flattened to avoid double dispatch through `inverse()` then `apply()`.
+    /// Where a position came from: undoes [`Self::apply`].
     #[must_use]
     pub fn apply_inverse(self, pos: PositionId) -> PositionId {
         match self {
@@ -66,12 +63,61 @@ impl BoardSymmetry {
             Self::FlipAntiDiagonal => pos.transpose().invert(),
         }
     }
+
+    /// Turns a whole map: every position's values move to where this symmetry
+    /// sends that position.
+    #[must_use]
+    pub fn apply_to_map<T: Copy, const C: usize>(
+        self,
+        map: &PositionMap<T, C>,
+    ) -> PositionMap<T, C> {
+        PositionMap::from_fn(|pos| *map.get(self.apply_inverse(pos)))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::position::Position;
+
+    #[test]
+    fn identity_leaves_the_map_as_it_is() {
+        let mut map = PositionMap::<f32, 2>::new(0.0);
+        *map.get_mut(pos(0, 0)) = [1.0, 2.0];
+
+        let turned = BoardSymmetry::Identity.apply_to_map(&map);
+
+        for p in PositionId::iter() {
+            assert_eq!(turned.get(p), map.get(p));
+        }
+    }
+
+    #[test]
+    fn rotate180_moves_values_to_the_opposite_corner() {
+        let mut map = PositionMap::<f32, 2>::new(0.0);
+        *map.get_mut(pos(0, 0)) = [1.0, 2.0];
+
+        let turned = BoardSymmetry::Rotate180.apply_to_map(&map);
+
+        assert_eq!(turned.get(pos(14, 14)), &[1.0, 2.0]);
+        assert_eq!(turned.get(pos(0, 0)), &[0.0, 0.0]);
+    }
+
+    #[test]
+    fn apply_to_map_sends_every_position_where_apply_says() {
+        let map = PositionMap::<usize, 1>::from_fn(|p| [p.to_index()]);
+
+        for symmetry in BoardSymmetry::ALL {
+            let turned = symmetry.apply_to_map(&map);
+            for p in PositionId::iter() {
+                assert_eq!(
+                    turned.get(symmetry.apply(p)),
+                    map.get(p),
+                    "{symmetry:?} at {p:?}"
+                );
+            }
+        }
+    }
 
     fn pos(row: usize, col: usize) -> PositionId {
         PositionId::from_position(Position::new(row, col))

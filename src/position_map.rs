@@ -1,3 +1,4 @@
+use crate::offset::Offset;
 use crate::position_id::PositionId;
 
 // ── PositionArray ────────────────────────────────────────────────────
@@ -52,9 +53,72 @@ impl<T: Copy, const C: usize> PositionMap<T, C> {
             .expect("boxed slice has exactly PositionId::COUNT elements");
         Self { data }
     }
+
+    /// Every position's neighborhood as it is: for each channel, the values at
+    /// the offsets in offset order, with `empty` for offsets that leave the board.
+    #[must_use]
+    pub fn neighborhoods<const N: usize>(
+        &self,
+        offsets: &[Offset; N],
+        empty: T,
+    ) -> PositionMap<[T; N], C> {
+        let mut neighborhoods = PositionMap::new([empty; N]);
+        for (position, rows) in PositionId::iter().zip(neighborhoods.iter_mut()) {
+            for (slot, &offset) in offsets.iter().enumerate() {
+                if let Some(neighbor) = position.offset(offset) {
+                    for (row, &value) in rows.iter_mut().zip(self.get(neighbor)) {
+                        row[slot] = value;
+                    }
+                }
+            }
+        }
+        neighborhoods
+    }
+
+    /// For every position and channel, reads the values at the offsets (in
+    /// offset order, with `empty` for offsets that leave the board) and turns
+    /// that row into one new value.
+    ///
+    /// Use [`Self::neighborhoods`] to keep the rows as they are.
+    #[must_use]
+    pub fn map_neighborhoods<const N: usize, U: Copy>(
+        &self,
+        offsets: &[Offset; N],
+        empty: T,
+        f: impl Fn(&[T; N]) -> U,
+    ) -> PositionMap<U, C> {
+        // Every value is overwritten below; an all-empty row just gives a
+        // valid starting value without asking anything more of `U`.
+        let mut mapped = PositionMap::new(f(&[empty; N]));
+        for (position, outputs) in PositionId::iter().zip(mapped.iter_mut()) {
+            // One row of channel values per offset; off-board offsets stay empty.
+            let mut neighbors = [[empty; C]; N];
+            for (values, &offset) in neighbors.iter_mut().zip(offsets) {
+                if let Some(neighbor) = position.offset(offset) {
+                    *values = *self.get(neighbor);
+                }
+            }
+            for (channel, output) in outputs.iter_mut().enumerate() {
+                let row: [T; N] = std::array::from_fn(|slot| neighbors[slot][channel]);
+                *output = f(&row);
+            }
+        }
+        mapped
+    }
 }
 
 impl<T, const C: usize> PositionMap<T, C> {
+    /// Builds a map by calling `f` once per position, in [`PositionId::iter`] order.
+    #[must_use]
+    pub fn from_fn(f: impl FnMut(PositionId) -> [T; C]) -> Self {
+        let boxed: Box<[[T; C]]> = PositionId::iter().map(f).collect();
+        let data = boxed
+            .try_into()
+            .map_err(drop)
+            .expect("PositionId::iter yields exactly PositionId::COUNT positions");
+        Self { data }
+    }
+
     /// Returns the channel values at the given position.
     #[must_use]
     pub const fn get(&self, position: PositionId) -> &[T; C] {
@@ -179,6 +243,90 @@ mod tests {
 
         assert_eq!(map.get(pos(0, 1)), &[5.0, 6.0]);
         assert_eq!(map.get(pos(0, 0)), &[0.0, 0.0]);
+    }
+
+    #[test]
+    fn from_fn_calls_once_per_position_in_id_order() {
+        let map = PositionMap::<usize, 1>::from_fn(|position| [position.to_index()]);
+
+        for position in PositionId::iter() {
+            assert_eq!(map.get(position), &[position.to_index()]);
+        }
+    }
+
+    #[test]
+    fn neighborhoods_reads_offsets_in_table_order() {
+        let mut map = PositionMap::<f32, 1>::new(0.0);
+        *map.get_mut(pos(7, 7)) = [1.0];
+        *map.get_mut(pos(6, 7)) = [2.0];
+        *map.get_mut(pos(7, 8)) = [3.0];
+        let offsets = [Offset::new(0, 0), Offset::new(-1, 0), Offset::new(0, 1)];
+
+        let rows = map.neighborhoods(&offsets, 0.0);
+
+        assert_eq!(rows.get(pos(7, 7)), &[[1.0, 2.0, 3.0]]);
+    }
+
+    #[test]
+    fn neighborhoods_reads_off_board_offsets_as_empty() {
+        let map = PositionMap::<f32, 1>::new(1.0);
+        let offsets = [Offset::new(-1, 0), Offset::new(0, 0), Offset::new(0, -1)];
+
+        let rows = map.neighborhoods(&offsets, -1.0);
+
+        assert_eq!(rows.get(pos(0, 0)), &[[-1.0, 1.0, -1.0]]);
+    }
+
+    #[test]
+    fn neighborhoods_keeps_channels_separate() {
+        let mut map = PositionMap::<f32, 2>::new(0.0);
+        *map.get_mut(pos(7, 7)) = [1.0, 2.0];
+        *map.get_mut(pos(8, 7)) = [3.0, 4.0];
+        let offsets = [Offset::new(0, 0), Offset::new(1, 0)];
+
+        let rows = map.neighborhoods(&offsets, 0.0);
+
+        assert_eq!(rows.get(pos(7, 7)), &[[1.0, 3.0], [2.0, 4.0]]);
+    }
+
+    #[test]
+    fn map_neighborhoods_matches_neighborhoods_when_f_keeps_the_row() {
+        let mut map = PositionMap::<f32, 2>::new(0.0);
+        *map.get_mut(pos(7, 7)) = [1.0, 2.0];
+        *map.get_mut(pos(8, 7)) = [3.0, 4.0];
+        let offsets = [Offset::new(0, 0), Offset::new(1, 0), Offset::new(-1, 0)];
+
+        let mapped = map.map_neighborhoods(&offsets, -1.0, |row| *row);
+        let plain = map.neighborhoods(&offsets, -1.0);
+
+        for position in PositionId::iter() {
+            assert_eq!(mapped.get(position), plain.get(position));
+        }
+    }
+
+    #[test]
+    fn map_neighborhoods_applies_f_to_every_position_and_channel() {
+        let mut map = PositionMap::<f32, 2>::new(0.0);
+        *map.get_mut(pos(7, 7)) = [1.0, 10.0];
+        *map.get_mut(pos(7, 8)) = [2.0, 20.0];
+        let offsets = [Offset::new(0, 0), Offset::new(0, 1)];
+
+        let sums = map.map_neighborhoods(&offsets, 0.0, |row| row.iter().sum::<f32>());
+
+        assert_eq!(sums.get(pos(7, 7)), &[3.0, 30.0]);
+        assert_eq!(sums.get(pos(7, 8)), &[2.0, 20.0]);
+        assert_eq!(sums.get(pos(0, 0)), &[0.0, 0.0]);
+    }
+
+    #[test]
+    fn map_neighborhoods_can_change_the_value_type() {
+        let map = PositionMap::<f32, 1>::new(1.0);
+        let offsets = [Offset::new(0, 0), Offset::new(1, 0)];
+
+        let rows = map.map_neighborhoods(&offsets, 0.0, |row| *row);
+
+        assert_eq!(rows.get(pos(7, 7)), &[[1.0, 1.0]]);
+        assert_eq!(rows.get(pos(14, 7)), &[[1.0, 0.0]]);
     }
 
     #[test]

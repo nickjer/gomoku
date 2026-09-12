@@ -3,8 +3,6 @@
 mod bitboard;
 mod board;
 mod cli;
-mod cluster;
-mod conv;
 mod evolution;
 mod game;
 mod interactive_strategy;
