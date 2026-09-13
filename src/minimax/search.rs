@@ -82,10 +82,12 @@ impl KillerTable {
 ///
 /// `depth` is the number of developing moves searched along each line of
 /// play; near-forced replies cost less (see [`Depth`]), and a forced reply is
-/// searched even when the depth has run out. Candidates are shuffled before
-/// searching so that among equally-scored moves, whichever appears first
-/// after the shuffle is chosen — providing variety without the fail-soft
-/// false-tie bug that reservoir sampling would introduce.
+/// searched even when the depth has run out. The root is searched one move
+/// deep, then two, and so on up to `depth`, each pass ordering moves by
+/// what the last one learned. Candidates are shuffled before searching so
+/// that among equally-scored moves, whichever appears first after the
+/// shuffle is chosen — providing variety without the fail-soft false-tie
+/// bug that reservoir sampling would introduce.
 pub fn find_best_move(
     board: &mut Board,
     stone: Stone,
@@ -94,7 +96,7 @@ pub fn find_best_move(
 ) -> PositionId {
     let mut tt = TranspositionTable::new();
     let mut search = Search::new(Depth::moves(depth), &mut tt);
-    let best_move = search.best_move(board, stone, Depth::moves(depth), rng);
+    let best_move = search.best_move(board, stone, depth, rng);
     debug!(
         move_count = board.move_count(),
         depth,
@@ -144,15 +146,23 @@ impl<'a> Search<'a> {
         }
     }
 
-    /// Searches every candidate for `stone` to `depth` and returns the best.
+    /// Searches every candidate for `stone` one move deep, then two, up to
+    /// `moves`, and returns the best from the deepest pass.
+    ///
+    /// Each pass searches the previous pass's best move first, so the
+    /// others only have to show they beat it, and takes the rest in
+    /// shuffled order. The table and killers carry over, so the deeper
+    /// passes mostly follow moves the shallower ones already found good.
+    /// A pass that proves a win or a loss ends the search: no deeper pass
+    /// can change it.
     fn best_move(
         &mut self,
         board: &Board,
         stone: Stone,
-        depth: Depth,
+        moves: u32,
         rng: &mut fastrand::Rng,
     ) -> PositionId {
-        assert!(depth > Depth::ZERO, "find_best_move called with depth 0");
+        assert!(moves > 0, "find_best_move called with depth 0");
 
         let mut state = SearchState::from_board(board);
 
@@ -169,24 +179,59 @@ impl<'a> Search<'a> {
         rng.shuffle(candidates);
 
         let mut best_move = candidates[0];
-        let mut best_score = Score::MIN;
         let raw = state.evaluate(stone);
 
-        for &candidate in candidates.iter() {
-            state.place(candidate, stone);
-            let score = self.score_after_place(
-                &mut state,
-                stone,
-                depth.minus(Depth::MOVE),
-                raw,
-                best_score,
-                Score::MAX,
-            );
-            state.undo(candidate, stone);
+        for pass in 1..=moves {
+            let depth = Depth::moves(pass);
+            let previous_rank = candidates
+                .iter()
+                .position(|&candidate| candidate == best_move)
+                .expect("the best move is a candidate");
+            let order = std::iter::once(previous_rank)
+                .chain((0..candidates.len()).filter(|&rank| rank != previous_rank));
 
-            if score > best_score {
-                best_score = score;
-                best_move = candidate;
+            // A tie goes to whichever move comes first in the shuffled
+            // order, as if the previous best had never been searched first.
+            // Letting the previous best keep ties cost 5 pairs to 20 in
+            // paired games against the plain search, so the window is
+            // opened one point below the best and a move that only equals
+            // it comes back exact instead of failing low.
+            let mut best_rank = previous_rank;
+            let mut best_score = Score::MIN;
+            for rank in order {
+                let candidate = candidates[rank];
+                let alpha = if best_score == Score::MIN {
+                    Score::MIN
+                } else {
+                    best_score - Score::new(1)
+                };
+                state.place(candidate, stone);
+                let score = self.score_after_place(
+                    &mut state,
+                    stone,
+                    depth.minus(Depth::MOVE),
+                    raw,
+                    alpha,
+                    Score::MAX,
+                );
+                state.undo(candidate, stone);
+
+                if score > best_score || (score == best_score && rank < best_rank) {
+                    best_score = score;
+                    best_move = candidate;
+                    best_rank = rank;
+                }
+            }
+
+            self.tt.store(
+                state.hash(),
+                depth.thirds(),
+                best_score,
+                Bound::Exact,
+                Some(best_move),
+            );
+            if best_score.is_decided() {
+                break;
             }
         }
 
@@ -877,8 +922,9 @@ mod tests {
     }
     /// A middle-game position where White, to move, faces threats on several
     /// lines and has many cells that would make a four. Counter-fours must
-    /// cost depth: the depth-4 search below takes about 120 thousand nodes,
-    /// and ten times that when counter-fours are free replies.
+    /// cost depth: the depth-4 search below takes about 330 thousand nodes
+    /// over its passes, and ten times that when counter-fours are free
+    /// replies.
     fn dense_middle_game() -> Board {
         let mut board = Board::new();
         place_stones(
@@ -909,15 +955,10 @@ mod tests {
         let mut tt = TranspositionTable::new();
         let mut search = Search::new(Depth::moves(4), &mut tt);
 
-        search.best_move(
-            &board,
-            Stone::White,
-            Depth::moves(4),
-            &mut fastrand::Rng::with_seed(7),
-        );
+        search.best_move(&board, Stone::White, 4, &mut fastrand::Rng::with_seed(7));
 
         assert!(
-            search.nodes < 300_000,
+            search.nodes < 500_000,
             "depth-4 search used {} nodes",
             search.nodes
         );

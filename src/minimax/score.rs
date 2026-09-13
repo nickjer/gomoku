@@ -39,7 +39,6 @@ impl Score {
 
     /// Whether this is a win or a loss found by the search rather than an
     /// estimate: every such score lies within a board's worth of `WIN`.
-    #[cfg(test)]
     #[must_use]
     pub fn is_decided(self) -> bool {
         let margin = i32::try_from(crate::position_id::PositionId::COUNT).expect("small");
