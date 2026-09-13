@@ -7,6 +7,11 @@ use super::lines::{LINE_LENGTHS, NUM_LINES, POSITION_LINES, score_line};
 use super::score::Score;
 use super::tt::ZOBRIST;
 
+const _: () = assert!(
+    NUM_LINES <= 128,
+    "the per-line threat flags use one u128 bit per line"
+);
+
 /// Saved state for a single place operation so `undo` can restore in O(1).
 ///
 /// Line indices are not stored — they are derived from the position via
@@ -14,6 +19,8 @@ use super::tt::ZOBRIST;
 struct UndoFrame {
     scores: [Score; 4],
     total: Score,
+    lines_with_four: [u128; 2],
+    lines_with_open_three: [u128; 2],
 }
 
 /// Board wrapper that maintains incremental line-based evaluation scores.
@@ -31,6 +38,13 @@ pub struct SearchState {
     line_white: [u16; NUM_LINES],
     line_scores: [Score; NUM_LINES],
     total_score: Score,
+    /// One bit per line, set when that line holds a four for Black (index 0)
+    /// or White (index 1). Lets the search ask "is there a four on the board"
+    /// in O(1).
+    lines_with_four: [u128; 2],
+    /// Same layout for open threes, so `evaluate` can tell who is about to
+    /// make an open four.
+    lines_with_open_three: [u128; 2],
     outcome: Option<Outcome>,
     undo_stack: Vec<UndoFrame>,
 }
@@ -63,9 +77,20 @@ impl SearchState {
 
         let mut line_scores = [Score::DRAW; NUM_LINES];
         let mut total_score = Score::DRAW;
+        let mut lines_with_four = [0u128; 2];
+        let mut lines_with_open_three = [0u128; 2];
         for i in 0..NUM_LINES {
-            line_scores[i] = score_line(line_black[i], line_white[i], LINE_LENGTHS[i]);
-            total_score += line_scores[i];
+            let line = score_line(line_black[i], line_white[i], LINE_LENGTHS[i]);
+            line_scores[i] = line.score;
+            total_score += line.score;
+            for side in [Stone::Black, Stone::White].map(usize::from) {
+                if line.has_four[side] {
+                    lines_with_four[side] |= 1 << i;
+                }
+                if line.has_open_three[side] {
+                    lines_with_open_three[side] |= 1 << i;
+                }
+            }
         }
 
         let zobrist = &*ZOBRIST;
@@ -83,6 +108,8 @@ impl SearchState {
             line_white,
             line_scores,
             total_score,
+            lines_with_four,
+            lines_with_open_three,
             outcome: board.outcome(),
             undo_stack: Vec::new(),
         }
@@ -102,6 +129,8 @@ impl SearchState {
 
         let lines = POSITION_LINES.get(position);
         let old_total = self.total_score;
+        let old_lines_with_four = self.lines_with_four;
+        let old_lines_with_open_three = self.lines_with_open_three;
         let mut old_scores = [Score::DRAW; 4];
         let mut won = false;
 
@@ -122,12 +151,25 @@ impl SearchState {
             };
             won = won || has_five_consecutive(own_mask);
 
-            self.line_scores[idx] = score_line(
+            let line = score_line(
                 self.line_black[idx],
                 self.line_white[idx],
                 LINE_LENGTHS[idx],
             );
-            self.total_score += self.line_scores[idx];
+            self.line_scores[idx] = line.score;
+            self.total_score += line.score;
+            for side in [Stone::Black, Stone::White].map(usize::from) {
+                if line.has_four[side] {
+                    self.lines_with_four[side] |= 1 << idx;
+                } else {
+                    self.lines_with_four[side] &= !(1 << idx);
+                }
+                if line.has_open_three[side] {
+                    self.lines_with_open_three[side] |= 1 << idx;
+                } else {
+                    self.lines_with_open_three[side] &= !(1 << idx);
+                }
+            }
         }
 
         if won {
@@ -139,6 +181,8 @@ impl SearchState {
         self.undo_stack.push(UndoFrame {
             scores: old_scores,
             total: old_total,
+            lines_with_four: old_lines_with_four,
+            lines_with_open_three: old_lines_with_open_three,
         });
     }
 
@@ -161,19 +205,46 @@ impl SearchState {
             self.line_scores[idx] = frame.scores[i];
         }
         self.total_score = frame.total;
+        self.lines_with_four = frame.lines_with_four;
+        self.lines_with_open_three = frame.lines_with_open_three;
         self.outcome = None;
     }
 
-    /// O(1) evaluation from `stone`'s perspective.
+    /// O(1) evaluation from the perspective of `to_move`, the side about to play.
     ///
-    /// Returns the running total score (positive = Black advantage),
-    /// negated if `stone` is White.
+    /// Starts from the running line total, then credits the side to move for
+    /// acting first: its own four completes five next move; its own open three
+    /// becomes an open four that no reply stops; two open threes against it
+    /// can only be blocked one at a time. A four against it is left to the
+    /// search, which always plays the block out rather than scoring here.
     #[must_use]
-    pub fn evaluate(&self, stone: Stone) -> Score {
-        match stone {
+    pub fn evaluate(&self, to_move: Stone) -> Score {
+        let opponent = to_move.opponent();
+        let base = match to_move {
             Stone::Black => self.total_score,
             Stone::White => -self.total_score,
+        };
+
+        if self.has_four(to_move) {
+            return Score::win_at_depth(self.move_count() + 1);
         }
+        if self.has_four(opponent) {
+            return base;
+        }
+        if self.lines_with_open_three[usize::from(to_move)] != 0 {
+            return base + Score::OPEN_FOUR;
+        }
+        if self.lines_with_open_three[usize::from(opponent)].count_ones() >= 2 {
+            return base - Score::OPEN_FOUR;
+        }
+        base
+    }
+
+    /// Whether `stone` has a four anywhere on the board: a line where one
+    /// more stone of that colour completes five.
+    #[must_use]
+    pub fn has_four(&self, stone: Stone) -> bool {
+        self.lines_with_four[usize::from(stone)] != 0
     }
 
     #[must_use]
@@ -245,6 +316,20 @@ mod tests {
                     position.row(),
                     position.col()
                 );
+                assert_eq!(
+                    state.lines_with_four,
+                    expected.lines_with_four,
+                    "Four tracking mismatch after placing at ({}, {}):\n{board}",
+                    position.row(),
+                    position.col()
+                );
+                assert_eq!(
+                    state.lines_with_open_three,
+                    expected.lines_with_open_three,
+                    "Open three tracking mismatch after placing at ({}, {}):\n{board}",
+                    position.row(),
+                    position.col()
+                );
                 turn = turn.opponent();
             }
         }
@@ -294,6 +379,8 @@ mod tests {
             let black_before = state.line_black;
             let white_before = state.line_white;
             let total_before = state.total_score;
+            let fours_before = state.lines_with_four;
+            let open_threes_before = state.lines_with_open_three;
 
             let empty: Vec<PositionId> =
                 PositionId::iter().filter(|&p| board.is_empty(p)).collect();
@@ -306,7 +393,113 @@ mod tests {
             assert_eq!(state.line_scores, scores_before, "line_scores mismatch");
             assert_eq!(state.line_black, black_before, "line_black mismatch");
             assert_eq!(state.line_white, white_before, "line_white mismatch");
+            assert_eq!(
+                state.lines_with_four, fours_before,
+                "lines_with_four mismatch"
+            );
+            assert_eq!(
+                state.lines_with_open_three, open_threes_before,
+                "lines_with_open_three mismatch"
+            );
         }
+    }
+
+    #[test]
+    fn evaluate_credits_the_side_to_move_for_its_own_open_three() {
+        let mut board = Board::new();
+        board.place(pos(7, 6), Stone::Black).unwrap();
+        board.place(pos(7, 7), Stone::Black).unwrap();
+        board.place(pos(7, 8), Stone::Black).unwrap();
+        board.place(pos(0, 0), Stone::White).unwrap();
+        board.place(pos(14, 14), Stone::White).unwrap();
+        let state = SearchState::from_board(&board);
+
+        // Black to move makes an open four next; White to move can still block.
+        assert_eq!(
+            state.evaluate(Stone::Black),
+            Score::OPEN_THREE + Score::OPEN_FOUR
+        );
+        assert_eq!(state.evaluate(Stone::White), -Score::OPEN_THREE);
+    }
+
+    #[test]
+    fn evaluate_treats_two_open_threes_against_the_side_to_move_as_decisive() {
+        let mut board = Board::new();
+        // Row 7 and column 3, far enough apart to share no line.
+        for &(row, col) in &[(7, 6), (7, 7), (7, 8), (3, 3), (4, 3), (5, 3)] {
+            board.place(pos(row, col), Stone::Black).unwrap();
+        }
+        board.place(pos(0, 14), Stone::White).unwrap();
+        let state = SearchState::from_board(&board);
+
+        assert_eq!(
+            state.evaluate(Stone::White),
+            -(Score::OPEN_THREE * 2) - Score::OPEN_FOUR
+        );
+    }
+
+    #[test]
+    fn evaluate_scores_a_four_for_the_side_to_move_as_a_win_next_move() {
+        let mut board = Board::new();
+        for &(row, col) in &[(7, 6), (7, 7), (7, 8), (7, 9)] {
+            board.place(pos(row, col), Stone::Black).unwrap();
+        }
+        board.place(pos(7, 5), Stone::White).unwrap();
+        let state = SearchState::from_board(&board);
+
+        assert_eq!(
+            state.evaluate(Stone::Black),
+            Score::win_at_depth(board.move_count() + 1)
+        );
+        // White to move has to block; the plain total stands.
+        assert_eq!(state.evaluate(Stone::White), -Score::HALF_OPEN_FOUR);
+    }
+
+    #[test]
+    fn evaluate_does_not_credit_an_open_three_against_a_four() {
+        let mut board = Board::new();
+        for &(row, col) in &[(7, 6), (7, 7), (7, 8)] {
+            board.place(pos(row, col), Stone::Black).unwrap();
+        }
+        for &(row, col) in &[(3, 2), (3, 3), (3, 4), (3, 5)] {
+            board.place(pos(row, col), Stone::White).unwrap();
+        }
+        board.place(pos(3, 1), Stone::Black).unwrap();
+        let state = SearchState::from_board(&board);
+
+        // Black's open three must wait: White's OOOO_ has to be blocked first.
+        assert_eq!(
+            state.evaluate(Stone::Black),
+            Score::OPEN_THREE - Score::HALF_OPEN_FOUR
+        );
+    }
+
+    #[test]
+    fn has_four_follows_the_four_through_place_block_and_undo() {
+        let mut board = Board::new();
+        board.place(pos(7, 3), Stone::Black).unwrap();
+        board.place(pos(7, 4), Stone::Black).unwrap();
+        board.place(pos(7, 5), Stone::Black).unwrap();
+        board.place(pos(7, 2), Stone::White).unwrap();
+
+        let mut state = SearchState::from_board(&board);
+        assert!(!state.has_four(Stone::Black));
+        assert!(!state.has_four(Stone::White));
+
+        // OXXXX_ is a four for Black.
+        state.place(pos(7, 6), Stone::Black);
+        assert!(state.has_four(Stone::Black));
+        assert!(!state.has_four(Stone::White));
+
+        // OXXXXO is dead: no longer a four.
+        state.place(pos(7, 7), Stone::White);
+        assert!(!state.has_four(Stone::Black));
+
+        state.undo(pos(7, 7), Stone::White);
+        assert!(state.has_four(Stone::Black));
+
+        state.undo(pos(7, 6), Stone::Black);
+        assert!(!state.has_four(Stone::Black));
     }
 
     #[test]
