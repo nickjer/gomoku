@@ -47,6 +47,14 @@ impl Score {
     }
 }
 
+impl ops::Div<i32> for Score {
+    type Output = Self;
+
+    fn div(self, rhs: i32) -> Self {
+        Self(self.0 / rhs)
+    }
+}
+
 impl ops::Mul<usize> for Score {
     type Output = Self;
 

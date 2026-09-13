@@ -78,8 +78,16 @@ pub fn score_move(
 ) -> Score {
     assert!(depth > 0, "score_move called with depth 0");
     let mut state = SearchState::from_board(board);
+    let raw = state.evaluate(stone);
     state.place(position, stone);
-    Search::new(depth, tt).score_after_place(&mut state, stone, depth - 1, Score::MIN, Score::MAX)
+    Search::new(depth, tt).score_after_place(
+        &mut state,
+        stone,
+        depth - 1,
+        raw,
+        Score::MIN,
+        Score::MAX,
+    )
 }
 
 /// One search from one root position: the move-ordering tables and a node
@@ -125,11 +133,12 @@ impl<'a> Search<'a> {
 
         let mut best_move = candidates[0];
         let mut best_score = Score::MIN;
+        let raw = state.evaluate(stone);
 
         for &candidate in candidates.iter() {
             state.place(candidate, stone);
             let score =
-                self.score_after_place(&mut state, stone, depth - 1, best_score, Score::MAX);
+                self.score_after_place(&mut state, stone, depth - 1, raw, best_score, Score::MAX);
             state.undo(candidate, stone);
 
             if score > best_score {
@@ -144,19 +153,31 @@ impl<'a> Search<'a> {
     /// Scores the current `state`, where `stone` just played, from `stone`'s
     /// perspective: a finished game by its outcome, anything else by searching
     /// the opponent's reply to `child_depth` inside the window `alpha..beta`.
+    /// `raw` is the static evaluation for `stone` before it played, which a
+    /// leaf averages with its own.
     fn score_after_place(
         &mut self,
         state: &mut SearchState,
         stone: Stone,
         child_depth: u32,
+        raw: Score,
         alpha: Score,
         beta: Score,
     ) -> Score {
         match state.outcome() {
             Some(Outcome::Win(_)) => Score::win_at_depth(state.move_count()),
             Some(Outcome::Draw) => Score::DRAW,
-            None => -self.negamax(state, child_depth, -beta, -alpha, stone.opponent()),
+            None => -self.negamax(state, child_depth, raw, -beta, -alpha, stone.opponent()),
         }
+    }
+
+    /// The static value of a quiet leaf for `stone`: its own evaluation
+    /// averaged with the parent's, `parent_raw`, seen from `stone`'s side.
+    /// Whoever placed the last stone always looks ahead, since that stone's
+    /// threats are unanswered; averaging over the last move takes half of
+    /// that swing out, as Rapfi does with `rawStaticEval[ply - 1]`.
+    fn leaf_value(state: &SearchState, stone: Stone, parent_raw: Score) -> Score {
+        (state.evaluate(stone) - parent_raw) / 2
     }
 
     /// Scores the position for `stone`, who is about to move, with `depth`
@@ -172,6 +193,7 @@ impl<'a> Search<'a> {
         &mut self,
         state: &mut SearchState,
         depth: u32,
+        parent_raw: Score,
         mut alpha: Score,
         beta: Score,
         stone: Stone,
@@ -185,14 +207,18 @@ impl<'a> Search<'a> {
             Situation::MakeUnstoppableFour => {
                 return Score::win_at_depth(state.move_count() + 3);
             }
-            Situation::Develop if depth == 0 => return state.evaluate(stone),
+            Situation::Develop if depth == 0 => return Self::leaf_value(state, stone, parent_raw),
             Situation::BlockFour | Situation::PreventUnstoppableFour | Situation::Develop => {}
         }
 
         let alpha_orig = alpha;
         let mut beta = beta;
 
-        if let Some((tt_score, bound)) = self.tt.probe(state.hash(), depth) {
+        // A leaf's value depends on its parent, so only nodes with depth to
+        // search below them, whose value is the position's own, use the table.
+        if depth > 0
+            && let Some((tt_score, bound)) = self.tt.probe(state.hash(), depth)
+        {
             match bound {
                 Bound::Exact => return tt_score,
                 Bound::Lower => alpha = alpha.max(tt_score),
@@ -220,8 +246,9 @@ impl<'a> Search<'a> {
         };
         let child_depth = depth.saturating_sub(1);
         if searched == 0 {
-            return state.evaluate(stone);
+            return Self::leaf_value(state, stone, parent_raw);
         }
+        let raw = state.evaluate(stone);
 
         // Try killer moves first among the chosen moves.
         let mut priority_end = candidates.forced;
@@ -239,14 +266,16 @@ impl<'a> Search<'a> {
             let is_forced = i < candidates.forced;
 
             state.place(candidate, stone);
-            let score = self.score_after_place(state, stone, child_depth, alpha, beta);
+            let score = self.score_after_place(state, stone, child_depth, raw, alpha, beta);
             state.undo(candidate, stone);
 
             if score >= beta {
                 if !is_forced {
                     self.killers.put(depth, candidate);
                 }
-                self.tt.store(state.hash(), depth, beta, Bound::Lower);
+                if depth > 0 {
+                    self.tt.store(state.hash(), depth, beta, Bound::Lower);
+                }
                 return beta;
             }
             if score > alpha {
@@ -259,7 +288,9 @@ impl<'a> Search<'a> {
         } else {
             Bound::Upper
         };
-        self.tt.store(state.hash(), depth, alpha, bound);
+        if depth > 0 {
+            self.tt.store(state.hash(), depth, alpha, bound);
+        }
         alpha
     }
 }
@@ -536,8 +567,8 @@ mod tests {
         // remains is the small change the stones make on other lines.
         let score = score_move_fresh(&board, Stone::Black, pos(7, 9), 1);
 
-        let small = Threat::FourAndMore.value();
-        assert!(score > -small && score < small, "{score:?}");
+        assert!(!score.is_decided(), "{score:?}");
+        assert!(score < Threat::FourAndOpenThree.value(), "{score:?}");
     }
 
     #[test]

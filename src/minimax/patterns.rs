@@ -289,7 +289,11 @@ impl Threat {
     #[must_use]
     pub const fn value(self) -> Score {
         Score::new(match self {
-            Self::Nothing => 0,
+            // The search always plays a five or an unstoppable four out, so
+            // they never reach a quiet leaf; a value would only leak in
+            // through the parent a leaf is averaged with and reward making
+            // a four that is then blocked.
+            Self::Nothing | Self::UnstoppableFour | Self::Five => 0,
             Self::OpenTwo => 20,
             Self::Three => 40,
             Self::TwoOpenTwos => 100,
@@ -300,8 +304,6 @@ impl Threat {
             Self::Four => 1_500,
             Self::FourAndMore => 4_000,
             Self::FourAndOpenThree => 12_000,
-            Self::UnstoppableFour => 50_000,
-            Self::Five => 200_000,
         })
     }
 
@@ -325,6 +327,7 @@ impl Threat {
     }
 
     /// The threat at `index`, the inverse of [`Threat::index`].
+    #[cfg(test)]
     #[must_use]
     pub const fn from_index(index: usize) -> Self {
         match index {
@@ -569,8 +572,12 @@ mod tests {
             assert_eq!(threat.index(), index);
             assert_eq!(Threat::from_index(index), threat);
             // Rapfi ranks a four above two open threes, but a plain four is
-            // not worth more than the double three it outranks.
-            if threat != Threat::Four && threat != Threat::FourAndMore {
+            // not worth more than the double three it outranks; the two
+            // classes the search always plays out are worth nothing.
+            if !matches!(
+                threat,
+                Threat::Four | Threat::FourAndMore | Threat::UnstoppableFour | Threat::Five
+            ) {
                 assert!(threat.value() >= previous, "{threat:?}");
                 previous = threat.value();
             }

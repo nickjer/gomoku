@@ -227,26 +227,14 @@ impl SearchState {
         self.outcome = None;
     }
 
-    /// O(1) evaluation from the perspective of `to_move`: what its empty
-    /// cells offer it, less what they offer the opponent, plus its best cell
-    /// once more because it gets to play that one now. Without that tempo
-    /// term the side that just moved always looks ahead, and lines that end
-    /// on a forced reply would be judged by who happened to move last. Fours
-    /// and unstoppable fours are never scored here; the search settles them
-    /// by playing them out (see [`Situation`]).
+    /// O(1) raw evaluation from the perspective of `to_move`: what its empty
+    /// cells offer it, less what they offer the opponent. The search averages
+    /// it with the parent's before scoring a leaf. Fours and unstoppable
+    /// fours are never scored here; the search settles them by playing them
+    /// out (see [`Situation`]).
     #[must_use]
     pub fn evaluate(&self, to_move: Stone) -> Score {
         self.total[usize::from(to_move)] - self.total[usize::from(to_move.opponent())]
-            + self.best_threat(to_move).value()
-    }
-
-    /// The strongest threat any empty cell offers `colour`.
-    fn best_threat(&self, colour: Stone) -> Threat {
-        let cells = &self.threat_cells[usize::from(colour)];
-        (1..Threat::COUNT)
-            .rev()
-            .find(|&index| cells[index].any())
-            .map_or(Threat::Nothing, Threat::from_index)
     }
 
     /// Classifies the position for the side about to play.
@@ -508,10 +496,7 @@ mod tests {
         // stone gives almost nothing. Black to move also gets its best cell
         // counted once more.
         assert!(state.evaluate(Stone::Black) > Score::DRAW);
-        assert_eq!(
-            state.evaluate(Stone::Black) + state.evaluate(Stone::White),
-            Threat::OpenThree.value() + state.best_threat(Stone::White).value()
-        );
+        assert_eq!(state.evaluate(Stone::White), -state.evaluate(Stone::Black));
     }
 
     #[test]
