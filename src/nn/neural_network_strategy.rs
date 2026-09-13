@@ -5,7 +5,6 @@ use tracing::instrument;
 
 use crate::board::Board;
 use crate::position_id::PositionId;
-use crate::position_map::PositionMap;
 use crate::stone::Stone;
 use crate::strategy::{EvolvableStrategy, Strategy};
 
@@ -46,8 +45,12 @@ impl<Encoder: NeighborhoodEncoder, const CHANNELS: usize, const LAYERS: usize> f
 impl<Encoder: NeighborhoodEncoder, const CHANNELS: usize, const LAYERS: usize> Strategy
     for NeuralNetworkStrategy<Encoder, CHANNELS, LAYERS>
 {
-    /// Turns the board as the encoder asks, scores it, and maps the best
-    /// empty position back to the real board.
+    /// Turns the board as the encoder asks, ranks the empty positions, and
+    /// maps the best one back to the real board.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the board is full.
     #[instrument(level = "trace", skip_all)]
     fn choose_move(
         &self,
@@ -56,16 +59,12 @@ impl<Encoder: NeighborhoodEncoder, const CHANNELS: usize, const LAYERS: usize> S
         rng: &mut fastrand::Rng,
     ) -> PositionId {
         let symmetry = Encoder::board_symmetry(rng);
-        let stone_channels = symmetry.apply_to_map(&board_to_stone_channels(board, current_stone));
-        let scores = self.network.score_positions(stone_channels);
-
-        let empty: Vec<PositionId> = board
-            .empty_position_ids()
-            .iter()
-            .map(|&pos| symmetry.apply(pos))
-            .collect();
-        let chosen = highest_scored_empty_position(&empty, &scores, rng);
-        symmetry.apply_inverse(chosen)
+        let turned_board = symmetry.apply_to_board(board);
+        let ranked_positions = self.rank_positions(current_stone, &turned_board, rng);
+        let best_turned_position = *ranked_positions
+            .first()
+            .expect("no empty positions to choose from");
+        symmetry.apply_inverse(best_turned_position)
     }
 
     fn label(&self) -> &str {
@@ -95,48 +94,30 @@ impl<Encoder: NeighborhoodEncoder, const CHANNELS: usize, const LAYERS: usize> E
             network: genes,
         }
     }
-}
 
-/// The empty position with the highest score. Ties are broken uniformly at
-/// random.
-///
-/// # Panics
-///
-/// Panics if `empty_positions` is empty.
-fn highest_scored_empty_position(
-    empty_positions: &[PositionId],
-    scores: &PositionMap<f32, 1>,
-    rng: &mut fastrand::Rng,
-) -> PositionId {
-    let (&first, rest) = empty_positions
-        .split_first()
-        .expect("no empty positions to select from");
-
-    let mut best_pos = first;
-    let [mut best_score] = *scores.get(first);
-    let mut tie_count = 1;
-
-    for &pos in rest {
-        let [score] = *scores.get(pos);
-
-        if score > best_score {
-            best_score = score;
-            best_pos = pos;
-            tie_count = 1;
-        } else if (score - best_score).abs() < f32::EPSILON {
-            tie_count += 1;
-            // Reservoir sampling: replace with probability 1/tie_count
-            if rng.usize(..tie_count) == 0 {
-                best_pos = pos;
-            }
-        }
+    fn rank_positions(
+        &self,
+        current_stone: Stone,
+        board: &Board,
+        rng: &mut fastrand::Rng,
+    ) -> Vec<PositionId> {
+        let scores = self
+            .network
+            .score_positions(board_to_stone_channels(board, current_stone));
+        // Shuffling first puts tied positions in random order, since the sort is stable.
+        let mut ranked_positions = board.empty_position_ids();
+        rng.shuffle(&mut ranked_positions);
+        ranked_positions.sort_by(|&earlier_position, &later_position| {
+            scores.get(later_position)[0].total_cmp(&scores.get(earlier_position)[0])
+        });
+        ranked_positions
     }
-
-    best_pos
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::*;
     use crate::position::Position;
 
@@ -148,15 +129,24 @@ mod tests {
         PositionId::from_position(Position::new(row, col))
     }
 
+    /// A few stones in the middle so the network has something to score.
+    fn played_board() -> Board {
+        let mut board = Board::new();
+        board.place(pos(7, 7), Stone::Black).unwrap();
+        board.place(pos(7, 8), Stone::White).unwrap();
+        board.place(pos(6, 6), Stone::Black).unwrap();
+        board
+    }
+
     #[test]
     fn square_strategy_chooses_an_empty_position() {
         let mut rng = fastrand::Rng::with_seed(42);
         let strategy = SquareStrategy::random("test", &mut rng);
         let board = Board::new();
 
-        let chosen = strategy.choose_move(Stone::Black, &board, &mut rng);
+        let chosen_position = strategy.choose_move(Stone::Black, &board, &mut rng);
 
-        assert!(board.empty_position_ids().contains(&chosen));
+        assert!(board.empty_position_ids().contains(&chosen_position));
     }
 
     #[test]
@@ -165,9 +155,9 @@ mod tests {
         let strategy = ClusterStrategy::random("test", &mut rng);
         let board = Board::new();
 
-        let chosen = strategy.choose_move(Stone::Black, &board, &mut rng);
+        let chosen_position = strategy.choose_move(Stone::Black, &board, &mut rng);
 
-        assert!(board.empty_position_ids().contains(&chosen));
+        assert!(board.empty_position_ids().contains(&chosen_position));
     }
 
     #[test]
@@ -194,13 +184,96 @@ mod tests {
 
         for seed in 0..100 {
             let mut rng = fastrand::Rng::with_seed(seed);
-            let chosen = strategy.choose_move(Stone::White, &board, &mut rng);
+            let chosen_position = strategy.choose_move(Stone::White, &board, &mut rng);
 
             assert!(
-                board.empty_position_ids().contains(&chosen),
-                "seed {seed}: {chosen:?} is not empty"
+                board.empty_position_ids().contains(&chosen_position),
+                "seed {seed}: {chosen_position:?} is not empty"
             );
         }
+    }
+
+    #[test]
+    #[should_panic(expected = "no empty positions")]
+    fn choose_move_panics_on_a_full_board() {
+        let mut board = Board::new();
+        for (position, stone) in crate::test_utils::draw_moves() {
+            board.place(position, stone).unwrap();
+        }
+        let mut rng = fastrand::Rng::with_seed(42);
+        let strategy = SquareStrategy::random("test", &mut rng);
+
+        strategy.choose_move(Stone::Black, &board, &mut rng);
+    }
+
+    #[test]
+    fn rank_positions_orders_every_empty_position_by_falling_score() {
+        let board = played_board();
+        let mut rng = fastrand::Rng::with_seed(42);
+        let strategy = SquareStrategy::random("test", &mut rng);
+        let scores = strategy
+            .network
+            .score_positions(board_to_stone_channels(&board, Stone::White));
+
+        let ranked_positions = strategy.rank_positions(Stone::White, &board, &mut rng);
+
+        assert_eq!(ranked_positions.len(), board.empty_position_ids().len());
+        assert_eq!(
+            ranked_positions.iter().collect::<HashSet<_>>().len(),
+            ranked_positions.len(),
+            "a position is ranked twice"
+        );
+        assert!(
+            ranked_positions
+                .iter()
+                .all(|&position| board.is_empty(position))
+        );
+        assert!(
+            ranked_positions
+                .windows(2)
+                .all(|pair| scores.get(pair[0])[0] >= scores.get(pair[1])[0]),
+            "scores rise along the ranking"
+        );
+    }
+
+    #[test]
+    fn rank_positions_puts_tied_positions_in_random_order() {
+        // With zero biases an empty board scores every position the same.
+        let mut rng = fastrand::Rng::with_seed(42);
+        let strategy = SquareStrategy::random("test", &mut rng);
+        let board = Board::new();
+
+        let first_ranked_positions: HashSet<PositionId> = (0..200)
+            .map(|seed| {
+                let mut rng = fastrand::Rng::with_seed(seed);
+                strategy.rank_positions(Stone::Black, &board, &mut rng)[0]
+            })
+            .collect();
+
+        assert!(
+            first_ranked_positions.len() > 100,
+            "{} distinct",
+            first_ranked_positions.len()
+        );
+    }
+
+    #[test]
+    fn choose_move_plays_the_first_ranked_position_when_the_board_is_not_turned() {
+        let board = played_board();
+        let mut rng = fastrand::Rng::with_seed(42);
+        // The cluster encoder never turns the board, so both read it as it lies;
+        // the same seed makes both break ties the same way.
+        let strategy = ClusterStrategy::random("test", &mut rng);
+        let mut ranking_rng = fastrand::Rng::with_seed(7);
+        let mut choosing_rng = fastrand::Rng::with_seed(7);
+
+        let first_ranked_position =
+            strategy.rank_positions(Stone::White, &board, &mut ranking_rng)[0];
+
+        assert_eq!(
+            strategy.choose_move(Stone::White, &board, &mut choosing_rng),
+            first_ranked_position
+        );
     }
 
     #[test]
@@ -230,127 +303,5 @@ mod tests {
 
         assert_eq!(reconstructed.label(), "reconstructed");
         assert_eq!(reconstructed.genes(), original.genes());
-    }
-
-    mod highest_scored_empty_position_tests {
-        use super::*;
-
-        fn scores_with_values(values: &[(PositionId, f32)]) -> PositionMap<f32, 1> {
-            let mut map = PositionMap::new(f32::NEG_INFINITY);
-            for &(pos, value) in values {
-                *map.get_mut(pos) = [value];
-            }
-            map
-        }
-
-        #[test]
-        fn selects_highest_score() {
-            let positions = vec![pos(0, 0), pos(0, 1), pos(0, 2)];
-            let scores =
-                scores_with_values(&[(pos(0, 0), 1.0), (pos(0, 1), 5.0), (pos(0, 2), 3.0)]);
-            let mut rng = fastrand::Rng::with_seed(42);
-
-            let selected = highest_scored_empty_position(&positions, &scores, &mut rng);
-
-            assert_eq!(selected, pos(0, 1));
-        }
-
-        #[test]
-        fn handles_negative_scores() {
-            let positions = vec![pos(0, 0), pos(0, 1), pos(0, 2)];
-            let scores =
-                scores_with_values(&[(pos(0, 0), -5.0), (pos(0, 1), -1.0), (pos(0, 2), -3.0)]);
-            let mut rng = fastrand::Rng::with_seed(42);
-
-            let selected = highest_scored_empty_position(&positions, &scores, &mut rng);
-
-            assert_eq!(selected, pos(0, 1));
-        }
-
-        #[test]
-        fn tiebreaking_selects_from_tied_positions() {
-            let positions = vec![pos(0, 0), pos(0, 1), pos(0, 2)];
-            let scores =
-                scores_with_values(&[(pos(0, 0), 5.0), (pos(0, 1), 5.0), (pos(0, 2), 1.0)]);
-            let mut rng = fastrand::Rng::with_seed(42);
-
-            let selected = highest_scored_empty_position(&positions, &scores, &mut rng);
-
-            assert!([pos(0, 0), pos(0, 1)].contains(&selected), "{selected:?}");
-        }
-
-        #[test]
-        fn tiebreaking_is_uniform() {
-            let positions = vec![pos(0, 0), pos(0, 1)];
-            let scores = scores_with_values(&[(pos(0, 0), 5.0), (pos(0, 1), 5.0)]);
-
-            let mut counts = [0, 0];
-            for seed in 0..1000 {
-                let mut rng = fastrand::Rng::with_seed(seed);
-                let selected = highest_scored_empty_position(&positions, &scores, &mut rng);
-
-                if selected == pos(0, 0) {
-                    counts[0] += 1;
-                } else {
-                    counts[1] += 1;
-                }
-            }
-
-            // With 1000 trials, each should be ~500. Allow 40% to 60% range.
-            assert!(
-                counts[0] > 400 && counts[0] < 600,
-                "distribution not uniform: {counts:?}"
-            );
-        }
-
-        #[test]
-        fn deterministic_with_same_seed() {
-            let positions = vec![pos(0, 0), pos(0, 1), pos(0, 2)];
-            let scores =
-                scores_with_values(&[(pos(0, 0), 5.0), (pos(0, 1), 5.0), (pos(0, 2), 5.0)]);
-
-            let results: Vec<_> = (0..5)
-                .map(|_| {
-                    let mut rng = fastrand::Rng::with_seed(12345);
-                    highest_scored_empty_position(&positions, &scores, &mut rng)
-                })
-                .collect();
-
-            assert!(results.windows(2).all(|w| w[0] == w[1]));
-        }
-
-        #[test]
-        fn only_considers_provided_positions() {
-            // pos(0,0) has the highest score but isn't in the list
-            let positions = vec![pos(0, 1), pos(0, 2)];
-            let scores =
-                scores_with_values(&[(pos(0, 0), 100.0), (pos(0, 1), 5.0), (pos(0, 2), 3.0)]);
-            let mut rng = fastrand::Rng::with_seed(42);
-
-            let selected = highest_scored_empty_position(&positions, &scores, &mut rng);
-
-            assert_eq!(selected, pos(0, 1));
-        }
-
-        #[test]
-        fn single_position_returns_that_position() {
-            let positions = vec![pos(7, 7)];
-            let scores = scores_with_values(&[(pos(7, 7), 0.0)]);
-            let mut rng = fastrand::Rng::with_seed(42);
-
-            let selected = highest_scored_empty_position(&positions, &scores, &mut rng);
-
-            assert_eq!(selected, pos(7, 7));
-        }
-
-        #[test]
-        #[should_panic(expected = "no empty positions")]
-        fn panics_on_empty_positions() {
-            let positions: Vec<PositionId> = vec![];
-            let scores = PositionMap::<f32, 1>::new(0.0);
-            let mut rng = fastrand::Rng::with_seed(42);
-
-            highest_scored_empty_position(&positions, &scores, &mut rng);
-        }
     }
 }

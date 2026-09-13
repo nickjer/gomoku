@@ -1,5 +1,5 @@
+use crate::board::Board;
 use crate::position_id::PositionId;
-use crate::position_map::PositionMap;
 
 /// One of the eight ways to turn a square board over onto itself: four
 /// rotations and four reflections.
@@ -64,14 +64,17 @@ impl BoardSymmetry {
         }
     }
 
-    /// Turns a whole map: every position's values move to where this symmetry
-    /// sends that position.
+    /// Turns a whole board: every stone moves to where this symmetry sends
+    /// its position.
     #[must_use]
-    pub fn apply_to_map<T: Copy, const C: usize>(
-        self,
-        map: &PositionMap<T, C>,
-    ) -> PositionMap<T, C> {
-        PositionMap::from_fn(|pos| *map.get(self.apply_inverse(pos)))
+    pub fn apply_to_board(self, board: &Board) -> Board {
+        let mut turned_board = Board::new();
+        for position in PositionId::iter() {
+            if let Some(stone) = board.stone(position) {
+                turned_board.place_unchecked(self.apply(position), stone);
+            }
+        }
+        turned_board
     }
 }
 
@@ -79,41 +82,37 @@ impl BoardSymmetry {
 mod tests {
     use super::*;
     use crate::position::Position;
+    use crate::stone::Stone;
 
     #[test]
-    fn identity_leaves_the_map_as_it_is() {
-        let mut map = PositionMap::<f32, 2>::new(0.0);
-        *map.get_mut(pos(0, 0)) = [1.0, 2.0];
+    fn rotate180_moves_a_stone_to_the_opposite_corner() {
+        let mut board = Board::new();
+        board.place(pos(0, 0), Stone::Black).unwrap();
+        board.place(pos(0, 1), Stone::White).unwrap();
 
-        let turned = BoardSymmetry::Identity.apply_to_map(&map);
+        let turned_board = BoardSymmetry::Rotate180.apply_to_board(&board);
 
-        for p in PositionId::iter() {
-            assert_eq!(turned.get(p), map.get(p));
+        assert_eq!(turned_board.stone(pos(14, 14)), Some(Stone::Black));
+        assert_eq!(turned_board.stone(pos(14, 13)), Some(Stone::White));
+        assert_eq!(turned_board.stone(pos(0, 0)), None);
+        assert_eq!(turned_board.move_count(), 2);
+    }
+
+    #[test]
+    fn apply_to_board_sends_every_stone_where_apply_says() {
+        let mut board = Board::new();
+        for black_position in [pos(0, 0), pos(3, 7), pos(14, 2)] {
+            board.place(black_position, Stone::Black).unwrap();
         }
-    }
-
-    #[test]
-    fn rotate180_moves_values_to_the_opposite_corner() {
-        let mut map = PositionMap::<f32, 2>::new(0.0);
-        *map.get_mut(pos(0, 0)) = [1.0, 2.0];
-
-        let turned = BoardSymmetry::Rotate180.apply_to_map(&map);
-
-        assert_eq!(turned.get(pos(14, 14)), &[1.0, 2.0]);
-        assert_eq!(turned.get(pos(0, 0)), &[0.0, 0.0]);
-    }
-
-    #[test]
-    fn apply_to_map_sends_every_position_where_apply_says() {
-        let map = PositionMap::<usize, 1>::from_fn(|p| [p.to_index()]);
+        board.place(pos(9, 9), Stone::White).unwrap();
 
         for symmetry in BoardSymmetry::ALL {
-            let turned = symmetry.apply_to_map(&map);
-            for p in PositionId::iter() {
+            let turned_board = symmetry.apply_to_board(&board);
+            for position in PositionId::iter() {
                 assert_eq!(
-                    turned.get(symmetry.apply(p)),
-                    map.get(p),
-                    "{symmetry:?} at {p:?}"
+                    turned_board.stone(symmetry.apply(position)),
+                    board.stone(position),
+                    "{symmetry:?} at {position:?}"
                 );
             }
         }

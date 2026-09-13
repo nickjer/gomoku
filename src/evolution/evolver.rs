@@ -116,7 +116,7 @@ impl Evolver {
         population
     }
 
-    fn compute_fitness<S: Strategy>(
+    fn compute_fitness<S: EvolvableStrategy>(
         &self,
         strategies: &[S],
         rng: &mut fastrand::Rng,
@@ -146,7 +146,7 @@ impl Evolver {
         totals.into_iter().map(FitnessScore::new).collect()
     }
 
-    fn evaluate_and_sort<S: Strategy>(
+    fn evaluate_and_sort<S: EvolvableStrategy>(
         &self,
         strategies: Vec<S>,
         rng: &mut fastrand::Rng,

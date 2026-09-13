@@ -1,6 +1,8 @@
+use std::fs::File;
+use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use clap::Args;
 use tracing::{info, warn};
 
@@ -13,7 +15,8 @@ use crate::evolution::fitness_weight::FitnessWeight;
 use crate::evolution::mutation::Mutation;
 use crate::evolution::selection::{Tournament as TournamentSelection, TournamentMode};
 use crate::evolution::{
-    Evolver, MinimaxFitness, Population, ThreatDefenseFitness, TournamentFitness,
+    Evolver, MinimaxFitness, Population, ScoredBoardFitness, ThreatDefenseFitness,
+    TournamentFitness,
 };
 use crate::game::{Freestyle, Game};
 use crate::nn::{ClusterSmall, ClusterTiny, ConvSmall, ConvTiny};
@@ -97,6 +100,26 @@ pub struct EvolveArgs {
     #[arg(long, default_value = "0")]
     pub opening_moves: u32,
 
+    /// Scored-board evaluator weight (0 to disable)
+    #[arg(long, default_value = "0.0")]
+    pub scored_board_weight: f32,
+
+    /// JSON Lines file of boards with a minimax score for every empty position
+    #[arg(long, default_value = "data/scored_boards.jsonl", value_name = "PATH")]
+    pub scored_boards: PathBuf,
+
+    /// Number of scored boards each generation is measured on
+    #[arg(long, default_value = "100", value_name = "N")]
+    pub boards_per_generation: usize,
+
+    /// Largest magnitude a minimax score keeps before shortfalls are taken
+    #[arg(long, default_value = "1000")]
+    pub score_cap: f32,
+
+    /// Weight of each ranked position relative to the one ranked before it (0 = pick only)
+    #[arg(long, default_value = "0.1")]
+    pub rank_decay: f32,
+
     /// Save a checkpoint every N generations (0 to disable)
     #[arg(long, default_value = "0", value_name = "N")]
     pub checkpoint_every: u32,
@@ -169,7 +192,7 @@ where
             .collect()
     };
 
-    let evolver = create_evolver(args);
+    let evolver = create_evolver(args)?;
 
     let output = &args.output;
     let generations = args.generations;
@@ -211,7 +234,7 @@ fn save_population<S: EvolvableStrategy + Clone + Into<SavedStrategy>>(
     Ok(())
 }
 
-fn create_evolver(args: &EvolveArgs) -> Evolver {
+fn create_evolver(args: &EvolveArgs) -> Result<Evolver> {
     let game: Game = Freestyle {
         opening_moves: args.opening_moves,
     }
@@ -241,8 +264,22 @@ fn create_evolver(args: &EvolveArgs) -> Evolver {
             FitnessWeight::new(args.minimax_weight),
         ));
     }
+    if args.scored_board_weight > 0.0 {
+        let path = &args.scored_boards;
+        let file = File::open(path).with_context(|| format!("opening {}", path.display()))?;
+        evaluators.push((
+            ScoredBoardFitness::read(
+                BufReader::new(file),
+                args.score_cap,
+                args.boards_per_generation,
+                args.rank_decay,
+            )?
+            .into(),
+            FitnessWeight::new(args.scored_board_weight),
+        ));
+    }
 
-    Evolver::new()
+    Ok(Evolver::new()
         .evaluators(evaluators)
         .generations(args.generations)
         .elitism(args.elitism)
@@ -250,7 +287,7 @@ fn create_evolver(args: &EvolveArgs) -> Evolver {
         .crossover(Crossover::Uniform)
         .crossover_rate(args.crossover_rate)
         .mutation(Mutation::Gaussian { sigma: args.sigma })
-        .mutation_rate(args.mutation_rate)
+        .mutation_rate(args.mutation_rate))
 }
 
 #[cfg(test)]
@@ -281,6 +318,20 @@ mod tests {
 
         assert_eq!(cli.args.kind, None);
         assert_eq!(cli.args.input, Some(PathBuf::from("dir")));
+    }
+
+    #[test]
+    fn scored_board_evaluator_is_off_by_default_and_reads_the_versioned_file() {
+        let cli = TestCli::try_parse_from(["gomoku", "-i", "dir", "-o", "out"]).unwrap();
+
+        assert!(cli.args.scored_board_weight.abs() < f32::EPSILON);
+        assert_eq!(
+            cli.args.scored_boards,
+            PathBuf::from("data/scored_boards.jsonl")
+        );
+        assert_eq!(cli.args.boards_per_generation, 100);
+        assert!((cli.args.score_cap - 1000.0).abs() < f32::EPSILON);
+        assert!((cli.args.rank_decay - 0.1).abs() < f32::EPSILON);
     }
 
     #[test]

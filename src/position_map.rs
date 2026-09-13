@@ -55,17 +55,6 @@ impl<T: Copy, const C: usize> PositionMap<T, C> {
 }
 
 impl<T, const C: usize> PositionMap<T, C> {
-    /// Builds a map by calling `f` once per position, in [`PositionId::iter`] order.
-    #[must_use]
-    pub fn from_fn(f: impl FnMut(PositionId) -> [T; C]) -> Self {
-        let boxed: Box<[[T; C]]> = PositionId::iter().map(f).collect();
-        let data = boxed
-            .try_into()
-            .map_err(drop)
-            .expect("PositionId::iter yields exactly PositionId::COUNT positions");
-        Self { data }
-    }
-
     /// Returns the channel values at the given position.
     #[must_use]
     pub const fn get(&self, position: PositionId) -> &[T; C] {
@@ -190,15 +179,6 @@ mod tests {
 
         assert_eq!(map.get(pos(0, 1)), &[5.0, 6.0]);
         assert_eq!(map.get(pos(0, 0)), &[0.0, 0.0]);
-    }
-
-    #[test]
-    fn from_fn_calls_once_per_position_in_id_order() {
-        let map = PositionMap::<usize, 1>::from_fn(|position| [position.to_index()]);
-
-        for position in PositionId::iter() {
-            assert_eq!(map.get(position), &[position.to_index()]);
-        }
     }
 
     #[test]

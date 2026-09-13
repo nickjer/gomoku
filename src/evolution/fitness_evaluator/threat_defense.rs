@@ -1,7 +1,7 @@
 use tracing::instrument;
 
 use crate::evolution::fitness_score::FitnessScore;
-use crate::strategy::Strategy;
+use crate::strategy::EvolvableStrategy;
 use crate::threat::{count_correct_moves, generate_threat_scenarios};
 
 use super::EvaluateFitness;
@@ -11,7 +11,7 @@ pub struct ThreatDefenseFitness;
 
 impl EvaluateFitness for ThreatDefenseFitness {
     #[instrument(name = "ThreatDefenseFitness", skip_all)]
-    fn evaluate<S: Strategy>(
+    fn evaluate<S: EvolvableStrategy>(
         &self,
         strategies: &[S],
         rng: &mut fastrand::Rng,

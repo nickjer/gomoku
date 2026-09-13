@@ -110,11 +110,8 @@ impl Board {
         Ok(())
     }
 
-    /// Places a stone without validation or win detection.
-    ///
-    /// Used by `SearchState` which handles its own outcome tracking via
-    /// incremental line scores. Skips the `is_finished` / `is_empty` checks
-    /// and the expensive `has_five_in_a_row` call.
+    /// Places a stone without validation or win detection, for callers that
+    /// know the position is legal and track the outcome themselves.
     pub fn place_unchecked(&mut self, position_id: PositionId, stone: Stone) {
         self.bitboard_mut(stone).set(position_id);
         self.move_count += 1;

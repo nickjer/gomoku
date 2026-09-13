@@ -9,7 +9,7 @@ use crate::minimax::{MinimaxStrategy, TranspositionTable, score_move};
 use crate::outcome::Outcome;
 use crate::position_id::PositionId;
 use crate::stone::Stone;
-use crate::strategy::Strategy;
+use crate::strategy::{EvolvableStrategy, Strategy};
 
 use super::EvaluateFitness;
 
@@ -132,7 +132,7 @@ impl MinimaxFitness {
 
 impl EvaluateFitness for MinimaxFitness {
     #[instrument(name = "MinimaxFitness", skip_all)]
-    fn evaluate<S: Strategy>(
+    fn evaluate<S: EvolvableStrategy>(
         &self,
         strategies: &[S],
         rng: &mut fastrand::Rng,

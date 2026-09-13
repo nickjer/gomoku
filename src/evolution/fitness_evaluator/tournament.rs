@@ -2,7 +2,7 @@ use tracing::{debug, info, instrument};
 
 use crate::evolution::fitness_score::FitnessScore;
 use crate::game::Game;
-use crate::strategy::Strategy;
+use crate::strategy::{EvolvableStrategy, Strategy};
 use crate::tournament::{RunTournament, Standing, Tournament};
 
 use super::EvaluateFitness;
@@ -23,7 +23,7 @@ impl TournamentFitness {
 
 impl EvaluateFitness for TournamentFitness {
     #[instrument(name = "TournamentFitness", skip_all)]
-    fn evaluate<S: Strategy>(
+    fn evaluate<S: EvolvableStrategy>(
         &self,
         strategies: &[S],
         rng: &mut fastrand::Rng,
@@ -74,19 +74,22 @@ fn log_standings<S: Strategy>(standings: &[Standing], strategies: &[S]) {
 mod tests {
     use super::*;
     use crate::game::Stub;
-    use crate::test_utils::StubStrategy;
+    use crate::test_utils::FakeEvolvableStrategy;
     use crate::tournament::Scripted;
+
+    fn strategies(rng: &mut fastrand::Rng) -> Vec<FakeEvolvableStrategy> {
+        ["a", "b", "c"]
+            .into_iter()
+            .map(|label| FakeEvolvableStrategy::random(label, rng))
+            .collect()
+    }
 
     #[test]
     fn tournament_fitness_scores_by_rank() {
-        let strategies = vec![
-            StubStrategy::new("a"),
-            StubStrategy::new("b"),
-            StubStrategy::new("c"),
-        ];
+        let mut rng = fastrand::Rng::with_seed(42);
+        let strategies = strategies(&mut rng);
         let tournament = Scripted::new(vec!["b", "a", "c"]).into();
         let evaluator = TournamentFitness::new(tournament, Stub.into());
-        let mut rng = fastrand::Rng::with_seed(42);
 
         let scores = evaluator.evaluate(&strategies, &mut rng);
 
@@ -97,14 +100,10 @@ mod tests {
 
     #[test]
     fn tournament_fitness_highest_score_for_first_place() {
-        let strategies = vec![
-            StubStrategy::new("a"),
-            StubStrategy::new("b"),
-            StubStrategy::new("c"),
-        ];
+        let mut rng = fastrand::Rng::with_seed(42);
+        let strategies = strategies(&mut rng);
         let tournament = Scripted::new(vec!["a", "b", "c"]).into();
         let evaluator = TournamentFitness::new(tournament, Stub.into());
-        let mut rng = fastrand::Rng::with_seed(42);
 
         let scores = evaluator.evaluate(&strategies, &mut rng);
 

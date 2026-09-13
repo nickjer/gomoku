@@ -209,6 +209,15 @@ impl EvolvableStrategy for FakeEvolvableStrategy {
             network: genes,
         }
     }
+
+    fn rank_positions(
+        &self,
+        _current_stone: Stone,
+        _board: &Board,
+        _rng: &mut fastrand::Rng,
+    ) -> Vec<PositionId> {
+        panic!("FakeEvolvableStrategy::rank_positions should not be called")
+    }
 }
 
 /// Test genes: a list of groups of numbers, for exercising the operators

@@ -30,4 +30,14 @@ pub trait EvolvableStrategy: Strategy + Sized {
 
     /// Creates a strategy from the given genes.
     fn from_genes(label: impl Into<String>, genes: Self::Genes) -> Self;
+
+    /// The empty positions from the one this strategy likes most for the
+    /// current player to the one it likes least, reading the board as it
+    /// lies. Positions it cannot tell apart come in random order.
+    fn rank_positions(
+        &self,
+        current_stone: Stone,
+        board: &Board,
+        rng: &mut fastrand::Rng,
+    ) -> Vec<PositionId>;
 }

@@ -36,14 +36,14 @@ One network, written once. The way a layer looks at the board around each positi
 - **Encoders**: `Square3x3` (`square3x3.rs`) reads a position and its eight neighbors as they are and asks for a random symmetry. `ClusterExpansion<CLUSTERS>` (`cluster_expansion.rs`) sums the neighbors by shape and needs no symmetry. `NoNeighbors` (`no_neighbors.rs`) reads the position alone and is used by the scoring layer.
 - **`Layer<Encoder, IN_CHANNELS, OUT_CHANNELS>`** (`layer.rs`): weights and biases for one weighted-sum step. `apply` consumes its input so `NoNeighbors` can pass it through without copying.
 - **`NeuralNetwork<Encoder, CHANNELS, LAYERS>`** (`neural_network.rs`): `board_layer`, `middle_layers`, `scoring_layer`; `score_positions` gives every position a score, zeroing negatives between layers. Implements `EvolvableGenes`.
-- **`NeuralNetworkStrategy<Encoder, CHANNELS, LAYERS>`** (`neural_network_strategy.rs`): plays the highest-scored empty position. `ConvTiny`/`ConvSmall` are aliases over `Square3x3`; `ClusterTiny`/`ClusterSmall` over `ClusterExpansion<9>`.
-- **`BoardSymmetry`** (`board_symmetry.rs`): the eight rotations and reflections of the board, with `apply`, `apply_inverse`, and `apply_to_map`.
+- **`NeuralNetworkStrategy<Encoder, CHANNELS, LAYERS>`** (`neural_network_strategy.rs`): ranks the empty positions by the network's scores (`rank_positions`, ties in random order) and plays the first. `ConvTiny`/`ConvSmall` are aliases over `Square3x3`; `ClusterTiny`/`ClusterSmall` over `ClusterExpansion<9>`.
+- **`BoardSymmetry`** (`board_symmetry.rs`): the eight rotations and reflections of the board, with `apply`, `apply_inverse`, and `apply_to_board`.
 - **`board_to_stone_channels`**, `STONE_CHANNELS` (`stone_channels.rs`): the board as two channels per position (own stones, opponent stones).
 
 The one piece of board geometry the encoders share lives with the board types, not in `nn`: `Offset::CENTER_AND_NEIGHBORS`, a position and its eight neighbors clockwise from north. Each encoder owns its own loop over the board; `PositionMap` is only a container.
 
 ### Strategy
-Strategies implement the `Strategy` trait. Evolvable strategies additionally implement `EvolvableStrategy` with gene manipulation methods.
+Strategies implement the `Strategy` trait. Evolvable strategies additionally implement `EvolvableStrategy` with gene manipulation methods and `rank_positions`, the empty positions from most to least liked for a given player on a board read as it lies (the scored-board evaluator measures this ordering; `current_stone` is explicit, as in `choose_move`, so constructed positions whose stone count does not match the side to move still work).
 
 - **Neural network strategies (`ConvTiny`, `ConvSmall`, `ClusterTiny`, `ClusterSmall`)**: one `NeuralNetworkStrategy` in `src/nn/`, differing only in encoder and size
 - **InteractiveStrategy**: TUI-based human input, generic over `Backend` for testability
@@ -51,10 +51,11 @@ Strategies implement the `Strategy` trait. Evolvable strategies additionally imp
 
 Move selection for neural network strategies:
 1. Ask the encoder for a board symmetry (random for `Square3x3`, none for `ClusterExpansion`)
-2. Turn the board's stone channels by that symmetry
-3. Score every position with the network
-4. Pick the highest-scored empty position (reservoir sampling for ties)
-5. Map the chosen position back through the inverse symmetry
+2. Turn the board by that symmetry
+3. Rank the empty positions by the network's scores (shuffle, then stable sort, so ties fall in random order)
+4. Map the first ranked position back through the inverse symmetry
+
+The sort costs nothing next to the forward pass: 9.45M instructions per move against 9.41M for reservoir sampling of the maximum (conv-small, `evolve -p 4 -g 1 --seed 42`).
 
 ### Cluster Architecture
 Cluster layers replace linear 3×3 convolution with a **cluster expansion** — sums of products of neighbor values over clusters (single neighbors, neighbor pairs) grouped into D8-equivalent orbits. This detects topological shapes (bridges, wedges, T-shapes) that linear kernels cannot express in a single layer.
@@ -86,7 +87,8 @@ The `Tournament` enum manages competition formats using `enum_dispatch`:
 ### Evolution
 The `Evolver` orchestrates the genetic algorithm. Call `evolve(strategies, rng, on_generation)` with initial strategies and a per-generation callback.
 
-- **Fitness**: Weighted combination of tournament ranking, threat defense evaluation, and minimax challenge
+- **Fitness**: Weighted combination of tournament ranking, threat defense evaluation, minimax challenge, and scored boards
+- **Scored boards** (`fitness_evaluator/scored_board.rs`): `data/scored_boards.jsonl` holds boards from Gomocup 2025 games and our minimax self-play with minimax's depth-4 score for every empty position (one JSON object per line: `stones`, 225 characters of `.`/`X`/`O`, and `scores`, 225 raw points from the side to move's view, `null` under a stone). At load each score is clamped to `[-cap, cap]` (`--score-cap`, default 1000, above the largest static score of 977) and turned into a **shortfall**, how far it falls behind the board's best position as a share of the cap; boards where every move ties are dropped. Each generation samples `--boards-per-generation` boards once, so every strategy is measured on the same boards. A board's error is the shortfall of each ranked position weighted by `rank_decay^(k-1)` (`--rank-decay`, default 0.1; 0 counts only the pick), normalized; fitness is minus the mean error. Ordering only, no raw outputs: measured networks span 17 orders of magnitude with heavy tails, so softmax on outputs is a staircase. Logs per generation the mean pick shortfall in points, the blunder rate (pick shortfall at least 0.9), and the share of picks tying the best. The old `--minimax-scoring-depth` mode compares searches with different horizons and its length term dominates; it stays as it is.
 - **Threat scenarios** (`threat.rs`): each scenario is stamped from a `const` pattern of cells (`Mover`, `Opponent`, `Empty`, `Answer`) laid along a random direction from a start chosen so every cell fits on the board. Filler stones go to the side with fewer pattern stones. A new shape is one data line.
 - **Selection** enum: `Tournament` (configured via `TournamentMode::WithReplacement` or `WithoutReplacement`)
 - **Crossover** enum: `Uniform`; `apply(parent1, parent2, rng)` builds the child
@@ -141,6 +143,9 @@ cargo run --release -- evolve -i tmp/output/gen_05 -o tmp/output2 -g 50
 # Tournament selection that never draws the same individual twice
 cargo run --release -- evolve conv-tiny -p 16 -o tmp/output --selection without-replacement
 
+# Evolve against minimax's scores on real boards instead of a tournament
+cargo run --release -- evolve cluster-small -p 30 -o tmp/output -g 200 --tournament-weight 0 --scored-board-weight 1
+
 # Inspect a strategy's summary statistics
 cargo run --release -- inspect tmp/output/gen_20/1_*.bin
 
@@ -178,6 +183,11 @@ cargo run --release -- interactive minimax:4 --opening-moves 6
 - `--minimax-depth` [4]: Minimax search depths (space-separated; evaluated smallest to largest with early cutoff)
 - `--minimax-scoring-depth`: Depth for per-move minimax scoring (enables move scoring mode when set)
 - `--opening-moves` [0]: Pre-place N random stones before each game (0 = start from empty board; applies to tournament and minimax evaluators)
+- `--scored-board-weight` [0.0]: Scored-board evaluator weight (0 to disable)
+- `--scored-boards` [data/scored_boards.jsonl]: JSON Lines file of boards with a minimax score for every empty position
+- `--boards-per-generation` [100]: Number of scored boards each generation is measured on
+- `--score-cap` [1000]: Largest magnitude a minimax score keeps before shortfalls are taken
+- `--rank-decay` [0.1]: Weight of each ranked position relative to the one ranked before it (0 = pick only)
 - `--seed`: RNG seed for reproducibility
 - `-l/--log-level`: Log level (error/warn/info/debug/trace)
 
