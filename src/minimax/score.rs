@@ -12,16 +12,12 @@ impl Score {
     pub const WIN: Self = Self(100_000_000);
     pub const DRAW: Self = Self(0);
     pub const MIN: Self = Self(-i32::MAX);
+    pub const MAX: Self = Self(i32::MAX);
 
-    /// Open four is an unstoppable win — score just below WIN.
-    pub const OPEN_FOUR: Self = Self(10_000_000);
-    /// Half-open four forces exactly one blocking reply.
-    pub const HALF_OPEN_FOUR: Self = Self(1_000_000);
-    /// Open three becomes open four if not blocked — near-decisive.
-    pub const OPEN_THREE: Self = Self(100_000);
-    pub const HALF_OPEN_THREE: Self = Self(10_000);
-    pub const OPEN_TWO: Self = Self(1_000);
-    pub const HALF_OPEN_TWO: Self = Self(100);
+    #[must_use]
+    pub const fn new(points: i32) -> Self {
+        Self(points)
+    }
 
     /// Returns the score normalized to `[-1.0, 1.0]` relative to `Score::WIN`.
     #[must_use]
@@ -39,6 +35,15 @@ impl Score {
                 .checked_sub(i32::try_from(move_count).expect("move count overflow"))
                 .expect("win score underflow"),
         )
+    }
+
+    /// Whether this is a win or a loss found by the search rather than an
+    /// estimate: every such score lies within a board's worth of `WIN`.
+    #[cfg(test)]
+    #[must_use]
+    pub fn is_decided(self) -> bool {
+        let margin = i32::try_from(crate::position_id::PositionId::COUNT).expect("small");
+        self.0.abs() >= Self::WIN.0 - margin
     }
 }
 
@@ -64,5 +69,13 @@ mod tests {
             early < Score::WIN,
             "win_at_depth should be below the base WIN score"
         );
+    }
+
+    #[test]
+    fn only_wins_and_losses_are_decided() {
+        assert!(Score::win_at_depth(225).is_decided());
+        assert!((-Score::win_at_depth(1)).is_decided());
+        assert!(!Score::new(50_000).is_decided());
+        assert!(!Score::DRAW.is_decided());
     }
 }

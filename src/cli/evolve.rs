@@ -86,11 +86,11 @@ pub struct EvolveArgs {
     pub minimax_weight: f32,
 
     /// Minimax search depths (evaluated smallest to largest with early cutoff)
-    #[arg(long, default_value = "4", num_args = 1..)]
+    #[arg(long, default_value = "4", num_args = 1.., value_parser = clap::value_parser!(u32).range(1..))]
     pub minimax_depth: Vec<u32>,
 
     /// Depth for per-move minimax scoring (enables move scoring mode when set)
-    #[arg(long)]
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
     pub minimax_scoring_depth: Option<u32>,
 
     /// Pre-place N random stones before each game (0 = start from empty board)

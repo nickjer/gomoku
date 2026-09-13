@@ -1,8 +1,6 @@
 use crate::position_id::PositionId;
 use crate::position_map::PositionArray;
 
-use super::score::Score;
-
 const W: usize = PositionId::WIDTH;
 const _: () = assert!(W <= 15, "line masks use u16; increase to u32 for W > 15");
 
@@ -19,6 +17,35 @@ pub const LINE_LENGTHS: [u8; NUM_LINES] = compute_line_lengths();
 /// For each board position, its 4 (`line_id`, `bit_index`) pairs.
 /// Order: row, column, DR diagonal, DL diagonal.
 pub const POSITION_LINES: PositionArray<[(u8, u8); 4]> = compute_position_lines();
+
+/// For each line, the board position behind each bit. Entries past a
+/// diagonal's length are never read.
+pub const LINE_CELLS: [[PositionId; W]; NUM_LINES] = compute_line_cells();
+
+/// How far along a line a stone can change what an empty cell offers: every
+/// shape that matters fits in a six-cell window holding both cells.
+pub const REACH: usize = 4;
+
+/// The cells whose line patterns a stone at one position can change: up to
+/// `REACH` cells each way along each of its four lines, with the direction
+/// index (0..4, in `POSITION_LINES` order) of the line they share.
+#[derive(Clone, Copy)]
+pub struct Neighbourhood {
+    cells: [(PositionId, u8); 8 * REACH],
+    len: u8,
+}
+
+impl Neighbourhood {
+    /// The neighbouring cells and the direction of the line shared with the
+    /// centre.
+    #[must_use]
+    pub fn cells(&self) -> &[(PositionId, u8)] {
+        &self.cells[..usize::from(self.len)]
+    }
+}
+
+/// The neighbourhood of every board position.
+pub static NEIGHBOURHOODS: PositionArray<Neighbourhood> = compute_neighbourhoods();
 
 // `TryFrom` and `Ord::min` are not stable as const traits on stable Rust, so
 // `as u8` is the only option in const fn context. All values are bounded by
@@ -79,136 +106,230 @@ const fn compute_position_lines() -> PositionArray<[(u8, u8); 4]> {
     table
 }
 
-fn popcount(bits: u16) -> usize {
-    usize::try_from(bits.count_ones()).expect("u16 popcount fits in usize")
-}
-
-/// What one line contributes to the evaluation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LineScore {
-    /// Score from Black's perspective (positive = Black advantage).
-    pub score: Score,
-    /// Whether the line holds a four for Black (index 0) or White (index 1),
-    /// meaning one more stone of that colour completes five.
-    pub has_four: [bool; 2],
-    /// Whether the line holds an open three for Black (index 0) or White
-    /// (index 1), meaning one more stone of that colour makes an open four.
-    pub has_open_three: [bool; 2],
-}
-
-/// What one colour's stones on a line are worth.
-struct SideScore {
-    score: Score,
-    has_four: bool,
-    has_open_three: bool,
-}
-
-/// Scores a single line.
-///
-/// Uses u16 shift-AND (same algorithm as the bitboard pattern counter but on
-/// single registers). Boundary handling is automatic: shifted-in zeros at
-/// bit 0 and beyond the line length act as blockers.
-pub fn score_line(black: u16, white: u16, length: u8) -> LineScore {
-    if length < 2 {
-        return LineScore {
-            score: Score::DRAW,
-            has_four: [false, false],
-            has_open_three: [false, false],
-        };
+// Inverts `POSITION_LINES`. The u8 indices are bounded by the board geometry
+// and only widen here; `usize::from` is not usable in a const fn.
+#[allow(clippy::as_conversions)]
+const fn compute_line_cells() -> [[PositionId; W]; NUM_LINES] {
+    let mut table = [[PositionId::from_index(0); W]; NUM_LINES];
+    let mut index = 0;
+    while index < PositionId::COUNT {
+        let position = PositionId::from_index(index);
+        let lines = POSITION_LINES.get(position);
+        let mut i = 0;
+        while i < lines.len() {
+            let (line_id, bit) = lines[i];
+            table[line_id as usize][bit as usize] = position;
+            i += 1;
+        }
+        index += 1;
     }
-    let valid = (1u16 << length) - 1;
-    let empty = !(black | white) & valid;
-    let black_side = score_side(black, valid, empty);
-    let white_side = score_side(white, valid, empty);
-    LineScore {
-        score: black_side.score - white_side.score,
-        has_four: [black_side.has_four, white_side.has_four],
-        has_open_three: [black_side.has_open_three, white_side.has_open_three],
-    }
+    table
 }
 
-/// A run of stones only matters if it can still become five: some 5-cell
-/// window holding the whole run must have every other cell empty. A run that
-/// fails this is dead and scores nothing, whatever its neighbours look like.
-fn score_side(own: u16, valid: u16, empty: u16) -> SideScore {
-    let c2 = own & (own >> 1);
-    let c3 = c2 & (own >> 2);
-    let c4 = c2 & (c2 >> 2);
-    let c5 = c4 & (own >> 4);
-
-    let not_preceded = !(own << 1) & valid;
-
-    let exact5 = c5 & not_preceded;
-    let exact4 = (c4 & !c5) & not_preceded;
-    let exact3 = (c3 & !c4) & not_preceded;
-    let exact2 = (c2 & !c3) & not_preceded;
-
-    // Empty cells around a run that starts at bit i, named by offset from i.
-    let empty_before_3 = empty << 3;
-    let empty_before_2 = empty << 2;
-    let empty_before_1 = empty << 1;
-    let empty_after_2 = empty >> 2;
-    let empty_after_3 = empty >> 3;
-    let empty_after_4 = empty >> 4;
-
-    // Jump fours: 4 own stones in a 5-cell window with one empty gap.
-    // Filling the gap completes 5-in-a-row, so the opponent has exactly one
-    // forced reply — semantically equivalent to a straight HALF_OPEN_FOUR.
-    // The three patterns are mutually exclusive at each bit (different gap
-    // offsets), so OR + single popcount is correct.
-    let jump_four = (own & (empty >> 1) & (c3 >> 2)) // X_XXX
-        | (c2 & (empty >> 2) & (c2 >> 3))            // XX_XX
-        | (c3 & (empty >> 3) & (own >> 4)); // XXX_X
-
-    // A four is live when an empty cell completes five.
-    let open_four = exact4 & empty_before_1 & empty_after_4;
-    let half_open_four = exact4 & (empty_before_1 ^ empty_after_4);
-
-    // A three is live when one of the three 5-cell windows holding it has its
-    // other two cells empty; `OXXX_O` fails and scores nothing. It is open when
-    // one move makes an open four: both neighbours empty and room for a fifth
-    // cell on at least one side. `O_XXX_O` has no room, so it is half-open.
-    let live_three = exact3
-        & ((empty_before_2 & empty_before_1)
-            | (empty_before_1 & empty_after_3)
-            | (empty_after_3 & empty_after_4));
-    let open_three = exact3 & empty_before_1 & empty_after_3 & (empty_before_2 | empty_after_4);
-    let half_open_three = live_three & !open_three;
-
-    // Split threes: 3 own stones in a 4-cell window with one empty gap
-    // (X_XX or XX_X). Filling the gap makes a straight four, so the window
-    // counts as a three whose openness is that of the four it makes. A window
-    // preceded or followed by an own stone is a jump four, counted above.
-    let split_three = ((own & (empty >> 1) & (c2 >> 2)) | (c2 & (empty >> 2) & (own >> 3)))
-        & not_preceded
-        & !(own >> 4);
-    let open_split_three = split_three & empty_before_1 & empty_after_4;
-    let half_open_split_three = split_three & (empty_before_1 ^ empty_after_4);
-
-    // A two is live when one of the four 5-cell windows holding it has its
-    // other three cells empty; `O_XX_O` fails and scores nothing.
-    let live_two = exact2
-        & ((empty_before_3 & empty_before_2 & empty_before_1)
-            | (empty_before_2 & empty_before_1 & empty_after_2)
-            | (empty_before_1 & empty_after_2 & empty_after_3)
-            | (empty_after_2 & empty_after_3 & empty_after_4));
-    let open_two = live_two & empty_before_1 & empty_after_2;
-    let half_open_two = live_two & (empty_before_1 ^ empty_after_2);
-
-    let score = Score::WIN * popcount(exact5)
-        + Score::OPEN_FOUR * popcount(open_four)
-        + Score::HALF_OPEN_FOUR * popcount(half_open_four)
-        + Score::HALF_OPEN_FOUR * popcount(jump_four)
-        + Score::OPEN_THREE * popcount(open_three | open_split_three)
-        + Score::HALF_OPEN_THREE * popcount(half_open_three | half_open_split_three)
-        + Score::OPEN_TWO * popcount(open_two)
-        + Score::HALF_OPEN_TWO * popcount(half_open_two);
-
-    SideScore {
-        score,
-        has_four: (open_four | half_open_four | jump_four) != 0,
-        has_open_three: (open_three | open_split_three) != 0,
+// Same widening casts as above; the direction index is 0..4.
+#[allow(clippy::cast_possible_truncation, clippy::as_conversions)]
+const fn compute_neighbourhoods() -> PositionArray<Neighbourhood> {
+    let mut table = PositionArray::new(Neighbourhood {
+        cells: [(PositionId::from_index(0), 0u8); 8 * REACH],
+        len: 0,
+    });
+    let mut index = 0;
+    while index < PositionId::COUNT {
+        let position = PositionId::from_index(index);
+        let lines = POSITION_LINES.get(position);
+        let entry = table.get_mut(position);
+        let mut direction = 0;
+        while direction < lines.len() {
+            let (line_id, bit) = lines[direction];
+            let length = LINE_LENGTHS[line_id as usize] as usize;
+            let bit = bit as usize;
+            let mut step = 1;
+            while step <= REACH {
+                if bit >= step {
+                    entry.cells[entry.len as usize] =
+                        (LINE_CELLS[line_id as usize][bit - step], direction as u8);
+                    entry.len += 1;
+                }
+                if bit + step < length {
+                    entry.cells[entry.len as usize] =
+                        (LINE_CELLS[line_id as usize][bit + step], direction as u8);
+                    entry.len += 1;
+                }
+                step += 1;
+            }
+            direction += 1;
+        }
+        index += 1;
     }
+    table
+}
+
+/// The five cells of a window, as offsets from its first cell.
+const FIVE_CELLS: u8 = 0b1_1111;
+
+/// The two end cells and the four middle cells of a six-cell window, as
+/// offsets from its first cell. An open four is empty ends around four own
+/// stones; an open three is empty ends around three own stones and a gap.
+const SIX_ENDS: u8 = 0b10_0001;
+const SIX_MIDDLE: u8 = 0b01_1110;
+
+/// Starts of the windows whose cells at the `own_at` offsets hold own stones
+/// and whose cells at the `empty_at` offsets are empty. Offsets run 0..6 so a
+/// six-cell window can be asked for as well.
+fn window_starts(own: u16, empty: u16, own_at: u8, empty_at: u8) -> u16 {
+    let mut starts = !0u16;
+    for offset in 0..6u8 {
+        if own_at & (1 << offset) != 0 {
+            starts &= own >> offset;
+        }
+        if empty_at & (1 << offset) != 0 {
+            starts &= empty >> offset;
+        }
+    }
+    starts
+}
+
+/// The cells at the `offsets` of every window in `starts`.
+fn cells_at(starts: u16, offsets: u8) -> u16 {
+    let mut cells = 0;
+    for offset in 0..6u8 {
+        if offsets & (1 << offset) != 0 {
+            cells |= starts << offset;
+        }
+    }
+    cells
+}
+
+/// Empty cells where one more own stone makes five in a row.
+#[must_use]
+pub fn completing_cells(own: u16, empty: u16) -> u16 {
+    let mut cells = 0;
+    for gap in 0..5u8 {
+        let gaps = 1u8 << gap;
+        cells |= cells_at(window_starts(own, empty, FIVE_CELLS & !gaps, gaps), gaps);
+    }
+    cells
+}
+
+/// Empty cells where one more own stone makes a four: a five-cell window
+/// left with four own stones and one empty cell, so the next stone wins.
+#[must_use]
+pub fn four_making_cells(own: u16, empty: u16) -> u16 {
+    let mut cells = 0;
+    for first in 0..5u8 {
+        for second in first + 1..5u8 {
+            let gaps = (1u8 << first) | (1u8 << second);
+            cells |= cells_at(window_starts(own, empty, FIVE_CELLS & !gaps, gaps), gaps);
+        }
+    }
+    cells
+}
+
+/// Empty cells where one more own stone makes a three: a five-cell window
+/// left with three own stones and two empty cells, one step from a four.
+#[must_use]
+pub fn three_making_cells(own: u16, empty: u16) -> u16 {
+    let mut cells = 0;
+    for first in 0..5u8 {
+        for second in first + 1..5u8 {
+            let owns = (1u8 << first) | (1u8 << second);
+            let gaps = FIVE_CELLS & !owns;
+            cells |= cells_at(window_starts(own, empty, owns, gaps), gaps);
+        }
+    }
+    cells
+}
+
+/// Empty cells where one more own stone makes a two: a five-cell window
+/// left with two own stones and three empty cells.
+#[must_use]
+pub fn two_making_cells(own: u16, empty: u16) -> u16 {
+    let mut cells = 0;
+    for only in 0..5u8 {
+        let owns = 1u8 << only;
+        let gaps = FIVE_CELLS & !owns;
+        cells |= cells_at(window_starts(own, empty, owns, gaps), gaps);
+    }
+    cells
+}
+
+/// Empty cells where one more own stone makes an open four, `_XXXX_`, which
+/// the opponent cannot stop.
+#[must_use]
+pub fn open_four_making_cells(own: u16, empty: u16) -> u16 {
+    let mut cells = 0;
+    for gap in 1..5u8 {
+        let gaps = 1u8 << gap;
+        cells |= cells_at(
+            window_starts(own, empty, SIX_MIDDLE & !gaps, SIX_ENDS | gaps),
+            gaps,
+        );
+    }
+    cells
+}
+
+/// Empty cells where one more own stone makes an open three: the middle of
+/// a six-cell window with empty ends then holds three own stones and a gap.
+#[must_use]
+pub fn open_three_making_cells(own: u16, empty: u16) -> u16 {
+    let mut cells = 0;
+    for first in 1..5u8 {
+        for second in first + 1..5u8 {
+            let gaps = (1u8 << first) | (1u8 << second);
+            cells |= cells_at(
+                window_starts(own, empty, SIX_MIDDLE & !gaps, SIX_ENDS | gaps),
+                gaps,
+            );
+        }
+    }
+    cells
+}
+
+/// Empty cells where one more own stone makes an open two: the middle of a
+/// six-cell window with empty ends then holds two own stones and two gaps,
+/// one step from an open three.
+#[must_use]
+pub fn open_two_making_cells(own: u16, empty: u16) -> u16 {
+    let mut cells = 0;
+    for only in 1..5u8 {
+        let owns = 1u8 << only;
+        let gaps = SIX_MIDDLE & !owns;
+        cells |= cells_at(window_starts(own, empty, owns, SIX_ENDS | gaps), gaps);
+    }
+    cells
+}
+
+/// Empty cells where an opponent stone stops one more own stone at `cell`
+/// from making a four on this line: the cell itself, or a cell of the
+/// five-cell window that four would fill.
+#[must_use]
+pub fn four_breaking_cells(own: u16, empty: u16, cell: u16) -> u16 {
+    let mut cells = 0;
+    let mut rest = empty;
+    while rest != 0 {
+        let candidate = rest.isolate_lowest_one();
+        rest ^= candidate;
+        if four_making_cells(own, empty & !candidate) & cell == 0 {
+            cells |= candidate;
+        }
+    }
+    cells
+}
+
+/// Empty cells where an opponent stone leaves `own` unable to make an open
+/// four anywhere on this line: the replies that answer an open three.
+#[must_use]
+pub fn defusing_cells(own: u16, empty: u16) -> u16 {
+    let mut cells = 0;
+    let mut rest = empty;
+    while rest != 0 {
+        let cell = rest.isolate_lowest_one();
+        rest ^= cell;
+        if open_four_making_cells(own, empty & !cell) == 0 {
+            cells |= cell;
+        }
+    }
+    cells
 }
 
 // Test positions are written as `W as u8` and small literal bit indices; all
@@ -225,249 +346,317 @@ mod tests {
 
     #[test]
     fn line_lengths_rows_and_columns() {
-        for i in 0..2 * W {
-            assert_eq!(LINE_LENGTHS[i], W as u8, "Line {i} should be length {W}");
+        for &length in &LINE_LENGTHS[..2 * W] {
+            assert_eq!(length, W as u8);
         }
     }
 
     #[test]
     fn line_lengths_diagonals_symmetric() {
+        // Main diagonals (k=0) have length W; corners have length 1.
         assert_eq!(LINE_LENGTHS[DR_START + W - 1], W as u8);
-        assert_eq!(LINE_LENGTHS[DL_START + W - 1], W as u8);
         assert_eq!(LINE_LENGTHS[DR_START], 1);
-        assert_eq!(LINE_LENGTHS[DR_START + 2 * (W - 1)], 1);
+        assert_eq!(LINE_LENGTHS[DR_START + 2 * W - 2], 1);
+        assert_eq!(LINE_LENGTHS[DL_START + W - 1], W as u8);
         assert_eq!(LINE_LENGTHS[DL_START], 1);
-        assert_eq!(LINE_LENGTHS[DL_START + 2 * (W - 1)], 1);
+        assert_eq!(LINE_LENGTHS[DL_START + 2 * W - 2], 1);
     }
 
     #[test]
     fn position_lines_center() {
-        let half = W / 2;
-        let lines = POSITION_LINES.get(PositionId::center());
-        assert_eq!(lines[0], (half as u8, half as u8));
-        assert_eq!(lines[1], ((COL_START + half) as u8, half as u8));
-        assert_eq!(lines[2], ((DR_START + W - 1) as u8, half as u8));
-        assert_eq!(lines[3], ((DL_START + W - 1) as u8, half as u8));
+        let center = PositionId::center();
+        let lines = POSITION_LINES.get(center);
+        let mid = W / 2;
+        assert_eq!(lines[0], (mid as u8, mid as u8));
+        assert_eq!(lines[1], ((COL_START + mid) as u8, mid as u8));
+        assert_eq!(lines[2], ((DR_START + W - 1) as u8, mid as u8));
+        assert_eq!(lines[3], ((DL_START + W - 1) as u8, mid as u8));
     }
 
     #[test]
     fn position_lines_corners() {
-        let tl = POSITION_LINES.get(pos(0, 0));
-        assert_eq!(tl[2], ((DR_START + W - 1) as u8, 0));
-        assert_eq!(tl[3], (DL_START as u8, 0));
+        let top_left = pos(0, 0);
+        let lines = POSITION_LINES.get(top_left);
+        assert_eq!(lines[0], (0, 0));
+        assert_eq!(lines[1], (COL_START as u8, 0));
+        assert_eq!(lines[2], ((DR_START + W - 1) as u8, 0));
+        assert_eq!(lines[3], (DL_START as u8, 0));
 
-        let tr = POSITION_LINES.get(pos(0, W - 1));
-        assert_eq!(tr[2], (DR_START as u8, 0));
-        assert_eq!(tr[3], ((DL_START + W - 1) as u8, 0));
-
-        let bl = POSITION_LINES.get(pos(W - 1, 0));
-        assert_eq!(bl[2], ((DR_START + 2 * (W - 1)) as u8, 0));
-        assert_eq!(bl[3], ((DL_START + W - 1) as u8, (W - 1) as u8));
+        let bottom_right = pos(W - 1, W - 1);
+        let lines = POSITION_LINES.get(bottom_right);
+        assert_eq!(lines[0], ((W - 1) as u8, (W - 1) as u8));
+        assert_eq!(lines[1], ((COL_START + W - 1) as u8, (W - 1) as u8));
+        assert_eq!(lines[2], ((DR_START + W - 1) as u8, (W - 1) as u8));
+        assert_eq!(lines[3], ((DL_START + 2 * W - 2) as u8, 0));
     }
 
     #[test]
-    fn score_line_empty_is_zero() {
-        for &len in &[1, 2, 5, 10, W as u8] {
-            assert_eq!(score_line(0, 0, len).score, Score::DRAW);
+    fn line_cells_invert_position_lines() {
+        for position in PositionId::iter() {
+            for &(line_id, bit) in POSITION_LINES.get(position) {
+                assert_eq!(
+                    LINE_CELLS[usize::from(line_id)][usize::from(bit)],
+                    position,
+                    "line {line_id} bit {bit}"
+                );
+            }
         }
     }
 
     #[test]
-    fn score_line_reports_which_colour_has_a_four() {
-        // Black: XXXX_ at 3..=6; White: OO_OO at 9..=13 (jump four).
-        let black = (1u16 << 3) | (1 << 4) | (1 << 5) | (1 << 6);
-        let white = (1u16 << 9) | (1 << 10) | (1 << 12) | (1 << 13);
-        assert_eq!(score_line(black, 0, W as u8).has_four, [true, false]);
-        assert_eq!(score_line(0, white, W as u8).has_four, [false, true]);
-        assert_eq!(score_line(black, white, W as u8).has_four, [true, true]);
+    fn neighbourhood_holds_the_cells_within_reach_on_each_line() {
+        for position in PositionId::iter() {
+            let mut expected = Vec::new();
+            for (direction, &(line_id, bit)) in POSITION_LINES.get(position).iter().enumerate() {
+                let length = usize::from(LINE_LENGTHS[usize::from(line_id)]);
+                for (other, &cell) in LINE_CELLS[usize::from(line_id)]
+                    .iter()
+                    .enumerate()
+                    .take(length)
+                {
+                    if (1..=REACH).contains(&other.abs_diff(usize::from(bit))) {
+                        expected.push((cell, direction as u8));
+                    }
+                }
+            }
+            let mut actual = NEIGHBOURHOODS.get(position).cells().to_vec();
+            actual.sort_by_key(|(cell, direction)| (cell.to_index(), *direction));
+            expected.sort_by_key(|(cell, direction)| (cell.to_index(), *direction));
+            assert_eq!(actual, expected, "neighbourhood of {position:?}");
+        }
+        assert_eq!(
+            NEIGHBOURHOODS.get(PositionId::center()).cells().len(),
+            8 * REACH
+        );
+        assert_eq!(NEIGHBOURHOODS.get(pos(0, 0)).cells().len(), 3 * REACH);
+    }
+
+    // ── Cell functions against a brute-force reading of the line ────────────
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Cell {
+        Own,
+        Other,
+        Empty,
+    }
+
+    fn masks(cells: &[Cell]) -> (u16, u16) {
+        let mut own = 0;
+        let mut empty = 0;
+        for (i, cell) in cells.iter().enumerate() {
+            match cell {
+                Cell::Own => own |= 1 << i,
+                Cell::Empty => empty |= 1 << i,
+                Cell::Other => {}
+            }
+        }
+        (own, empty)
+    }
+
+    /// Every colouring of a line of `length` cells.
+    fn all_lines(length: usize) -> impl Iterator<Item = Vec<Cell>> {
+        (0..3usize.pow(length as u32)).map(move |mut code| {
+            (0..length)
+                .map(|_| {
+                    let cell = [Cell::Own, Cell::Other, Cell::Empty][code % 3];
+                    code /= 3;
+                    cell
+                })
+                .collect()
+        })
+    }
+
+    fn random_lines(length: usize, count: usize) -> Vec<Vec<Cell>> {
+        let mut rng = fastrand::Rng::with_seed(2024);
+        (0..count)
+            .map(|_| {
+                (0..length)
+                    .map(|_| [Cell::Own, Cell::Other, Cell::Empty][rng.usize(0..3)])
+                    .collect()
+            })
+            .collect()
+    }
+
+    fn with_own_at(cells: &[Cell], index: usize) -> Vec<Cell> {
+        let mut after = cells.to_vec();
+        after[index] = Cell::Own;
+        after
+    }
+
+    fn with_other_at(cells: &[Cell], index: usize) -> Vec<Cell> {
+        let mut after = cells.to_vec();
+        after[index] = Cell::Other;
+        after
+    }
+
+    fn owns(w: &[Cell]) -> usize {
+        w.iter().filter(|&&c| c == Cell::Own).count()
+    }
+
+    fn empties(w: &[Cell]) -> usize {
+        w.iter().filter(|&&c| c == Cell::Empty).count()
+    }
+
+    /// A five-cell window with exactly `own` own stones and the rest empty.
+    fn has_five_window(cells: &[Cell], own: usize) -> bool {
+        cells
+            .windows(5)
+            .any(|w| owns(w) == own && empties(w) == 5 - own)
+    }
+
+    /// A six-cell window with empty ends whose middle has exactly `own` own
+    /// stones and the rest empty.
+    fn has_six_window(cells: &[Cell], own: usize) -> bool {
+        cells.windows(6).any(|w| {
+            w[0] == Cell::Empty
+                && w[5] == Cell::Empty
+                && owns(&w[1..5]) == own
+                && empties(&w[1..5]) == 4 - own
+        })
+    }
+
+    fn has_five(cells: &[Cell]) -> bool {
+        cells.windows(5).any(|w| owns(w) == 5)
+    }
+
+    fn has_four(cells: &[Cell]) -> bool {
+        has_five_window(cells, 4)
+    }
+
+    fn has_three(cells: &[Cell]) -> bool {
+        has_five_window(cells, 3)
+    }
+
+    fn has_two(cells: &[Cell]) -> bool {
+        has_five_window(cells, 2)
+    }
+
+    fn has_open_four(cells: &[Cell]) -> bool {
+        has_six_window(cells, 4)
+    }
+
+    fn has_open_three(cells: &[Cell]) -> bool {
+        has_six_window(cells, 3)
+    }
+
+    fn has_open_two(cells: &[Cell]) -> bool {
+        has_six_window(cells, 2)
+    }
+
+    /// The bits of the empty cells `index` for which `after_own(index)` holds.
+    fn cells_where(cells: &[Cell], after_own: impl Fn(&[Cell]) -> bool) -> u16 {
+        (0..cells.len())
+            .filter(|&i| cells[i] == Cell::Empty && after_own(&with_own_at(cells, i)))
+            .fold(0, |bits, i| bits | (1 << i))
+    }
+
+    /// Checks one cell function against the shape it claims to make. A line
+    /// that already holds the shape is skipped: there any stone "makes" it.
+    fn check_makes(
+        name: &str,
+        cells: &[Cell],
+        cell_function: fn(u16, u16) -> u16,
+        makes: fn(&[Cell]) -> bool,
+    ) {
+        if makes(cells) {
+            return;
+        }
+        let (own, empty) = masks(cells);
+        assert_eq!(
+            cell_function(own, empty),
+            cells_where(cells, makes),
+            "{name} of {own:#b}/{empty:#b}"
+        );
+    }
+
+    fn check_cells_against_oracle(cells: &[Cell]) {
+        // A line with five is a finished game; the search never asks about it.
+        if has_five(cells) {
+            return;
+        }
+        check_makes("completing", cells, completing_cells, has_five);
+        check_makes("four-making", cells, four_making_cells, has_four);
+        check_makes("three-making", cells, three_making_cells, has_three);
+        check_makes("two-making", cells, two_making_cells, has_two);
+        check_makes(
+            "open-four-making",
+            cells,
+            open_four_making_cells,
+            has_open_four,
+        );
+        check_makes(
+            "open-three-making",
+            cells,
+            open_three_making_cells,
+            has_open_three,
+        );
+        check_makes(
+            "open-two-making",
+            cells,
+            open_two_making_cells,
+            has_open_two,
+        );
+
+        if !has_open_four(cells) {
+            let (own, empty) = masks(cells);
+            let expected_defusers = (0..cells.len())
+                .filter(|&i| {
+                    cells[i] == Cell::Empty
+                        && cells_where(&with_other_at(cells, i), has_open_four) == 0
+                })
+                .fold(0, |bits, i| bits | (1 << i));
+            assert_eq!(
+                defusing_cells(own, empty),
+                expected_defusers,
+                "defusing cells of {own:#b}/{empty:#b}"
+            );
+        }
     }
 
     #[test]
-    fn score_line_dead_four_is_not_a_four() {
-        // OXXXXO: no empty cell completes five.
-        let black = (1u16 << 4) | (1 << 5) | (1 << 6) | (1 << 7);
-        let white = (1u16 << 3) | (1 << 8);
-        let line = score_line(black, white, W as u8);
-        assert_eq!(line.has_four, [false, false]);
-        assert_eq!(line.score, Score::DRAW);
+    fn cell_functions_match_brute_force_on_every_short_line() {
+        for length in 1..=9 {
+            for cells in all_lines(length) {
+                check_cells_against_oracle(&cells);
+            }
+        }
     }
 
     #[test]
-    fn score_line_open_three() {
-        let own = (1u16 << 5) | (1u16 << 6) | (1u16 << 7);
-        assert_eq!(score_one_side(own, 0, W as u8), Score::OPEN_THREE);
+    fn cell_functions_match_brute_force_on_random_full_lines() {
+        for cells in random_lines(W, 20_000) {
+            check_cells_against_oracle(&cells);
+        }
     }
 
     #[test]
-    fn score_line_half_open_at_edge() {
-        let own = 0b111u16;
-        assert_eq!(score_one_side(own, 0, W as u8), Score::HALF_OPEN_THREE);
-    }
-
-    #[test]
-    fn score_line_closed_three() {
+    fn four_breaking_cells_are_the_cell_and_the_window_it_would_fill() {
+        // O X X X e _ : the four at `e` (bit 8) is broken by taking e or the
+        // cell that would complete it (bit 9); nothing else on the line helps.
         let own: u16 = (1 << 5) | (1 << 6) | (1 << 7);
-        let opp: u16 = (1 << 4) | (1 << 8);
-        assert_eq!(score_one_side(own, opp, W as u8), Score::DRAW);
-    }
+        let other: u16 = 1 << 4;
+        let empty = !(own | other) & ((1 << W) - 1);
+        assert_eq!(four_breaking_cells(own, empty, 1 << 8), (1 << 8) | (1 << 9));
 
-    fn score_one_side(own: u16, opp: u16, length: u8) -> Score {
-        let valid = (1u16 << length) - 1;
-        let empty = !(own | opp) & valid;
-        score_side(own, valid, empty).score
+        // X _ X X e: the gap (bit 5) breaks the jump four too.
+        let own: u16 = (1 << 4) | (1 << 6) | (1 << 7);
+        let other: u16 = (1 << 3) | (1 << 9);
+        let empty = !(own | other) & ((1 << W) - 1);
+        assert_eq!(four_breaking_cells(own, empty, 1 << 8), (1 << 5) | (1 << 8));
     }
 
     #[test]
-    fn score_line_three_without_room_for_an_open_four_is_half_open() {
-        // O_XXX_O: both neighbours empty, but either four it makes is blocked.
+    fn defusing_cells_of_a_one_sided_open_three_include_the_far_cell() {
+        // O_XXX__: the open four can only grow rightwards, so the far right
+        // cell stops it just like the two neighbours do.
         let own: u16 = (1 << 5) | (1 << 6) | (1 << 7);
-        let opp: u16 = (1 << 3) | (1 << 9);
-        assert_eq!(score_one_side(own, opp, W as u8), Score::HALF_OPEN_THREE);
-    }
+        let other: u16 = 1 << 3;
+        let empty = !(own | other) & ((1 << W) - 1);
+        assert_eq!(defusing_cells(own, empty), (1 << 4) | (1 << 8) | (1 << 9));
 
-    #[test]
-    fn score_line_three_with_room_on_one_side_is_open() {
-        // O_XXX__: extending right makes _XXXX_.
-        let own: u16 = (1 << 5) | (1 << 6) | (1 << 7);
-        let opp: u16 = 1 << 3;
-        assert_eq!(score_one_side(own, opp, W as u8), Score::OPEN_THREE);
-    }
-
-    #[test]
-    fn score_line_split_three_with_both_ends_open_is_open() {
-        // _X_XX_: filling the gap makes _XXXX_. The XX pair also counts as an
-        // open two, matching how jump fours keep their inner twos.
-        let own: u16 = (1 << 4) | (1 << 6) | (1 << 7);
-        assert_eq!(
-            score_one_side(own, 0, W as u8),
-            Score::OPEN_THREE + Score::OPEN_TWO
-        );
-    }
-
-    #[test]
-    fn score_line_split_three_with_one_end_blocked_is_half_open() {
-        // OX_XX_: filling the gap makes OXXXX_, a forcing four.
-        let own: u16 = (1 << 4) | (1 << 6) | (1 << 7);
-        let opp: u16 = 1 << 3;
-        assert_eq!(
-            score_one_side(own, opp, W as u8),
-            Score::HALF_OPEN_THREE + Score::OPEN_TWO
-        );
-    }
-
-    #[test]
-    fn score_line_split_three_with_both_ends_blocked_is_not_a_three() {
-        // OX_XXO: filling the gap makes a dead four, and the XX pair has no
-        // 5-cell window left either, so the whole thing scores nothing.
-        let own: u16 = (1 << 4) | (1 << 6) | (1 << 7);
-        let opp: u16 = (1 << 3) | (1 << 8);
-        assert_eq!(score_one_side(own, opp, W as u8), Score::DRAW);
-    }
-
-    #[test]
-    fn score_line_three_that_can_only_make_a_dead_four_is_nothing() {
-        // OXXX_O: the only extension gives OXXXXO, which cannot become five.
-        let own: u16 = (1 << 4) | (1 << 5) | (1 << 6);
-        let opp: u16 = (1 << 3) | (1 << 8);
-        assert_eq!(score_one_side(own, opp, W as u8), Score::DRAW);
-    }
-
-    #[test]
-    fn score_line_three_with_one_open_end_and_room_is_half_open() {
-        // OXXX__: extending right gives OXXXX_, a live four.
-        let own: u16 = (1 << 4) | (1 << 5) | (1 << 6);
-        let opp: u16 = 1 << 3;
-        assert_eq!(score_one_side(own, opp, W as u8), Score::HALF_OPEN_THREE);
-    }
-
-    #[test]
-    fn score_line_two_without_a_five_cell_window_is_nothing() {
-        // O_XX_O and OXX_O: no 5-cell window holds both stones with three
-        // empty cells, so neither pair can ever become five.
-        let own: u16 = (1 << 5) | (1 << 6);
-        assert_eq!(
-            score_one_side(own, (1 << 3) | (1 << 8), W as u8),
-            Score::DRAW
-        );
-        assert_eq!(
-            score_one_side(own, (1 << 4) | (1 << 8), W as u8),
-            Score::DRAW
-        );
-    }
-
-    #[test]
-    fn score_line_two_with_room_on_one_side_is_half_open() {
-        // OXX___: the window right of the pair is free.
-        let own: u16 = (1 << 5) | (1 << 6);
-        let opp: u16 = 1 << 4;
-        assert_eq!(score_one_side(own, opp, W as u8), Score::HALF_OPEN_TWO);
-    }
-
-    #[test]
-    fn score_line_reports_which_colour_has_an_open_three() {
-        // Black: _XXX_ with room at 3..=5; White: _O_OO_ split three at 9..=12.
-        let black = (1u16 << 3) | (1 << 4) | (1 << 5);
-        let white = (1u16 << 9) | (1 << 11) | (1 << 12);
-        assert_eq!(score_line(black, 0, W as u8).has_open_three, [true, false]);
-        assert_eq!(score_line(0, white, W as u8).has_open_three, [false, true]);
-
-        // O_XXX_O is only half-open, so it does not count.
-        let hemmed_black = (1u16 << 5) | (1 << 6) | (1 << 7);
-        let hemming_white = (1u16 << 3) | (1 << 9);
-        assert_eq!(
-            score_line(hemmed_black, hemming_white, W as u8).has_open_three,
-            [false, false]
-        );
-    }
-
-    #[test]
-    fn score_line_jump_four_x_xxx() {
-        // X_XXX: own at positions 3, 5, 6, 7 (gap at 4)
-        // Also detects open three at 5,6,7 (open ends at 4 and 8).
-        let own = (1 << 3) | (1 << 5) | (1 << 6) | (1 << 7);
-        assert_eq!(
-            score_one_side(own, 0, W as u8),
-            Score::HALF_OPEN_FOUR + Score::OPEN_THREE
-        );
-    }
-
-    #[test]
-    fn score_line_jump_four_xx_xx() {
-        // XX_XX: own at positions 3, 4, 6, 7 (gap at 5)
-        // Also detects two open twos at (3,4) and (6,7).
-        let own = (1 << 3) | (1 << 4) | (1 << 6) | (1 << 7);
-        assert_eq!(
-            score_one_side(own, 0, W as u8),
-            Score::HALF_OPEN_FOUR + Score::OPEN_TWO * 2
-        );
-    }
-
-    #[test]
-    fn score_line_jump_four_xxx_x() {
-        // XXX_X: own at positions 3, 4, 5, 7 (gap at 6)
-        // Also detects open three at 3,4,5 (open ends at 2 and 6).
-        let own = (1 << 3) | (1 << 4) | (1 << 5) | (1 << 7);
-        assert_eq!(
-            score_one_side(own, 0, W as u8),
-            Score::HALF_OPEN_FOUR + Score::OPEN_THREE
-        );
-    }
-
-    #[test]
-    fn score_line_jump_four_blocked_by_opponent() {
-        // XX_XX with opponent stone in the gap — no jump four.
-        // Splits into two half-open twos (each blocked on the gap side).
-        let own = (1 << 3) | (1 << 4) | (1 << 6) | (1 << 7);
-        let opp = 1 << 5;
-        assert_eq!(score_one_side(own, opp, W as u8), Score::HALF_OPEN_TWO * 2);
-    }
-
-    #[test]
-    fn score_line_jump_four_on_short_line() {
-        // XX_XX spanning the entire 5-cell line (positions 0,1,_,3,4).
-        // Neither pair has a 5-cell window of its own, so only the jump four
-        // scores.
-        let own = (1 << 0) | (1 << 1) | (1 << 3) | (1 << 4);
-        assert_eq!(score_one_side(own, 0, 5), Score::HALF_OPEN_FOUR);
+        // __XXX__: only the neighbours; a stone two away still leaves the
+        // other side room for _XXXX_.
+        let empty = !own & ((1 << W) - 1);
+        assert_eq!(defusing_cells(own, empty), (1 << 4) | (1 << 8));
     }
 }

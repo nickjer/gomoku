@@ -111,36 +111,36 @@ mod tests {
     #[test]
     fn exact_bound_round_trips() {
         let mut tt = TranspositionTable::new();
-        tt.store(HASH_A, 4, Score::OPEN_THREE, Bound::Exact);
+        tt.store(HASH_A, 4, Score::new(300), Bound::Exact);
         let (score, bound) = tt.probe(HASH_A, 4).expect("should hit");
-        assert_eq!(score, Score::OPEN_THREE);
+        assert_eq!(score, Score::new(300));
         assert_eq!(bound, Bound::Exact);
     }
 
     #[test]
     fn lower_bound_round_trips() {
         let mut tt = TranspositionTable::new();
-        tt.store(HASH_A, 3, Score::HALF_OPEN_FOUR, Bound::Lower);
+        tt.store(HASH_A, 3, Score::new(1_500), Bound::Lower);
         let (score, bound) = tt.probe(HASH_A, 3).expect("should hit");
-        assert_eq!(score, Score::HALF_OPEN_FOUR);
+        assert_eq!(score, Score::new(1_500));
         assert_eq!(bound, Bound::Lower);
     }
 
     #[test]
     fn upper_bound_round_trips() {
         let mut tt = TranspositionTable::new();
-        tt.store(HASH_A, 2, Score::OPEN_TWO, Bound::Upper);
+        tt.store(HASH_A, 2, Score::new(20), Bound::Upper);
         let (score, bound) = tt.probe(HASH_A, 2).expect("should hit");
-        assert_eq!(score, Score::OPEN_TWO);
+        assert_eq!(score, Score::new(20));
         assert_eq!(bound, Bound::Upper);
     }
 
     #[test]
     fn negative_score_round_trips() {
         let mut tt = TranspositionTable::new();
-        tt.store(HASH_A, 1, -Score::OPEN_FOUR, Bound::Exact);
+        tt.store(HASH_A, 1, -Score::new(50_000), Bound::Exact);
         let (score, _) = tt.probe(HASH_A, 1).expect("should hit");
-        assert_eq!(score, -Score::OPEN_FOUR);
+        assert_eq!(score, -Score::new(50_000));
     }
 
     #[test]
@@ -170,17 +170,17 @@ mod tests {
         // the top 32 bits (different keys), so storing one must not satisfy a probe
         // for the other.
         let mut tt = TranspositionTable::new();
-        tt.store(HASH_A, 4, Score::OPEN_THREE, Bound::Exact);
+        tt.store(HASH_A, 4, Score::new(300), Bound::Exact);
         assert!(tt.probe(HASH_B, 4).is_none());
     }
 
     #[test]
     fn replace_always_overwrites_previous_entry() {
         let mut tt = TranspositionTable::new();
-        tt.store(HASH_A, 4, Score::OPEN_THREE, Bound::Lower);
-        tt.store(HASH_A, 6, Score::OPEN_FOUR, Bound::Exact);
+        tt.store(HASH_A, 4, Score::new(300), Bound::Lower);
+        tt.store(HASH_A, 6, Score::new(50_000), Bound::Exact);
         let (score, bound) = tt.probe(HASH_A, 6).expect("should hit");
-        assert_eq!(score, Score::OPEN_FOUR);
+        assert_eq!(score, Score::new(50_000));
         assert_eq!(bound, Bound::Exact);
     }
 

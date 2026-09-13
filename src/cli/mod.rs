@@ -11,7 +11,7 @@ pub use play::{PlayArgs, run_play};
 
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use tracing::info;
 
 use crate::board::Board;
@@ -69,6 +69,9 @@ pub fn load_strategy(specifier: &Path) -> Result<Box<dyn Strategy>> {
     }
     if let Some(depth_str) = specifier_str.strip_prefix("minimax:") {
         let depth: u32 = depth_str.parse().context("Invalid minimax depth")?;
+        if depth == 0 {
+            bail!("Minimax depth must be at least 1");
+        }
         return Ok(Box::new(MinimaxStrategy::new(depth)));
     }
     Ok(Box::new(read_strategy_file(specifier)?))

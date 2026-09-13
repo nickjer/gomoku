@@ -49,6 +49,7 @@ const NOT_LAST_2_COLS: BitBoard = BitBoard::from_raw(build_exclude_columns_mask(
     (1 << (WIDTH - 1)) | (1 << (WIDTH - 2)),
 ));
 // Shift by 3: exclude last 3 columns.
+#[cfg(test)]
 const NOT_LAST_3_COLS: BitBoard = BitBoard::from_raw(build_exclude_columns_mask(
     (1 << (WIDTH - 1)) | (1 << (WIDTH - 2)) | (1 << (WIDTH - 3)),
 ));
@@ -63,6 +64,7 @@ const NOT_FIRST_COL: BitBoard = BitBoard::from_raw(build_exclude_columns_mask(1)
 // Shift by 2: exclude first 2 columns.
 const NOT_FIRST_2_COLS: BitBoard = BitBoard::from_raw(build_exclude_columns_mask(1 | (1 << 1)));
 // Shift by 3: exclude first 3 columns.
+#[cfg(test)]
 const NOT_FIRST_3_COLS: BitBoard =
     BitBoard::from_raw(build_exclude_columns_mask(1 | (1 << 1) | (1 << 2)));
 // Shift by 4: exclude first 4 columns.
@@ -230,6 +232,10 @@ fn check_direction(
 /// five-in-a-row. Computed as a batch operation: for each direction, finds
 /// lines with exactly four stones and one gap, then maps each gap back to
 /// its board position.
+///
+/// Only tests use it, as an independent check of the line-based threat
+/// cells the search relies on.
+#[cfg(test)]
 pub fn winning_threats(board: BitBoard) -> BitBoard {
     // Horizontal: stride 1, col delta +1
     threat_direction(
@@ -272,6 +278,7 @@ pub const PROXIMITY_RADIUS: usize = 2;
 /// For each possible alignment of 5 consecutive positions along the given
 /// stride, identifies where exactly 4 are occupied and maps the gap back
 /// to its actual board position.
+#[cfg(test)]
 fn threat_direction(
     board: BitBoard,
     stride: usize,

@@ -1,4 +1,5 @@
 mod lines;
+mod patterns;
 mod score;
 mod search;
 mod search_state;

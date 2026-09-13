@@ -445,8 +445,9 @@ mod tests {
     fn proximity_bonus_applied_near_stones_not_at_corner() {
         use crate::position::Position;
 
-        // With one Black stone the depth signal is flat, so any score difference
-        // comes from the proximity bonus alone.
+        // A White stone next to the Black one also takes cells away from
+        // Black, so the nearby move already scores better before the bonus;
+        // the bonus must keep it that way.
         let board_before_black = Board::new();
         let black_pos = PositionId::center();
         let mut board_after_black = board_before_black;
@@ -462,15 +463,10 @@ mod tests {
         let _ = corner_observer.on_move(Stone::White, pos(0, 0), &board_after_black);
 
         assert!(
-            nearby_observer.score_sum > corner_observer.score_sum,
-            "nearby ({}) should beat corner ({}) when depth signal is flat",
+            nearby_observer.score_sum - corner_observer.score_sum >= PROXIMITY_BONUS,
+            "nearby ({}) should beat corner ({}) by at least the bonus",
             nearby_observer.score_sum,
             corner_observer.score_sum,
-        );
-        // The gap equals exactly PROXIMITY_BONUS because the deltas are identical.
-        assert_eq!(
-            nearby_observer.score_sum - corner_observer.score_sum,
-            PROXIMITY_BONUS,
         );
     }
 
