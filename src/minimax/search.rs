@@ -345,6 +345,10 @@ impl<'a> Search<'a> {
     /// four has already won, and a side that must block or prevent one gets
     /// its forced replies searched even when the depth has run out. Only a
     /// position with nothing forced is a leaf then.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one linear pass over the node reads better than helpers with one caller"
+    )]
     fn negamax(
         &mut self,
         state: &mut SearchState,
@@ -394,19 +398,21 @@ impl<'a> Search<'a> {
 
         // A leaf's value depends on its parent, so only nodes with depth to
         // search below them, whose value is the position's own, use the table.
+        // A shallower entry's best move is still the first move to try.
+        let mut hash_move = None;
         if depth > Depth::ZERO
-            && let Some((tt_score, bound)) = self
-                .tt
-                .probe(state.hash(), depth.thirds())
-                .and_then(|probe| probe.value)
+            && let Some(probe) = self.tt.probe(state.hash(), depth.thirds())
         {
-            match bound {
-                Bound::Exact => return tt_score,
-                Bound::Lower => alpha = alpha.max(tt_score),
-                Bound::Upper => beta = beta.min(tt_score),
-            }
-            if alpha >= beta {
-                return beta;
+            hash_move = probe.best_move;
+            if let Some((tt_score, bound)) = probe.value {
+                match bound {
+                    Bound::Exact => return tt_score,
+                    Bound::Lower => alpha = alpha.max(tt_score),
+                    Bound::Upper => beta = beta.min(tt_score),
+                }
+                if alpha >= beta {
+                    return beta;
+                }
             }
         }
 
@@ -426,18 +432,23 @@ impl<'a> Search<'a> {
         }
         let raw = state.evaluate(stone);
 
-        // Try killer moves first among the chosen moves.
+        // Among the chosen moves, try the table's best move first, then the
+        // killer moves.
         let mut priority_end = candidates.forced;
-        for killer in self.killers.get(depth).iter().flatten() {
+        for preferred in hash_move
+            .iter()
+            .chain(self.killers.get(depth).iter().flatten())
+        {
             if let Some(idx) = buf[priority_end..searched]
                 .iter()
-                .position(|&pos| pos == *killer)
+                .position(|&pos| pos == *preferred)
             {
                 buf.swap(priority_end, priority_end + idx);
                 priority_end += 1;
             }
         }
 
+        let mut best_move = None;
         for (i, &candidate) in buf[..searched].iter().enumerate() {
             let is_forced = i < candidates.forced;
             // A counter-four against an unstoppable four in the making is
@@ -458,16 +469,23 @@ impl<'a> Search<'a> {
                     self.killers.put(depth, candidate);
                 }
                 if depth > Depth::ZERO {
-                    self.tt
-                        .store(state.hash(), depth.thirds(), beta, Bound::Lower, None);
+                    self.tt.store(
+                        state.hash(),
+                        depth.thirds(),
+                        beta,
+                        Bound::Lower,
+                        Some(candidate),
+                    );
                 }
                 return beta;
             }
             if score > alpha {
                 alpha = score;
+                best_move = Some(candidate);
             }
         }
 
+        // Every move failing low leaves no move worth trying first.
         let bound = if alpha > alpha_orig {
             Bound::Exact
         } else {
@@ -475,7 +493,7 @@ impl<'a> Search<'a> {
         };
         if depth > Depth::ZERO {
             self.tt
-                .store(state.hash(), depth.thirds(), alpha, bound, None);
+                .store(state.hash(), depth.thirds(), alpha, bound, best_move);
         }
         alpha
     }
