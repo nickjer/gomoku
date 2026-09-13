@@ -1,6 +1,5 @@
 mod freestyle;
 mod observer;
-mod random_opening;
 // mod standard;  // TODO: Overlines (6+) don't count as a win
 // mod renju;     // TODO: Forbidden moves for Black (3-3, 4-4, overlines)
 // mod caro;      // TODO: Row must not be blocked at both ends to win
@@ -9,10 +8,10 @@ use enum_dispatch::enum_dispatch;
 
 pub use freestyle::Freestyle;
 pub use observer::{GameObserver, NoOpObserver};
-pub use random_opening::RandomOpening;
 
 use crate::board::Board;
-use crate::match_result::MatchResult;
+use crate::outcome::Outcome;
+#[cfg(test)]
 use crate::stone::Stone;
 use crate::strategy::Strategy;
 
@@ -27,7 +26,8 @@ pub trait Play {
     /// before it is placed.
     ///
     /// Returns `None` if the observer breaks early (e.g. move limit reached). On return,
-    /// `board` reflects the final state whether the game finished naturally or was aborted.
+    /// `board` reflects the final state whether the game finished naturally or was aborted,
+    /// so the caller can read the move count and render the position from it.
     fn play_from(
         &self,
         board: &mut Board,
@@ -35,7 +35,7 @@ pub trait Play {
         white_strategy: &dyn Strategy,
         observer: &mut dyn GameObserver,
         rng: &mut fastrand::Rng,
-    ) -> Option<MatchResult>;
+    ) -> Option<Outcome>;
 
     /// Plays a complete game from an empty board with no observer hooks.
     fn play(
@@ -43,7 +43,7 @@ pub trait Play {
         black_strategy: &dyn Strategy,
         white_strategy: &dyn Strategy,
         rng: &mut fastrand::Rng,
-    ) -> MatchResult {
+    ) -> Outcome {
         let mut board = Board::new();
         self.play_from(
             &mut board,
@@ -54,45 +54,6 @@ pub trait Play {
         )
         .expect("NoOpObserver never breaks early")
     }
-}
-
-/// Shared game loop used by all game variants. Drives alternating play until the board is
-/// finished or the observer breaks early. Takes `&mut Board` so callers retain the board
-/// state after an early exit.
-pub fn run_from(
-    board: &mut Board,
-    black_strategy: &dyn Strategy,
-    white_strategy: &dyn Strategy,
-    observer: &mut dyn GameObserver,
-    rng: &mut fastrand::Rng,
-) -> Option<MatchResult> {
-    while !board.is_finished() {
-        let (stone, strategy): (Stone, &dyn Strategy) = if board.move_count().is_multiple_of(2) {
-            (Stone::Black, black_strategy)
-        } else {
-            (Stone::White, white_strategy)
-        };
-
-        let position = strategy.choose_move(stone, board, rng);
-
-        if observer.on_move(stone, position, board).is_break() {
-            return None;
-        }
-
-        board
-            .place(position, stone)
-            .expect("strategy returned invalid move");
-    }
-
-    let outcome = board.outcome().expect("game finished without outcome");
-
-    Some(MatchResult::new(
-        outcome,
-        black_strategy.label().to_string(),
-        white_strategy.label().to_string(),
-        board.move_count(),
-        board.to_string(),
-    ))
 }
 
 /// Test game: panics if `play_from` is called.
@@ -109,7 +70,7 @@ impl Play for Stub {
         _white_strategy: &dyn Strategy,
         _observer: &mut dyn GameObserver,
         _rng: &mut fastrand::Rng,
-    ) -> Option<MatchResult> {
+    ) -> Option<Outcome> {
         panic!("Stub game should not be called")
     }
 }
@@ -159,7 +120,7 @@ impl Play for Scripted {
         white_strategy: &dyn Strategy,
         _observer: &mut dyn GameObserver,
         _rng: &mut fastrand::Rng,
-    ) -> Option<MatchResult> {
+    ) -> Option<Outcome> {
         let black_label = black_strategy.label();
         let white_label = white_strategy.label();
         let key = Self::make_key(black_label, white_label);
@@ -169,20 +130,12 @@ impl Play for Scripted {
             .get(&key)
             .unwrap_or_else(|| panic!("No outcome defined for {key:?}"));
 
-        let outcome = match winner {
-            None => crate::outcome::Outcome::Draw,
-            Some(label) if *label == black_label => crate::outcome::Outcome::BlackWins,
-            Some(label) if *label == white_label => crate::outcome::Outcome::WhiteWins,
+        Some(match winner {
+            None => Outcome::Draw,
+            Some(label) if *label == black_label => Outcome::Win(Stone::Black),
+            Some(label) if *label == white_label => Outcome::Win(Stone::White),
             Some(label) => panic!("Invalid winner label: {label}"),
-        };
-
-        Some(MatchResult::new(
-            outcome,
-            black_label.to_string(),
-            white_label.to_string(),
-            0,
-            String::new(),
-        ))
+        })
     }
 }
 
@@ -191,7 +144,6 @@ impl Play for Scripted {
 #[derive(Debug, Clone)]
 pub enum Game {
     Freestyle,
-    RandomOpening,
     #[cfg(test)]
     Stub,
     #[cfg(test)]
@@ -205,7 +157,7 @@ impl Default for Game {
     fn default() -> Self {
         #[cfg(not(test))]
         {
-            Freestyle.into()
+            Freestyle::default().into()
         }
         #[cfg(test)]
         {
@@ -219,7 +171,6 @@ mod tests {
     use std::ops::ControlFlow;
 
     use super::*;
-    use crate::outcome::Outcome;
     use crate::position_id::PositionId;
     use crate::test_utils::{ScriptedStrategy, StubStrategy};
 
@@ -256,12 +207,12 @@ mod tests {
     #[test]
     fn freestyle_variant_plays_game() {
         let (black, white) = ScriptedStrategy::black_wins();
-        let game: Game = Freestyle.into();
+        let game: Game = Freestyle::default().into();
         let mut rng = fastrand::Rng::new();
 
-        let result = game.play(&black, &white, &mut rng);
+        let outcome = game.play(&black, &white, &mut rng);
 
-        assert_eq!(result.outcome(), Outcome::BlackWins);
+        assert_eq!(outcome, Outcome::Win(Stone::Black));
     }
 
     #[test]
@@ -271,9 +222,9 @@ mod tests {
         let b = StubStrategy::new("b");
         let mut rng = fastrand::Rng::new();
 
-        let result = game.play(&a, &b, &mut rng);
+        let outcome = game.play(&a, &b, &mut rng);
 
-        assert_eq!(result.outcome(), Outcome::BlackWins);
+        assert_eq!(outcome, Outcome::Win(Stone::Black));
     }
 
     #[test]
@@ -283,9 +234,9 @@ mod tests {
         let b = StubStrategy::new("b");
         let mut rng = fastrand::Rng::new();
 
-        let result = game.play(&a, &b, &mut rng);
+        let outcome = game.play(&a, &b, &mut rng);
 
-        assert_eq!(result.outcome(), Outcome::Draw);
+        assert_eq!(outcome, Outcome::Draw);
     }
 
     #[test]
@@ -308,7 +259,7 @@ mod tests {
         let mut board = Board::new();
         let mut rng = fastrand::Rng::new();
 
-        Freestyle.play_from(&mut board, &black, &white, &mut capture, &mut rng);
+        Freestyle::default().play_from(&mut board, &black, &white, &mut capture, &mut rng);
 
         assert_eq!(capture.captured_move_count, Some(0));
     }
@@ -319,7 +270,7 @@ mod tests {
         let mut board = Board::new();
         let mut rng = fastrand::Rng::new();
 
-        Freestyle.play_from(&mut board, &black, &white, &mut NoOpObserver, &mut rng);
+        Freestyle::default().play_from(&mut board, &black, &white, &mut NoOpObserver, &mut rng);
 
         assert!(board.is_finished());
     }
@@ -331,7 +282,8 @@ mod tests {
         let mut rng = fastrand::Rng::new();
         let mut observer = BreakAfter { remaining: 2 };
 
-        let result = Freestyle.play_from(&mut board, &black, &white, &mut observer, &mut rng);
+        let result =
+            Freestyle::default().play_from(&mut board, &black, &white, &mut observer, &mut rng);
 
         assert!(result.is_none());
         assert_eq!(board.move_count(), 2);

@@ -1,14 +1,20 @@
 use tracing::instrument;
 
 use crate::board::Board;
-use crate::match_result::MatchResult;
+use crate::outcome::Outcome;
+use crate::stone::Stone;
 use crate::strategy::Strategy;
 
-use super::{GameObserver, Play, run_from};
+use super::{GameObserver, Play};
 
 /// Freestyle Gomoku: 5+ in a row wins, no restrictions.
+///
+/// `opening_moves` stones are placed on random empty positions, alternating Black/White,
+/// before the strategies begin play. Zero means the strategies start from the board as given.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct Freestyle;
+pub struct Freestyle {
+    pub opening_moves: u32,
+}
 
 impl Play for Freestyle {
     #[instrument(level = "debug", skip_all, fields(black = black_strategy.label(), white = white_strategy.label()))]
@@ -19,87 +25,166 @@ impl Play for Freestyle {
         white_strategy: &dyn Strategy,
         observer: &mut dyn GameObserver,
         rng: &mut fastrand::Rng,
-    ) -> Option<MatchResult> {
-        run_from(board, black_strategy, white_strategy, observer, rng)
+    ) -> Option<Outcome> {
+        // A large opening could finish the game by itself; stop placing if it does.
+        for _ in 0..self.opening_moves {
+            if board.is_finished() {
+                break;
+            }
+            let empty = board.empty_position_ids();
+            let position = empty[rng.usize(0..empty.len())];
+            board
+                .place(position, board.stone_to_move())
+                .expect("position chosen from empty list");
+        }
+
+        while !board.is_finished() {
+            let stone = board.stone_to_move();
+            let strategy = match stone {
+                Stone::Black => black_strategy,
+                Stone::White => white_strategy,
+            };
+
+            let position = strategy.choose_move(stone, board, rng);
+
+            if observer.on_move(stone, position, board).is_break() {
+                return None;
+            }
+
+            board
+                .place(position, stone)
+                .expect("strategy returned invalid move");
+        }
+
+        Some(board.outcome().expect("game finished without outcome"))
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::ops::ControlFlow;
+
     use super::*;
-    use crate::outcome::Outcome;
+    use crate::game::NoOpObserver;
+    use crate::position::Position;
+    use crate::position_id::PositionId;
     use crate::test_utils::ScriptedStrategy;
 
-    #[test]
-    fn returns_match_result_with_black_wins() {
-        let (black, white) = ScriptedStrategy::black_wins();
-        let game = Freestyle;
-        let mut rng = fastrand::Rng::new();
+    /// Observer that breaks on the very first call, used to isolate the opening stones.
+    struct BreakImmediately;
 
-        let result = game.play(&black, &white, &mut rng);
-
-        assert_eq!(result.outcome(), Outcome::BlackWins);
+    impl GameObserver for BreakImmediately {
+        fn on_move(&mut self, _: Stone, _: PositionId, _: &Board) -> ControlFlow<()> {
+            ControlFlow::Break(())
+        }
     }
 
     #[test]
-    fn returns_match_result_with_white_wins() {
+    fn black_five_in_a_row_wins() {
+        let (black, white) = ScriptedStrategy::black_wins();
+        let mut rng = fastrand::Rng::new();
+
+        let outcome = Freestyle::default().play(&black, &white, &mut rng);
+
+        assert_eq!(outcome, Outcome::Win(Stone::Black));
+    }
+
+    #[test]
+    fn white_five_in_a_row_wins() {
         let (black, white) = ScriptedStrategy::white_wins();
-        let game = Freestyle;
         let mut rng = fastrand::Rng::new();
 
-        let result = game.play(&black, &white, &mut rng);
+        let outcome = Freestyle::default().play(&black, &white, &mut rng);
 
-        assert_eq!(result.outcome(), Outcome::WhiteWins);
+        assert_eq!(outcome, Outcome::Win(Stone::White));
     }
 
     #[test]
-    fn returns_match_result_with_draw() {
+    fn full_board_without_five_is_a_draw() {
         let (black, white) = ScriptedStrategy::draw();
-        let game = Freestyle;
         let mut rng = fastrand::Rng::new();
 
-        let result = game.play(&black, &white, &mut rng);
+        let outcome = Freestyle::default().play(&black, &white, &mut rng);
 
-        assert_eq!(result.outcome(), Outcome::Draw);
+        assert_eq!(outcome, Outcome::Draw);
     }
 
     #[test]
-    fn turn_count_is_correct() {
+    fn board_holds_every_move_after_play() {
         let (black, white) = ScriptedStrategy::black_wins();
-        let game = Freestyle;
+        let mut board = Board::new();
         let mut rng = fastrand::Rng::new();
 
-        let result = game.play(&black, &white, &mut rng);
+        Freestyle::default().play_from(&mut board, &black, &white, &mut NoOpObserver, &mut rng);
 
         // Black plays 5 moves, white plays 4 moves = 9 total
-        assert_eq!(result.turn_count(), 9);
+        assert_eq!(board.move_count(), 9);
     }
 
     #[test]
-    fn captures_strategy_labels() {
-        let black = ScriptedStrategy::with_positions(
-            "black_label",
-            &[(0, 0), (0, 1), (0, 2), (0, 3), (0, 4)],
-        );
-        let white =
-            ScriptedStrategy::with_positions("white_label", &[(1, 0), (1, 1), (1, 2), (1, 3)]);
-        let game = Freestyle;
-        let mut rng = fastrand::Rng::new();
-
-        let result = game.play(&black, &white, &mut rng);
-
-        assert_eq!(result.black_label(), "black_label");
-        assert_eq!(result.white_label(), "white_label");
-    }
-
-    #[test]
-    fn captures_board_state() {
+    fn board_has_correct_stone_count_after_opening() {
+        let game = Freestyle { opening_moves: 4 };
         let (black, white) = ScriptedStrategy::black_wins();
-        let game = Freestyle;
-        let mut rng = fastrand::Rng::new();
+        let mut board = Board::new();
+        let mut rng = fastrand::Rng::with_seed(42);
 
-        let result = game.play(&black, &white, &mut rng);
+        // Break before any strategy move to inspect only the opening stones.
+        game.play_from(&mut board, &black, &white, &mut BreakImmediately, &mut rng);
 
-        assert!(!result.board_state().is_empty());
+        assert_eq!(board.move_count(), 4);
+    }
+
+    #[test]
+    fn opening_alternates_colours_starting_with_black() {
+        let game = Freestyle { opening_moves: 5 };
+        let (black, white) = ScriptedStrategy::black_wins();
+        let mut board = Board::new();
+        let mut rng = fastrand::Rng::with_seed(42);
+
+        game.play_from(&mut board, &black, &white, &mut BreakImmediately, &mut rng);
+
+        let black_count = PositionId::iter()
+            .filter(|&pos| board.stone(pos) == Some(Stone::Black))
+            .count();
+        assert_eq!(black_count, 3);
+        assert_eq!(board.stone_to_move(), Stone::White);
+    }
+
+    #[test]
+    fn opening_setup_does_not_panic_across_seeds() {
+        // Strategies are created fresh per iteration since ScriptedStrategy tracks an index.
+        for seed in 0..50 {
+            let (black, white) = ScriptedStrategy::black_wins();
+            let game = Freestyle { opening_moves: 10 };
+            let mut board = Board::new();
+            let mut rng = fastrand::Rng::with_seed(seed);
+            game.play_from(&mut board, &black, &white, &mut BreakImmediately, &mut rng);
+            assert_eq!(board.move_count(), 10);
+        }
+    }
+
+    #[test]
+    fn play_continues_from_stones_already_on_the_board() {
+        // Black wins in 9 turns from empty. Four stones pre-placed at rows 5–6 do not overlap
+        // the scripted moves at rows 0–1, so the total is 13.
+        let (black, white) = ScriptedStrategy::black_wins();
+        let mut board = Board::new();
+        let mut rng = fastrand::Rng::with_seed(0);
+        for (row, col, stone) in [
+            (5, 0, Stone::Black),
+            (5, 1, Stone::White),
+            (6, 0, Stone::Black),
+            (6, 1, Stone::White),
+        ] {
+            board
+                .place(PositionId::from_position(Position::new(row, col)), stone)
+                .unwrap();
+        }
+
+        let outcome =
+            Freestyle::default().play_from(&mut board, &black, &white, &mut NoOpObserver, &mut rng);
+
+        assert_eq!(outcome, Some(Outcome::Win(Stone::Black)));
+        assert_eq!(board.move_count(), 9 + 4);
     }
 }

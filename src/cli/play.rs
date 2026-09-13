@@ -3,9 +3,9 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::Args;
 
-use super::{create_rng, load_strategy, setup_logging};
-use crate::game::{Freestyle, Game, Play as GamePlay, RandomOpening};
-use crate::outcome::Outcome;
+use super::{create_rng, load_strategy, print_game_result, setup_logging};
+use crate::board::Board;
+use crate::game::{Freestyle, Game, NoOpObserver, Play as GamePlay};
 
 /// Arguments for the play subcommand.
 #[derive(Debug, Args)]
@@ -42,28 +42,23 @@ pub fn run_play(args: &PlayArgs) -> Result<()> {
     let black = load_strategy(&args.black)?;
     let white = load_strategy(&args.white)?;
 
-    let game: Game = if args.opening_moves > 0 {
-        RandomOpening {
-            moves: args.opening_moves,
-        }
-        .into()
-    } else {
-        Freestyle.into()
-    };
-
-    let result = game.play(black.as_ref(), white.as_ref(), &mut rng);
-
-    println!("Black (X): {}", result.black_label());
-    println!("White (O): {}", result.white_label());
-    println!();
-    println!("{}", result.board_state());
-    println!();
-
-    match result.outcome() {
-        Outcome::BlackWins => println!("Result: Black (X) wins in {} turns", result.turn_count()),
-        Outcome::WhiteWins => println!("Result: White (O) wins in {} turns", result.turn_count()),
-        Outcome::Draw => println!("Result: Draw after {} turns", result.turn_count()),
+    let game: Game = Freestyle {
+        opening_moves: args.opening_moves,
     }
+    .into();
+
+    let mut board = Board::new();
+    let outcome = game
+        .play_from(
+            &mut board,
+            black.as_ref(),
+            white.as_ref(),
+            &mut NoOpObserver,
+            &mut rng,
+        )
+        .expect("NoOpObserver never breaks early");
+
+    print_game_result(&board, outcome, black.label(), white.label());
 
     Ok(())
 }

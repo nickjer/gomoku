@@ -14,7 +14,10 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use tracing::info;
 
+use crate::board::Board;
 use crate::minimax::{DEFAULT_DEPTH, MinimaxStrategy};
+use crate::outcome::Outcome;
+use crate::stone::Stone;
 use crate::strategy::Strategy;
 use saved_strategy::read_strategy_file;
 
@@ -69,4 +72,18 @@ pub fn load_strategy(specifier: &Path) -> Result<Box<dyn Strategy>> {
         return Ok(Box::new(MinimaxStrategy::new(depth)));
     }
     Ok(Box::new(read_strategy_file(specifier)?))
+}
+
+/// Prints who played which colour, the final board, and how the game ended.
+pub fn print_game_result(board: &Board, outcome: Outcome, black_label: &str, white_label: &str) {
+    println!("{}: {black_label}", Stone::Black);
+    println!("{}: {white_label}", Stone::White);
+    println!();
+    println!("{board}");
+    println!();
+
+    match outcome {
+        Outcome::Win(winner) => println!("Result: {winner} wins in {} turns", board.move_count()),
+        Outcome::Draw => println!("Result: Draw after {} turns", board.move_count()),
+    }
 }

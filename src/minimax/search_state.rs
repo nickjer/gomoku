@@ -131,10 +131,7 @@ impl SearchState {
         }
 
         if won {
-            self.outcome = Some(match stone {
-                Stone::Black => Outcome::BlackWins,
-                Stone::White => Outcome::WhiteWins,
-            });
+            self.outcome = Some(Outcome::Win(stone));
         } else if self.board.is_full() {
             self.outcome = Some(Outcome::Draw);
         }
@@ -348,7 +345,7 @@ mod tests {
 
         state.place(pos(7, 7), Stone::Black);
 
-        assert_eq!(state.outcome(), Some(Outcome::BlackWins));
+        assert_eq!(state.outcome(), Some(Outcome::Win(Stone::Black)));
     }
 
     #[test]
@@ -365,7 +362,7 @@ mod tests {
 
         state.place(pos(7, 7), Stone::White);
 
-        assert_eq!(state.outcome(), Some(Outcome::WhiteWins));
+        assert_eq!(state.outcome(), Some(Outcome::Win(Stone::White)));
     }
 
     #[test]
@@ -380,7 +377,7 @@ mod tests {
         let mut state = SearchState::from_board(&board);
 
         state.place(pos(7, 7), Stone::Black);
-        assert_eq!(state.outcome(), Some(Outcome::BlackWins));
+        assert_eq!(state.outcome(), Some(Outcome::Win(Stone::Black)));
 
         state.undo(pos(7, 7), Stone::Black);
         assert!(state.outcome().is_none());

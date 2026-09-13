@@ -53,6 +53,16 @@ impl Board {
         self.move_count
     }
 
+    /// Whose turn it is: Black opens and the colours alternate.
+    #[must_use]
+    pub fn stone_to_move(&self) -> Stone {
+        if self.move_count.is_multiple_of(2) {
+            Stone::Black
+        } else {
+            Stone::White
+        }
+    }
+
     #[must_use]
     pub fn empty_position_ids(&self) -> Vec<PositionId> {
         PositionId::iter()
@@ -90,10 +100,7 @@ impl Board {
 
         let winner = self.bitboard(stone).has_five_in_a_row();
         self.outcome = if winner {
-            Some(match stone {
-                Stone::Black => Outcome::BlackWins,
-                Stone::White => Outcome::WhiteWins,
-            })
+            Some(Outcome::Win(stone))
         } else if self.is_full() {
             Some(Outcome::Draw)
         } else {
@@ -272,7 +279,7 @@ mod tests {
         place_line(&mut board, pos(0, 0), right, Stone::Black, 5);
 
         assert!(board.is_finished());
-        assert_eq!(board.outcome(), Some(Outcome::BlackWins));
+        assert_eq!(board.outcome(), Some(Outcome::Win(Stone::Black)));
     }
 
     #[test]
@@ -282,7 +289,7 @@ mod tests {
         place_line(&mut board, pos(0, 0), down, Stone::White, 5);
 
         assert!(board.is_finished());
-        assert_eq!(board.outcome(), Some(Outcome::WhiteWins));
+        assert_eq!(board.outcome(), Some(Outcome::Win(Stone::White)));
     }
 
     #[test]
@@ -292,7 +299,7 @@ mod tests {
         place_line(&mut board, pos(0, 0), down_right, Stone::Black, 5);
 
         assert!(board.is_finished());
-        assert_eq!(board.outcome(), Some(Outcome::BlackWins));
+        assert_eq!(board.outcome(), Some(Outcome::Win(Stone::Black)));
     }
 
     #[test]
@@ -302,7 +309,7 @@ mod tests {
         place_line(&mut board, pos(0, 4), down_left, Stone::Black, 5);
 
         assert!(board.is_finished());
-        assert_eq!(board.outcome(), Some(Outcome::BlackWins));
+        assert_eq!(board.outcome(), Some(Outcome::Win(Stone::Black)));
     }
 
     #[test]

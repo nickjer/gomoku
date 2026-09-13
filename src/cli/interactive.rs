@@ -3,10 +3,11 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Args, ValueEnum};
 
-use super::{create_rng, load_strategy, setup_logging};
-use crate::game::{Freestyle, Game, Play as GamePlay, RandomOpening};
+use super::{create_rng, load_strategy, print_game_result, setup_logging};
+use crate::board::Board;
+use crate::game::{Freestyle, Game, NoOpObserver, Play as GamePlay};
 use crate::interactive_strategy::InteractiveStrategy;
-use crate::outcome::Outcome;
+use crate::strategy::Strategy;
 
 /// Which color the human player uses.
 #[derive(Debug, Clone, Copy, Default, ValueEnum)]
@@ -50,36 +51,27 @@ pub fn run_interactive(args: &InteractiveArgs) -> Result<()> {
     let mut rng = create_rng(args.seed);
     let opponent = load_strategy(&args.strategy)?;
 
-    let game: Game = if args.opening_moves > 0 {
-        RandomOpening {
-            moves: args.opening_moves,
-        }
-        .into()
-    } else {
-        Freestyle.into()
-    };
+    let game: Game = Freestyle {
+        opening_moves: args.opening_moves,
+    }
+    .into();
 
     let terminal = ratatui::init();
     let human = InteractiveStrategy::new(terminal);
 
-    let result = match args.play_as {
-        PlayerColor::Black => game.play(&human, opponent.as_ref(), &mut rng),
-        PlayerColor::White => game.play(opponent.as_ref(), &human, &mut rng),
+    let (black, white): (&dyn Strategy, &dyn Strategy) = match args.play_as {
+        PlayerColor::Black => (&human, opponent.as_ref()),
+        PlayerColor::White => (opponent.as_ref(), &human),
     };
+
+    let mut board = Board::new();
+    let outcome = game
+        .play_from(&mut board, black, white, &mut NoOpObserver, &mut rng)
+        .expect("NoOpObserver never breaks early");
 
     ratatui::restore();
 
-    println!("Black (X): {}", result.black_label());
-    println!("White (O): {}", result.white_label());
-    println!();
-    println!("{}", result.board_state());
-    println!();
-
-    match result.outcome() {
-        Outcome::BlackWins => println!("Result: Black (X) wins in {} turns", result.turn_count()),
-        Outcome::WhiteWins => println!("Result: White (O) wins in {} turns", result.turn_count()),
-        Outcome::Draw => println!("Result: Draw after {} turns", result.turn_count()),
-    }
+    print_game_result(&board, outcome, black.label(), white.label());
 
     Ok(())
 }

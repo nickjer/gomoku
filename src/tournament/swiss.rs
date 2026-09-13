@@ -4,6 +4,7 @@ use tracing::{debug_span, instrument};
 
 use crate::game::{Game, Play};
 use crate::outcome::Outcome;
+use crate::stone::Stone;
 use crate::strategy::Strategy;
 
 use super::{RunTournament, Standing};
@@ -32,11 +33,11 @@ impl Swiss {
 
         for (first_idx, second_idx) in pairings {
             if let Some(second_idx) = second_idx {
-                let result = game.play(&strategies[first_idx], &strategies[second_idx], rng);
-                Self::update_state(state, first_idx, second_idx, result.outcome());
+                let outcome = game.play(&strategies[first_idx], &strategies[second_idx], rng);
+                Self::update_state(state, first_idx, second_idx, outcome);
 
                 let rematch = game.play(&strategies[second_idx], &strategies[first_idx], rng);
-                Self::update_state(state, second_idx, first_idx, rematch.outcome());
+                Self::update_state(state, second_idx, first_idx, rematch);
             } else {
                 state.award_bye(first_idx);
             }
@@ -74,8 +75,8 @@ impl Swiss {
 
     fn update_state(state: &mut State, black_idx: usize, white_idx: usize, outcome: Outcome) {
         match outcome {
-            Outcome::BlackWins => state.award_win(black_idx, white_idx),
-            Outcome::WhiteWins => state.award_win(white_idx, black_idx),
+            Outcome::Win(Stone::Black) => state.award_win(black_idx, white_idx),
+            Outcome::Win(Stone::White) => state.award_win(white_idx, black_idx),
             Outcome::Draw => state.award_draw(black_idx, white_idx),
         }
     }

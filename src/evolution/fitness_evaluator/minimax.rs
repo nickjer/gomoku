@@ -67,9 +67,9 @@ impl MinimaxFitness {
             let mut board = Board::new();
             let mut observer = MinimaxObserver::new(move_limit, self.scoring_depth);
 
-            let Some(_) = self
-                .game
-                .play_from(&mut board, &minimax, strategy, &mut observer, rng)
+            let Some(outcome) =
+                self.game
+                    .play_from(&mut board, &minimax, strategy, &mut observer, rng)
             else {
                 debug!(
                     label = strategy.label(),
@@ -82,7 +82,7 @@ impl MinimaxFitness {
 
             let result = EvalResult {
                 turn_count: board.move_count(),
-                outcome: board.outcome().expect("finished game has outcome"),
+                outcome,
                 score_sum: observer.score_sum,
             };
 
@@ -95,7 +95,7 @@ impl MinimaxFitness {
             );
 
             match result.outcome {
-                Outcome::BlackWins | Outcome::Draw => {
+                Outcome::Win(Stone::Black) | Outcome::Draw => {
                     if minimax_win
                         .as_ref()
                         .is_none_or(|r| result.turn_count < r.turn_count)
@@ -103,7 +103,7 @@ impl MinimaxFitness {
                         minimax_win = Some(result);
                     }
                 }
-                Outcome::WhiteWins => {
+                Outcome::Win(Stone::White) => {
                     if strategy_win
                         .as_ref()
                         .is_none_or(|r| result.turn_count > r.turn_count)
@@ -176,8 +176,8 @@ fn scoring_depth_fitness(score_sum: f32, turn_count: usize, outcome: Outcome) ->
     let white_moves = f32::from(u16::try_from(turn_count / 2).expect("white move count fits u16"));
     let quality = (score_sum / white_moves + 1.0) * 500.0;
     let length = match outcome {
-        Outcome::WhiteWins => 1000.0 - 2.0 * turns_as_f32(turn_count),
-        Outcome::BlackWins | Outcome::Draw => 2.0 * turns_as_f32(turn_count),
+        Outcome::Win(Stone::White) => 1000.0 - 2.0 * turns_as_f32(turn_count),
+        Outcome::Win(Stone::Black) | Outcome::Draw => 2.0 * turns_as_f32(turn_count),
     };
     quality + length
 }
@@ -281,7 +281,7 @@ mod tests {
 
     #[test]
     fn minimax_depths_sorted_and_deduped() {
-        let evaluator = MinimaxFitness::new(Freestyle.into(), vec![6, 2, 4, 2], None);
+        let evaluator = MinimaxFitness::new(Freestyle::default().into(), vec![6, 2, 4, 2], None);
 
         assert_eq!(evaluator.depths, vec![2, 4, 6]);
     }
@@ -293,7 +293,8 @@ mod tests {
         let mut observer = MinimaxObserver::new(Some(5), None);
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let result = Freestyle.play_from(&mut board, &black, &white, &mut observer, &mut rng);
+        let result =
+            Freestyle::default().play_from(&mut board, &black, &white, &mut observer, &mut rng);
 
         assert!(result.is_none());
     }
@@ -305,11 +306,12 @@ mod tests {
         let mut observer = MinimaxObserver::new(Some(20), None);
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let result = Freestyle.play_from(&mut board, &black, &white, &mut observer, &mut rng);
+        let result =
+            Freestyle::default().play_from(&mut board, &black, &white, &mut observer, &mut rng);
 
         assert!(result.is_some());
         assert_eq!(board.move_count(), 9);
-        assert_eq!(board.outcome(), Some(Outcome::BlackWins));
+        assert_eq!(board.outcome(), Some(Outcome::Win(Stone::Black)));
     }
 
     #[test]
@@ -319,11 +321,12 @@ mod tests {
         let mut observer = MinimaxObserver::new(None, None);
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let result = Freestyle.play_from(&mut board, &black, &white, &mut observer, &mut rng);
+        let result =
+            Freestyle::default().play_from(&mut board, &black, &white, &mut observer, &mut rng);
 
         assert!(result.is_some());
         assert_eq!(board.move_count(), 9);
-        assert_eq!(board.outcome(), Some(Outcome::BlackWins));
+        assert_eq!(board.outcome(), Some(Outcome::Win(Stone::Black)));
     }
 
     #[test]
@@ -474,8 +477,8 @@ mod tests {
     #[test]
     fn longer_loss_scores_higher_than_shorter_loss() {
         // Same quality, different lengths — the length component must differentiate them.
-        let short = scoring_depth_fitness(0.0, 9, Outcome::BlackWins);
-        let long = scoring_depth_fitness(0.0, 21, Outcome::BlackWins);
+        let short = scoring_depth_fitness(0.0, 9, Outcome::Win(Stone::Black));
+        let long = scoring_depth_fitness(0.0, 21, Outcome::Win(Stone::Black));
         assert!(
             long > short,
             "longer loss ({long}) should beat shorter loss ({short})"
@@ -484,8 +487,8 @@ mod tests {
 
     #[test]
     fn faster_win_scores_higher_than_slower_win() {
-        let fast = scoring_depth_fitness(0.0, 9, Outcome::WhiteWins);
-        let slow = scoring_depth_fitness(0.0, 25, Outcome::WhiteWins);
+        let fast = scoring_depth_fitness(0.0, 9, Outcome::Win(Stone::White));
+        let slow = scoring_depth_fitness(0.0, 25, Outcome::Win(Stone::White));
         assert!(
             fast > slow,
             "faster win ({fast}) should beat slower win ({slow})"
@@ -496,8 +499,8 @@ mod tests {
     fn win_scores_higher_than_loss_with_equal_quality() {
         // At equal quality a win beats a loss at any length.  The invariant does not hold
         // across extreme quality differences, but equal quality is the realistic baseline.
-        let win = scoring_depth_fitness(0.0, 225, Outcome::WhiteWins);
-        let loss = scoring_depth_fitness(0.0, 225, Outcome::BlackWins);
+        let win = scoring_depth_fitness(0.0, 225, Outcome::Win(Stone::White));
+        let loss = scoring_depth_fitness(0.0, 225, Outcome::Win(Stone::Black));
         assert!(
             win > loss,
             "win ({win}) should beat loss ({loss}) at equal quality"
@@ -512,7 +515,7 @@ mod tests {
         let mut observer = MinimaxObserver::new(None, Some(1));
         let mut rng = fastrand::Rng::with_seed(42);
 
-        let _ = Freestyle.play_from(&mut board, &black, &white, &mut observer, &mut rng);
+        let _ = Freestyle::default().play_from(&mut board, &black, &white, &mut observer, &mut rng);
 
         assert_ne!(observer.score_sum, 0.0);
     }

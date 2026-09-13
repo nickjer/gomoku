@@ -1,3 +1,5 @@
+use std::fmt;
+
 /// Represents a stone color on the Gomoku board.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Stone {
@@ -12,6 +14,16 @@ impl Stone {
         match self {
             Self::Black => Self::White,
             Self::White => Self::Black,
+        }
+    }
+}
+
+/// The colour name with the symbol the board display uses for it, e.g. `Black (X)`.
+impl fmt::Display for Stone {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Black => write!(f, "Black (X)"),
+            Self::White => write!(f, "White (O)"),
         }
     }
 }

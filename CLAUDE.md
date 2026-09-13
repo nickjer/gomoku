@@ -68,14 +68,15 @@ Each position's 8 neighbors are indexed clockwise (N, NE, E, SE, S, SW, W, NW). 
 
 ### Game
 The `Game` enum represents Gomoku rule variants using `enum_dispatch`:
-- **Freestyle**: 5+ in a row wins, no restrictions (current implementation)
-- **RandomOpening**: pre-places N random stones before handing off to Freestyle rules
+- **Freestyle `{ opening_moves }`**: 5+ in a row wins, no restrictions. `opening_moves` random stones are placed, alternating colours, before the strategies start (0 = empty board)
 - Future variants: Standard, Renju, Caro (commented out)
 - Test-only variants: `Stub` (panics if called), `Scripted` (predetermined outcomes)
 
-Games are played via `Play::play_from(&mut Board, observer, ...)` which accepts a mutable board
-(callers can pre-populate it) and a `GameObserver` for per-move hooks. `Play::play()` is a
-provided default using an empty board and a no-op observer.
+Games are played via `Play::play_from(&mut Board, observer, ...) -> Option<Outcome>` which
+accepts a mutable board (callers can pre-populate it) and a `GameObserver` for per-move hooks;
+`None` means the observer stopped the game early. The board holds the final position and
+move count, so there is no separate result struct. `Play::play() -> Outcome` is a provided
+default using an empty board and a no-op observer. `Outcome` is `Win(Stone) | Draw`.
 
 ### Tournament
 The `Tournament` enum manages competition formats using `enum_dispatch`:
@@ -178,7 +179,7 @@ Use `#[cfg(test)]` for test-only enum variants. The enum's `Default` impl can re
 impl Default for Game {
     fn default() -> Self {
         #[cfg(not(test))]
-        { Freestyle.into() }
+        { Freestyle::default().into() }
         #[cfg(test)]
         { Stub.into() }
     }

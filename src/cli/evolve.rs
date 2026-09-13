@@ -15,7 +15,7 @@ use crate::evolution::selection::{Tournament as TournamentSelection, TournamentM
 use crate::evolution::{
     Evolver, MinimaxFitness, Population, ThreatDefenseFitness, TournamentFitness,
 };
-use crate::game::{Freestyle, Game, RandomOpening};
+use crate::game::{Freestyle, Game};
 use crate::nn::{ClusterSmall, ClusterTiny, ConvSmall, ConvTiny};
 use crate::strategy::{EvolvableStrategy, Strategy};
 use crate::tournament::Swiss;
@@ -212,14 +212,10 @@ fn save_population<S: EvolvableStrategy + Clone + Into<SavedStrategy>>(
 }
 
 fn create_evolver(args: &EvolveArgs) -> Evolver {
-    let game: Game = if args.opening_moves > 0 {
-        RandomOpening {
-            moves: args.opening_moves,
-        }
-        .into()
-    } else {
-        Freestyle.into()
-    };
+    let game: Game = Freestyle {
+        opening_moves: args.opening_moves,
+    }
+    .into();
 
     let mut evaluators = Vec::new();
     if args.tournament_weight > 0.0 {

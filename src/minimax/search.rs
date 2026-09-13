@@ -155,7 +155,7 @@ fn score_after_place(
     tt: &mut TranspositionTable,
 ) -> Score {
     match state.outcome() {
-        Some(Outcome::BlackWins | Outcome::WhiteWins) => Score::win_at_depth(state.move_count()),
+        Some(Outcome::Win(_)) => Score::win_at_depth(state.move_count()),
         Some(Outcome::Draw) => Score::DRAW,
         None if depth == 0 => state.evaluate(stone),
         None => -negamax(
@@ -221,9 +221,7 @@ fn negamax(
         state.place(candidate, stone);
 
         let score = match state.outcome() {
-            Some(Outcome::BlackWins | Outcome::WhiteWins) => {
-                Score::win_at_depth(state.move_count())
-            }
+            Some(Outcome::Win(_)) => Score::win_at_depth(state.move_count()),
             Some(Outcome::Draw) => Score::DRAW,
             None => -negamax(
                 state,
