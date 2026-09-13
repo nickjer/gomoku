@@ -164,15 +164,23 @@ const fn compute_neighbourhoods() -> PositionArray<Neighbourhood> {
     table
 }
 
+// The cell functions below are the independent reading of a line the tests
+// check the ported Rapfi classifier against; the search itself uses the
+// pattern table.
+
 /// The five cells of a window, as offsets from its first cell.
+#[cfg(test)]
 const FIVE_CELLS: u8 = 0b1_1111;
 
 /// The two end cells and the four middle cells of a six-cell window, as
 /// offsets from its first cell. An open four is empty ends around four own
 /// stones; an open three is empty ends around three own stones and a gap.
+#[cfg(test)]
 const SIX_ENDS: u8 = 0b10_0001;
+#[cfg(test)]
 const SIX_MIDDLE: u8 = 0b01_1110;
 
+#[cfg(test)]
 /// Starts of the windows whose cells at the `own_at` offsets hold own stones
 /// and whose cells at the `empty_at` offsets are empty. Offsets run 0..6 so a
 /// six-cell window can be asked for as well.
@@ -189,6 +197,7 @@ fn window_starts(own: u16, empty: u16, own_at: u8, empty_at: u8) -> u16 {
     starts
 }
 
+#[cfg(test)]
 /// The cells at the `offsets` of every window in `starts`.
 fn cells_at(starts: u16, offsets: u8) -> u16 {
     let mut cells = 0;
@@ -200,6 +209,7 @@ fn cells_at(starts: u16, offsets: u8) -> u16 {
     cells
 }
 
+#[cfg(test)]
 /// Empty cells where one more own stone makes five in a row.
 #[must_use]
 pub fn completing_cells(own: u16, empty: u16) -> u16 {
@@ -211,6 +221,7 @@ pub fn completing_cells(own: u16, empty: u16) -> u16 {
     cells
 }
 
+#[cfg(test)]
 /// Empty cells where one more own stone makes a four: a five-cell window
 /// left with four own stones and one empty cell, so the next stone wins.
 #[must_use]
@@ -225,6 +236,7 @@ pub fn four_making_cells(own: u16, empty: u16) -> u16 {
     cells
 }
 
+#[cfg(test)]
 /// Empty cells where one more own stone makes a three: a five-cell window
 /// left with three own stones and two empty cells, one step from a four.
 #[must_use]
@@ -240,6 +252,7 @@ pub fn three_making_cells(own: u16, empty: u16) -> u16 {
     cells
 }
 
+#[cfg(test)]
 /// Empty cells where one more own stone makes a two: a five-cell window
 /// left with two own stones and three empty cells.
 #[must_use]
@@ -253,6 +266,7 @@ pub fn two_making_cells(own: u16, empty: u16) -> u16 {
     cells
 }
 
+#[cfg(test)]
 /// Empty cells where one more own stone makes an open four, `_XXXX_`, which
 /// the opponent cannot stop.
 #[must_use]
@@ -268,6 +282,7 @@ pub fn open_four_making_cells(own: u16, empty: u16) -> u16 {
     cells
 }
 
+#[cfg(test)]
 /// Empty cells where one more own stone makes an open three: the middle of
 /// a six-cell window with empty ends then holds three own stones and a gap.
 #[must_use]
@@ -285,6 +300,7 @@ pub fn open_three_making_cells(own: u16, empty: u16) -> u16 {
     cells
 }
 
+#[cfg(test)]
 /// Empty cells where one more own stone makes an open two: the middle of a
 /// six-cell window with empty ends then holds two own stones and two gaps,
 /// one step from an open three.
@@ -295,39 +311,6 @@ pub fn open_two_making_cells(own: u16, empty: u16) -> u16 {
         let owns = 1u8 << only;
         let gaps = SIX_MIDDLE & !owns;
         cells |= cells_at(window_starts(own, empty, owns, SIX_ENDS | gaps), gaps);
-    }
-    cells
-}
-
-/// Empty cells where an opponent stone stops one more own stone at `cell`
-/// from making a four on this line: the cell itself, or a cell of the
-/// five-cell window that four would fill.
-#[must_use]
-pub fn four_breaking_cells(own: u16, empty: u16, cell: u16) -> u16 {
-    let mut cells = 0;
-    let mut rest = empty;
-    while rest != 0 {
-        let candidate = rest.isolate_lowest_one();
-        rest ^= candidate;
-        if four_making_cells(own, empty & !candidate) & cell == 0 {
-            cells |= candidate;
-        }
-    }
-    cells
-}
-
-/// Empty cells where an opponent stone leaves `own` unable to make an open
-/// four anywhere on this line: the replies that answer an open three.
-#[must_use]
-pub fn defusing_cells(own: u16, empty: u16) -> u16 {
-    let mut cells = 0;
-    let mut rest = empty;
-    while rest != 0 {
-        let cell = rest.isolate_lowest_one();
-        rest ^= cell;
-        if open_four_making_cells(own, empty & !cell) == 0 {
-            cells |= cell;
-        }
     }
     cells
 }
@@ -483,12 +466,6 @@ mod tests {
         after
     }
 
-    fn with_other_at(cells: &[Cell], index: usize) -> Vec<Cell> {
-        let mut after = cells.to_vec();
-        after[index] = Cell::Other;
-        after
-    }
-
     fn owns(w: &[Cell]) -> usize {
         w.iter().filter(|&&c| c == Cell::Own).count()
     }
@@ -596,21 +573,6 @@ mod tests {
             open_two_making_cells,
             has_open_two,
         );
-
-        if !has_open_four(cells) {
-            let (own, empty) = masks(cells);
-            let expected_defusers = (0..cells.len())
-                .filter(|&i| {
-                    cells[i] == Cell::Empty
-                        && cells_where(&with_other_at(cells, i), has_open_four) == 0
-                })
-                .fold(0, |bits, i| bits | (1 << i));
-            assert_eq!(
-                defusing_cells(own, empty),
-                expected_defusers,
-                "defusing cells of {own:#b}/{empty:#b}"
-            );
-        }
     }
 
     #[test]
@@ -627,36 +589,5 @@ mod tests {
         for cells in random_lines(W, 20_000) {
             check_cells_against_oracle(&cells);
         }
-    }
-
-    #[test]
-    fn four_breaking_cells_are_the_cell_and_the_window_it_would_fill() {
-        // O X X X e _ : the four at `e` (bit 8) is broken by taking e or the
-        // cell that would complete it (bit 9); nothing else on the line helps.
-        let own: u16 = (1 << 5) | (1 << 6) | (1 << 7);
-        let other: u16 = 1 << 4;
-        let empty = !(own | other) & ((1 << W) - 1);
-        assert_eq!(four_breaking_cells(own, empty, 1 << 8), (1 << 8) | (1 << 9));
-
-        // X _ X X e: the gap (bit 5) breaks the jump four too.
-        let own: u16 = (1 << 4) | (1 << 6) | (1 << 7);
-        let other: u16 = (1 << 3) | (1 << 9);
-        let empty = !(own | other) & ((1 << W) - 1);
-        assert_eq!(four_breaking_cells(own, empty, 1 << 8), (1 << 5) | (1 << 8));
-    }
-
-    #[test]
-    fn defusing_cells_of_a_one_sided_open_three_include_the_far_cell() {
-        // O_XXX__: the open four can only grow rightwards, so the far right
-        // cell stops it just like the two neighbours do.
-        let own: u16 = (1 << 5) | (1 << 6) | (1 << 7);
-        let other: u16 = 1 << 3;
-        let empty = !(own | other) & ((1 << W) - 1);
-        assert_eq!(defusing_cells(own, empty), (1 << 4) | (1 << 8) | (1 << 9));
-
-        // __XXX__: only the neighbours; a stone two away still leaves the
-        // other side room for _XXXX_.
-        let empty = !own & ((1 << W) - 1);
-        assert_eq!(defusing_cells(own, empty), (1 << 4) | (1 << 8));
     }
 }

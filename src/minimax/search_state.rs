@@ -7,13 +7,10 @@ use crate::position_id::PositionId;
 use crate::position_map::PositionArray;
 use crate::stone::Stone;
 
-use super::lines::{
-    LINE_CELLS, LINE_LENGTHS, NEIGHBOURHOODS, NUM_LINES, POSITION_LINES, REACH, defusing_cells,
-    four_breaking_cells,
-};
+use super::lines::{LINE_CELLS, LINE_LENGTHS, NEIGHBOURHOODS, NUM_LINES, POSITION_LINES, REACH};
 use super::patterns::{
-    CellPatterns, LinePattern, LinePatternTable, Threat, ThreatTable, line_pattern_from,
-    line_pattern_table, threat_table,
+    CellPatterns, LinePattern, LinePatternTable, PatternCode, PatternCodeTable, Threat,
+    line_pattern_from, line_pattern_table, pattern_code_table,
 };
 use super::score::Score;
 use super::tt::ZOBRIST;
@@ -70,13 +67,13 @@ pub struct SearchState {
     /// What a stone of each colour would make at each empty cell; `NONE`
     /// for occupied cells.
     patterns: PositionArray<[CellPatterns; 2]>,
-    /// The threat of each cell's patterns, kept so a change needs only one
+    /// The code of each cell's patterns, kept so a change needs only one
     /// table lookup.
-    threats: PositionArray<[Threat; 2]>,
+    codes: PositionArray<[PatternCode; 2]>,
     /// The empty cells grouped by the threat a stone there would create, per
     /// colour. `Threat::Nothing` is not tracked.
     threat_cells: [[BitBoard; Threat::COUNT]; 2],
-    /// The threat values of all empty cells added up, per colour.
+    /// The cell values of all empty cells added up, per colour.
     total: [Score; 2],
     outcome: Option<Outcome>,
     undo_stack: Vec<UndoFrame>,
@@ -109,7 +106,7 @@ impl SearchState {
             line_black: [0; NUM_LINES],
             line_white: [0; NUM_LINES],
             patterns: PositionArray::new([CellPatterns::NONE; 2]),
-            threats: PositionArray::new([Threat::Nothing; 2]),
+            codes: PositionArray::new([PatternCode::default(); 2]),
             threat_cells: [[BitBoard::EMPTY; Threat::COUNT]; 2],
             total: [Score::DRAW; 2],
             outcome: board.outcome(),
@@ -125,7 +122,7 @@ impl SearchState {
             }
         }
 
-        let (table, lines) = (threat_table(), line_pattern_table());
+        let (table, lines) = (pattern_code_table(), line_pattern_table());
         for position in PositionId::iter() {
             if board.is_empty(position) {
                 for colour in [Stone::Black, Stone::White] {
@@ -163,7 +160,7 @@ impl SearchState {
         let mut frame = UndoFrame {
             patterns: [[CellPatterns::NONE; 2]; CHANGED_CELLS],
         };
-        let (table, lines) = (threat_table(), line_pattern_table());
+        let (table, lines) = (pattern_code_table(), line_pattern_table());
         // The cell itself is taken: it no longer offers anything to anyone.
         frame.patterns[0] = *self.patterns.get(position);
         for colour in [Stone::Black, Stone::White] {
@@ -205,7 +202,7 @@ impl SearchState {
         }
 
         let frame = self.undo_stack.pop().expect("undo without matching place");
-        let table = threat_table();
+        let table = pattern_code_table();
         for colour in [Stone::Black, Stone::White] {
             self.set_patterns(
                 position,
@@ -274,38 +271,49 @@ impl SearchState {
             Situation::BlockFour => forced = opponent[Threat::Five.index()],
             Situation::MakeUnstoppableFour => chosen = own[Threat::UnstoppableFour.index()],
             Situation::PreventUnstoppableFour => {
-                // Taking the cell always works. An open four in the making
-                // is also stopped anywhere along its line; two fours in the
-                // making are stopped by breaking either one.
-                forced = opponent[Threat::UnstoppableFour.index()];
-                let their_masks = self.line_masks(to_move.opponent());
-                for cell in forced.iter_set() {
-                    let patterns = self.patterns.get(cell)[usize::from(to_move.opponent())];
-                    let grows_open_four =
-                        (0..4).any(|direction| patterns.get(direction) == LinePattern::OpenFour);
+                // Taking the cell always works. A free four in the making is
+                // also stopped by any stone on its line that leaves every
+                // such cell of that line short of a free four; two blocked
+                // fours in the making are stopped by breaking either one.
+                let threats = opponent[Threat::UnstoppableFour.index()];
+                forced = threats;
+                let attacker = to_move.opponent();
+                let mut free_four_cells = [0u16; NUM_LINES];
+                for cell in threats.iter_set() {
+                    let patterns = self.patterns.get(cell)[usize::from(attacker)];
+                    let grows_free_four =
+                        (0..4).any(|direction| patterns.get(direction) == LinePattern::FreeFour);
                     for (direction, &(line_id, bit)) in POSITION_LINES.get(cell).iter().enumerate()
                     {
                         let line = usize::from(line_id);
-                        let (own, empty) = (their_masks[line], self.empty_cells(line));
-                        let cells = match patterns.get(direction) {
-                            LinePattern::OpenFour => defusing_cells(own, empty),
-                            LinePattern::Four if !grows_open_four => {
-                                four_breaking_cells(own, empty, 1 << bit)
+                        match patterns.get(direction) {
+                            LinePattern::FreeFour => free_four_cells[line] |= 1 << bit,
+                            LinePattern::BlockedFour if !grows_free_four => {
+                                let cells = self.stopping_cells(
+                                    attacker,
+                                    line,
+                                    1 << bit,
+                                    LinePattern::BlockedFour,
+                                );
+                                mark_line_cells(line, cells, &mut forced);
                             }
-                            _ => 0,
-                        };
-                        mark_line_cells(line, cells, &mut forced);
+                            _ => {}
+                        }
+                    }
+                }
+                for (line, &cells) in free_four_cells.iter().enumerate() {
+                    if cells != 0 {
+                        let stopping =
+                            self.stopping_cells(attacker, line, cells, LinePattern::FreeFour);
+                        mark_line_cells(line, stopping, &mut forced);
                     }
                 }
                 // A counter-four has to be blocked before the threat can be
                 // carried out, so it is a reply too, but a chosen one: it
                 // costs depth like any attack.
-                chosen = (own[Threat::Four.index()]
-                    | own[Threat::FourAndMore.index()]
-                    | own[Threat::FourAndOpenThree.index()])
-                    & !forced;
+                chosen = self.four_making_cells(to_move) & !forced;
             }
-            Situation::Develop => return self.developing_moves(buf),
+            Situation::Develop => return self.developing_moves(to_move, buf),
         }
 
         let mut count = 0;
@@ -321,9 +329,44 @@ impl SearchState {
         Candidates { forced, count }
     }
 
-    /// Every empty cell within reach of a stone, the ones offering most to
-    /// either side first; the centre on an empty board.
-    fn developing_moves(&self, buf: &mut [PositionId; PositionId::COUNT]) -> Candidates {
+    /// Empty cells of `line` where a stone of the attacker's opponent leaves
+    /// every cell in `cells` short of `pattern` on that line for the
+    /// attacker.
+    fn stopping_cells(
+        &self,
+        attacker: Stone,
+        line: usize,
+        cells: u16,
+        pattern: LinePattern,
+    ) -> u16 {
+        let table = line_pattern_table();
+        let own = self.line_masks(attacker)[line];
+        let blocked = self.line_masks(attacker.opponent())[line];
+        let length = LINE_LENGTHS[line];
+        let mut stopping = 0;
+        let mut rest = self.empty_cells(line) & !cells;
+        while rest != 0 {
+            let candidate = rest.isolate_lowest_one();
+            rest ^= candidate;
+            let still_threatens = (0..length).any(|bit| {
+                cells & (1 << bit) != 0
+                    && line_pattern_from(table, own, blocked | candidate, length, bit) >= pattern
+            });
+            if !still_threatens {
+                stopping |= candidate;
+            }
+        }
+        stopping
+    }
+
+    /// Every empty cell within reach of a stone, Rapfi's move-ordering
+    /// score first (both colours' scores plus the mover's own once more);
+    /// the centre on an empty board.
+    fn developing_moves(
+        &self,
+        to_move: Stone,
+        buf: &mut [PositionId; PositionId::COUNT],
+    ) -> Candidates {
         if self.board.move_count() == 0 {
             buf[0] = PositionId::center();
             return Candidates {
@@ -337,8 +380,10 @@ impl SearchState {
         let mut scored = [(Score::DRAW, PositionId::default()); PositionId::COUNT];
         let mut count = 0;
         for position in nearby.iter_set() {
-            let [black, white] = *self.threats.get(position);
-            scored[count] = (black.value() + white.value(), position);
+            let codes = *self.codes.get(position);
+            let [black, white] = codes;
+            let own = codes[usize::from(to_move)];
+            scored[count] = (black.score() + white.score() + own.score(), position);
             count += 1;
         }
         scored[..count].sort_unstable_by_key(|&(value, _)| Reverse(value));
@@ -369,7 +414,7 @@ impl SearchState {
         )
     }
 
-    /// Records new patterns for `cell`, moving its threat value and its
+    /// Records new patterns for `cell`, moving its value and its
     /// threat-class membership along.
     #[inline]
     fn set_patterns(
@@ -377,16 +422,17 @@ impl SearchState {
         cell: PositionId,
         colour: Stone,
         patterns: CellPatterns,
-        table: &ThreatTable,
+        table: &PatternCodeTable,
     ) {
         let side = usize::from(colour);
         let old = std::mem::replace(&mut self.patterns.get_mut(cell)[side], patterns);
         if old == patterns {
             return;
         }
-        let new_threat = patterns.threat_from(table);
-        let old_threat = std::mem::replace(&mut self.threats.get_mut(cell)[side], new_threat);
-        self.total[side] += new_threat.value() - old_threat.value();
+        let new_code = patterns.code_from(table);
+        let old_code = std::mem::replace(&mut self.codes.get_mut(cell)[side], new_code);
+        self.total[side] += new_code.value() - old_code.value();
+        let (old_threat, new_threat) = (old_code.threat(), new_code.threat());
         if old_threat != new_threat {
             if old_threat != Threat::Nothing {
                 self.threat_cells[side][old_threat.index()].clear(cell);
@@ -414,6 +460,27 @@ impl SearchState {
     fn empty_cells(&self, line: usize) -> u16 {
         let valid = (1u16 << LINE_LENGTHS[line]) - 1;
         !(self.line_black[line] | self.line_white[line]) & valid
+    }
+
+    /// The empty cells where a `colour` stone would create `threat`.
+    #[must_use]
+    pub fn cells_with(&self, colour: Stone, threat: Threat) -> BitBoard {
+        self.threat_cells[usize::from(colour)][threat.index()]
+    }
+
+    /// The empty cells where a `colour` stone would make a four of some
+    /// kind, short of an unstoppable one.
+    #[must_use]
+    pub fn four_making_cells(&self, colour: Stone) -> BitBoard {
+        self.cells_with(colour, Threat::Four)
+            | self.cells_with(colour, Threat::FourAndMore)
+            | self.cells_with(colour, Threat::FourAndFreeThree)
+    }
+
+    /// What a `colour` stone at `cell` would create.
+    #[must_use]
+    pub fn threat_at(&self, cell: PositionId, colour: Stone) -> Threat {
+        self.codes.get(cell)[usize::from(colour)].threat()
     }
 
     #[must_use]
@@ -750,8 +817,10 @@ mod tests {
     #[test]
     fn candidates_against_two_separate_open_threes_take_their_cells() {
         // Two open threes on row 7 with nothing in common: _XXX___XXX_. No
-        // single stone defuses both, so the replies are the four cells that
-        // would make an open four; the search then finds the loss.
+        // single stone defuses both, so the replies are the cells that would
+        // make a free four: the ends of each three, and the middle cell,
+        // where one stone makes two jump fours at once. The search then
+        // finds the loss.
         let board = board_with(
             &[(7, 2), (7, 3), (7, 4), (7, 8), (7, 9), (7, 10)],
             &[(0, 0), (0, 14)],
@@ -764,7 +833,7 @@ mod tests {
         );
         assert_eq!(
             candidates_of(&state, Stone::White),
-            (positions(&[(7, 1), (7, 5), (7, 7), (7, 11)]), 4)
+            (positions(&[(7, 1), (7, 5), (7, 6), (7, 7), (7, 11)]), 5)
         );
     }
 

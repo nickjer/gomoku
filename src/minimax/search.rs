@@ -4,13 +4,17 @@ use crate::position_id::PositionId;
 use crate::stone::Stone;
 use tracing::debug;
 
-#[cfg(test)]
+use super::lines::NEIGHBOURHOODS;
 use super::patterns::Threat;
 use super::score::Score;
 use super::search_state::{SearchState, Situation};
 use super::tt::{Bound, TranspositionTable};
 
 pub const DEFAULT_DEPTH: u32 = 4;
+
+/// How many stones a victory by continuous fours may run at the horizon
+/// before it is given up (Rapfi's `MAX_VCF_PLY`).
+const VCF_PLIES: u32 = 36;
 type CandidateBuf = [PositionId; PositionId::COUNT];
 
 struct KillerTable {
@@ -180,6 +184,80 @@ impl<'a> Search<'a> {
         (state.evaluate(stone) - parent_raw) / 2
     }
 
+    /// Rapfi's `quickVCFSearch`: whether `attacker`, about to move, wins by
+    /// fours alone within `plies` stones. Every attacking stone must make a
+    /// four; the defender's block is forced; a block that makes a four back
+    /// must itself be answered with a four. After the first stone only
+    /// fours within reach of the previous attacking stone are tried.
+    fn continuous_fours(
+        &mut self,
+        state: &mut SearchState,
+        attacker: Stone,
+        previous: Option<PositionId>,
+        plies: u32,
+    ) -> Option<Score> {
+        self.nodes += 1;
+        let defender = attacker.opponent();
+        match state.situation(attacker) {
+            Situation::CompleteFive => return Some(Score::win_at_depth(state.move_count() + 1)),
+            Situation::MakeUnstoppableFour => {
+                return Some(Score::win_at_depth(state.move_count() + 3));
+            }
+            Situation::BlockFour => {
+                // The last block made a four back: only a four of our own
+                // that blocks it keeps the sequence going.
+                let mut blocks = state.cells_with(defender, Threat::Five).iter_set();
+                let block = blocks.next().expect("a four has a completing cell");
+                if blocks.next().is_some() || state.threat_at(block, attacker) < Threat::Four {
+                    return None;
+                }
+                return self.continuous_fours_after(state, attacker, block, plies);
+            }
+            Situation::PreventUnstoppableFour | Situation::Develop => {}
+        }
+        if plies == 0 {
+            return None;
+        }
+        let mut fours = state.four_making_cells(attacker);
+        if let Some(previous) = previous {
+            let mut nearby = crate::bitboard::BitBoard::EMPTY;
+            for &(cell, _) in NEIGHBOURHOODS.get(previous).cells() {
+                nearby.set(cell);
+            }
+            fours = fours & nearby;
+        }
+        for cell in fours.iter_set() {
+            if let Some(win) = self.continuous_fours_after(state, attacker, cell, plies) {
+                return Some(win);
+            }
+        }
+        None
+    }
+
+    /// Plays the attacker's four at `cell` and the defender's forced block,
+    /// then carries the search on.
+    fn continuous_fours_after(
+        &mut self,
+        state: &mut SearchState,
+        attacker: Stone,
+        cell: PositionId,
+        plies: u32,
+    ) -> Option<Score> {
+        let defender = attacker.opponent();
+        state.place(cell, attacker);
+        let result = match state.cells_with(attacker, Threat::Five).iter_set().next() {
+            Some(block) if plies >= 2 => {
+                state.place(block, defender);
+                let result = self.continuous_fours(state, attacker, Some(cell), plies - 2);
+                state.undo(block, defender);
+                result
+            }
+            _ => None,
+        };
+        state.undo(cell, attacker);
+        result
+    }
+
     /// Scores the position for `stone`, who is about to move, with `depth`
     /// moves left to search.
     ///
@@ -207,7 +285,24 @@ impl<'a> Search<'a> {
             Situation::MakeUnstoppableFour => {
                 return Score::win_at_depth(state.move_count() + 3);
             }
-            Situation::Develop if depth == 0 => return Self::leaf_value(state, stone, parent_raw),
+            Situation::Develop if depth == 0 => {
+                // Rapfi's leaf: below beta the side to move first gets to try
+                // a victory by continuous fours, which no static value sees.
+                let value = Self::leaf_value(state, stone, parent_raw);
+                if value < beta
+                    && let Some(win) = self.continuous_fours(state, stone, None, VCF_PLIES)
+                {
+                    return win;
+                }
+                return value;
+            }
+            // At the horizon a threatened side may still win by fours of its
+            // own: each forces a block, so the threat never gets carried out.
+            Situation::PreventUnstoppableFour if depth == 0 => {
+                if let Some(win) = self.continuous_fours(state, stone, None, VCF_PLIES) {
+                    return win;
+                }
+            }
             Situation::BlockFour | Situation::PreventUnstoppableFour | Situation::Develop => {}
         }
 
@@ -567,8 +662,10 @@ mod tests {
         // remains is the small change the stones make on other lines.
         let score = score_move_fresh(&board, Stone::Black, pos(7, 9), 1);
 
+        // What remains is the small change the stones make on other lines,
+        // well under a single cell's worth of a four in Rapfi's table.
         assert!(!score.is_decided(), "{score:?}");
-        assert!(score < Threat::FourAndOpenThree.value(), "{score:?}");
+        assert!(score < Score::new(300), "{score:?}");
     }
 
     #[test]
@@ -626,6 +723,37 @@ mod tests {
             !score.is_decided(),
             "the counter-four should keep White in the game: {score:?}"
         );
+    }
+
+    #[test]
+    fn leaf_finds_a_win_by_continuous_fours() {
+        // Black: OXXX_ on row 7, a blocked pair on column 6, and a stone at
+        // (9,7) on the diagonal through (7,5) and (8,6). (7,6) is a four;
+        // after the forced block at (7,7), (8,6) makes a four on column 6
+        // and a free three on the diagonal at once. No single cell wins
+        // outright, so only the continuous-fours search sees it.
+        let mut board = Board::new();
+        place_stones(
+            &mut board,
+            Stone::Black,
+            &[(7, 3), (7, 4), (7, 5), (5, 6), (6, 6), (9, 7)],
+        );
+        place_stones(&mut board, Stone::White, &[(7, 2), (4, 6), (0, 0)]);
+
+        // A quiet White move elsewhere leaves Black to move at the leaf.
+        let lost = score_move_fresh(&board, Stone::White, pos(0, 14), 1);
+        assert!(lost.is_decided() && lost < Score::DRAW, "{lost:?}");
+
+        // Without the diagonal stone there is no follow-up.
+        let mut calm = Board::new();
+        place_stones(
+            &mut calm,
+            Stone::Black,
+            &[(7, 3), (7, 4), (7, 5), (5, 6), (6, 6)],
+        );
+        place_stones(&mut calm, Stone::White, &[(7, 2), (4, 6), (0, 0)]);
+        let fine = score_move_fresh(&calm, Stone::White, pos(0, 14), 1);
+        assert!(!fine.is_decided(), "{fine:?}");
     }
 
     #[test]

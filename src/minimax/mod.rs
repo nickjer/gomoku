@@ -1,5 +1,6 @@
 mod lines;
 mod patterns;
+mod rapfi_tables;
 mod score;
 mod search;
 mod search_state;
