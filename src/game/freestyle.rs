@@ -135,7 +135,7 @@ mod tests {
     }
 
     #[test]
-    fn opening_alternates_colours_starting_with_black() {
+    fn opening_alternates_colors_starting_with_black() {
         let game = Freestyle { opening_moves: 5 };
         let (black, white) = ScriptedStrategy::black_wins();
         let mut board = Board::new();

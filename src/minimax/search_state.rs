@@ -7,7 +7,7 @@ use crate::position_id::PositionId;
 use crate::position_map::PositionArray;
 use crate::stone::Stone;
 
-use super::lines::{LINE_CELLS, LINE_LENGTHS, NEIGHBOURHOODS, NUM_LINES, POSITION_LINES, REACH};
+use super::lines::{LINE_CELLS, LINE_LENGTHS, NEIGHBORHOODS, NUM_LINES, POSITION_LINES, REACH};
 use super::patterns::{
     CellPatterns, LinePattern, LinePatternTable, PatternCode, PatternCodeTable, Threat,
     ThreatTable, line_pattern_from, line_pattern_table, pattern_code_table, threat_table,
@@ -44,7 +44,7 @@ pub struct Candidates {
 }
 
 /// The cells whose patterns one stone can change: itself and its
-/// neighbourhood.
+/// neighborhood.
 const CHANGED_CELLS: usize = 8 * REACH + 1;
 
 /// The patterns of the changed cells before a stone was placed, in the order
@@ -53,10 +53,10 @@ struct UndoFrame {
     patterns: [[CellPatterns; 2]; CHANGED_CELLS],
 }
 
-/// A board with, for every empty cell, what one more stone of each colour
+/// A board with, for every empty cell, what one more stone of each color
 /// would make there, kept up to date as stones are placed and taken back.
 ///
-/// Stones live in one `u16` mask per colour for each of the 88 board lines.
+/// Stones live in one `u16` mask per color for each of the 88 board lines.
 /// A stone changes only the cells within reach on its four lines, so `place`
 /// rereads those cells' patterns and `undo` restores them from a saved frame.
 pub struct SearchState {
@@ -64,16 +64,16 @@ pub struct SearchState {
     board: Board,
     line_black: [u16; NUM_LINES],
     line_white: [u16; NUM_LINES],
-    /// What a stone of each colour would make at each empty cell; `NONE`
+    /// What a stone of each color would make at each empty cell; `NONE`
     /// for occupied cells.
     patterns: PositionArray<[CellPatterns; 2]>,
     /// The code of each cell's patterns, kept so a change needs only one
     /// table lookup.
     codes: PositionArray<[PatternCode; 2]>,
     /// The empty cells grouped by the threat a stone there would create, per
-    /// colour. `Threat::Nothing` is not tracked.
+    /// color. `Threat::Nothing` is not tracked.
     threat_cells: [[BitBoard; Threat::COUNT]; 2],
-    /// The cell values of all empty cells added up, per colour.
+    /// The cell values of all empty cells added up, per color.
     total: [Score; 2],
     outcome: Option<Outcome>,
     undo_stack: Vec<UndoFrame>,
@@ -125,13 +125,13 @@ impl SearchState {
         let (table, lines, threats) = (pattern_code_table(), line_pattern_table(), threat_table());
         for position in PositionId::iter() {
             if board.is_empty(position) {
-                for colour in [Stone::Black, Stone::White] {
+                for color in [Stone::Black, Stone::White] {
                     let mut patterns = CellPatterns::NONE;
                     for direction in 0..4 {
-                        let pattern = state.line_pattern_at(lines, position, direction, colour);
+                        let pattern = state.line_pattern_at(lines, position, direction, color);
                         patterns = patterns.with(direction, pattern);
                     }
-                    state.set_patterns(position, colour, patterns, table, threats);
+                    state.set_patterns(position, color, patterns, table, threats);
                 }
             }
         }
@@ -163,22 +163,21 @@ impl SearchState {
         let (table, lines, threats) = (pattern_code_table(), line_pattern_table(), threat_table());
         // The cell itself is taken: it no longer offers anything to anyone.
         frame.patterns[0] = *self.patterns.get(position);
-        for colour in [Stone::Black, Stone::White] {
-            self.set_patterns(position, colour, CellPatterns::NONE, table, threats);
+        for color in [Stone::Black, Stone::White] {
+            self.set_patterns(position, color, CellPatterns::NONE, table, threats);
         }
-        // Each neighbour shares exactly one line with the stone, so only
+        // Each neighbor shares exactly one line with the stone, so only
         // that line's pattern can have changed.
-        for (i, &(cell, direction)) in NEIGHBOURHOODS.get(position).cells().iter().enumerate() {
+        for (i, &(cell, direction)) in NEIGHBORHOODS.get(position).cells().iter().enumerate() {
             frame.patterns[i + 1] = *self.patterns.get(cell);
             if !self.board.is_empty(cell) {
                 continue;
             }
             let direction = usize::from(direction);
-            for colour in [Stone::Black, Stone::White] {
-                let pattern = self.line_pattern_at(lines, cell, direction, colour);
-                let patterns =
-                    self.patterns.get(cell)[usize::from(colour)].with(direction, pattern);
-                self.set_patterns(cell, colour, patterns, table, threats);
+            for color in [Stone::Black, Stone::White] {
+                let pattern = self.line_pattern_at(lines, cell, direction, color);
+                let patterns = self.patterns.get(cell)[usize::from(color)].with(direction, pattern);
+                self.set_patterns(cell, color, patterns, table, threats);
             }
         }
 
@@ -204,16 +203,16 @@ impl SearchState {
         let frame = self.undo_stack.pop().expect("undo without matching place");
         let (table, threats) = (pattern_code_table(), threat_table());
         let changed = std::iter::once(position).chain(
-            NEIGHBOURHOODS
+            NEIGHBORHOODS
                 .get(position)
                 .cells()
                 .iter()
                 .map(|&(cell, _)| cell),
         );
         for (i, cell) in changed.enumerate() {
-            for colour in [Stone::Black, Stone::White] {
-                let patterns = frame.patterns[i][usize::from(colour)];
-                self.set_patterns(cell, colour, patterns, table, threats);
+            for color in [Stone::Black, Stone::White] {
+                let patterns = frame.patterns[i][usize::from(color)];
+                self.set_patterns(cell, color, patterns, table, threats);
             }
         }
         self.outcome = None;
@@ -355,8 +354,8 @@ impl SearchState {
     }
 
     /// Every empty cell within reach of a stone, Rapfi's move-ordering
-    /// score first (both colours' scores plus the mover's own once more);
-    /// the centre on an empty board.
+    /// score first (both colors' scores plus the mover's own once more);
+    /// the center on an empty board.
     fn developing_moves(
         &self,
         to_move: Stone,
@@ -388,7 +387,7 @@ impl SearchState {
         Candidates { forced: 0, count }
     }
 
-    /// What one more `colour` stone at `cell` would make on the line in
+    /// What one more `color` stone at `cell` would make on the line in
     /// `direction`.
     #[inline]
     fn line_pattern_at(
@@ -396,14 +395,14 @@ impl SearchState {
         table: &LinePatternTable,
         cell: PositionId,
         direction: usize,
-        colour: Stone,
+        color: Stone,
     ) -> LinePattern {
         let (line_id, bit) = POSITION_LINES.get(cell)[direction];
         let line = usize::from(line_id);
         line_pattern_from(
             table,
-            self.line_masks(colour)[line],
-            self.line_masks(colour.opponent())[line],
+            self.line_masks(color)[line],
+            self.line_masks(color.opponent())[line],
             LINE_LENGTHS[line],
             bit,
         )
@@ -415,12 +414,12 @@ impl SearchState {
     fn set_patterns(
         &mut self,
         cell: PositionId,
-        colour: Stone,
+        color: Stone,
         patterns: CellPatterns,
         table: &PatternCodeTable,
         threats: &ThreatTable,
     ) {
-        let side = usize::from(colour);
+        let side = usize::from(color);
         let old = std::mem::replace(&mut self.patterns.get_mut(cell)[side], patterns);
         if old == patterns {
             return;
@@ -459,25 +458,25 @@ impl SearchState {
         !(self.line_black[line] | self.line_white[line]) & valid
     }
 
-    /// The empty cells where a `colour` stone would create `threat`.
+    /// The empty cells where a `color` stone would create `threat`.
     #[must_use]
-    pub fn cells_with(&self, colour: Stone, threat: Threat) -> BitBoard {
-        self.threat_cells[usize::from(colour)][threat.index()]
+    pub fn cells_with(&self, color: Stone, threat: Threat) -> BitBoard {
+        self.threat_cells[usize::from(color)][threat.index()]
     }
 
-    /// The empty cells where a `colour` stone would make a four of some
+    /// The empty cells where a `color` stone would make a four of some
     /// kind, short of an unstoppable one.
     #[must_use]
-    pub fn four_making_cells(&self, colour: Stone) -> BitBoard {
-        self.cells_with(colour, Threat::Four)
-            | self.cells_with(colour, Threat::FourAndMore)
-            | self.cells_with(colour, Threat::FourAndFreeThree)
+    pub fn four_making_cells(&self, color: Stone) -> BitBoard {
+        self.cells_with(color, Threat::Four)
+            | self.cells_with(color, Threat::FourAndMore)
+            | self.cells_with(color, Threat::FourAndFreeThree)
     }
 
-    /// What a `colour` stone at `cell` would create.
+    /// What a `color` stone at `cell` would create.
     #[must_use]
-    pub fn threat_at(&self, cell: PositionId, colour: Stone) -> Threat {
-        self.codes.get(cell)[usize::from(colour)].threat()
+    pub fn threat_at(&self, cell: PositionId, color: Stone) -> Threat {
+        self.codes.get(cell)[usize::from(color)].threat()
     }
 
     #[must_use]
@@ -552,7 +551,7 @@ mod tests {
     }
 
     #[test]
-    fn evaluate_favours_the_side_whose_cells_offer_more() {
+    fn evaluate_favors_the_side_whose_cells_offer_more() {
         let board = board_with(&[(7, 6), (7, 7)], &[(0, 0)]);
         let state = SearchState::from_board(&board);
 
@@ -677,7 +676,7 @@ mod tests {
     }
 
     #[test]
-    fn situation_with_open_threes_on_both_sides_favours_the_side_to_move() {
+    fn situation_with_open_threes_on_both_sides_favors_the_side_to_move() {
         let board = board_with(&[(7, 6), (7, 7), (7, 8)], &[(3, 5), (3, 6), (3, 7)]);
         let state = SearchState::from_board(&board);
 
@@ -778,7 +777,7 @@ mod tests {
     }
 
     #[test]
-    fn candidates_against_an_open_three_are_its_defences_and_own_counter_fours() {
+    fn candidates_against_an_open_three_are_its_defenses_and_own_counter_fours() {
         // Black _XXX_ on row 7 with room on both sides. White has OOO on
         // row 3 hemmed at (3,4): (3,8) and (3,9) each make a four.
         let board = board_with(
@@ -791,7 +790,7 @@ mod tests {
             state.situation(Stone::White),
             Situation::PreventUnstoppableFour
         );
-        // The two defences are forced; the two counter-fours are choices.
+        // The two defenses are forced; the two counter-fours are choices.
         assert_eq!(
             candidates_of(&state, Stone::White),
             (positions(&[(7, 5), (7, 9), (3, 8), (3, 9)]), 2)
@@ -801,7 +800,7 @@ mod tests {
     #[test]
     fn candidates_against_a_one_sided_open_three_include_the_far_cell() {
         // O_XXX__ on row 7: the open four can only grow to the right, so
-        // (7,10) stops it as well as the neighbours (7,5) and (7,9).
+        // (7,10) stops it as well as the neighbors (7,5) and (7,9).
         let board = board_with(&[(7, 6), (7, 7), (7, 8)], &[(7, 4)]);
         let state = SearchState::from_board(&board);
 
@@ -914,7 +913,7 @@ mod tests {
     }
 
     #[test]
-    fn candidates_on_an_empty_board_are_the_centre() {
+    fn candidates_on_an_empty_board_are_the_center() {
         let state = SearchState::from_board(&Board::new());
 
         assert_eq!(

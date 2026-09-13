@@ -18,7 +18,7 @@ impl Stone {
     }
 }
 
-/// The colour name with the symbol the board display uses for it, e.g. `Black (X)`.
+/// The color name with the symbol the board display uses for it, e.g. `Black (X)`.
 impl fmt::Display for Stone {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

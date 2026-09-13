@@ -115,7 +115,7 @@ impl LinePattern {
 
 // ── The line classifier, ported from Rapfi's Evaluator.cpp ──────────────────
 
-/// One cell of the nine-cell line the classifier reads, the centre being the
+/// One cell of the nine-cell line the classifier reads, the center being the
 /// stone about to be placed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Cell {
@@ -124,10 +124,10 @@ enum Cell {
     Empty,
 }
 
-/// The nine cells along one line, the centre at index `REACH`.
+/// The nine cells along one line, the center at index `REACH`.
 type Line = [Cell; 2 * REACH + 1];
 
-/// Rapfi's `getType`: the pattern for a shape of `count` stones (the centre
+/// Rapfi's `getType`: the pattern for a shape of `count` stones (the center
 /// included) spanning `full_length` cells with `jump` gaps inside, inside
 /// `length` cells of room, `blocked` when a stone of the shape touches the
 /// opponent or the edge.
@@ -170,7 +170,7 @@ const fn shape_pattern(
     }
 }
 
-/// Rapfi's `shortLinePattern`: reads the shape around the centre, first to
+/// Rapfi's `shortLinePattern`: reads the shape around the center, first to
 /// the right and then to the left, and classifies it.
 const fn short_line_pattern(line: &Line) -> LinePattern {
     let mut empty = 0;
@@ -332,20 +332,20 @@ const fn classify(own: Window, blocked: Window) -> LinePattern {
 // ── Tables and lookups ───────────────────────────────────────────────────────
 
 /// The eight cells within reach on one line, as bits 0..8 in line order, the
-/// centre cell left out.
+/// center cell left out.
 type Window = u8;
 
-/// Bit `REACH` of a `2 * REACH + 1` cell window is the centre cell.
-const CENTRE: u32 = 1 << REACH;
+/// Bit `REACH` of a `2 * REACH + 1` cell window is the center cell.
+const CENTER: u32 = 1 << REACH;
 
-/// Drops the centre bit out of a nine-cell window read.
-fn drop_centre(window: u32) -> Window {
-    let low = window & (CENTRE - 1);
-    let high = (window >> (REACH + 1)) & (CENTRE - 1);
+/// Drops the center bit out of a nine-cell window read.
+fn drop_center(window: u32) -> Window {
+    let low = window & (CENTER - 1);
+    let high = (window >> (REACH + 1)) & (CENTER - 1);
     u8::try_from(low | (high << REACH)).expect("eight cells fit in a byte")
 }
 
-/// Line pattern of an empty centre cell by the own and blocked (opponent or
+/// Line pattern of an empty center cell by the own and blocked (opponent or
 /// off-board) cells within reach: index `own << 8 | blocked`.
 pub type LinePatternTable = [LinePattern; 1 << 16];
 
@@ -392,13 +392,13 @@ pub fn line_pattern_from(
     // start and past its end read as blocked.
     let own_window = (u32::from(own) << REACH) >> bit;
     let blocked = u32::from(opponent) | (!0u32 << length);
-    let blocked_window = ((blocked << REACH) | (CENTRE - 1)) >> bit;
+    let blocked_window = ((blocked << REACH) | (CENTER - 1)) >> bit;
     let key =
-        (usize::from(drop_centre(own_window)) << 8) | usize::from(drop_centre(blocked_window));
+        (usize::from(drop_center(own_window)) << 8) | usize::from(drop_center(blocked_window));
     table[key]
 }
 
-/// The four line patterns of one cell for one colour, one nibble per line in
+/// The four line patterns of one cell for one color, one nibble per line in
 /// `POSITION_LINES` direction order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct CellPatterns(u16);
@@ -441,7 +441,7 @@ impl CellPatterns {
 pub struct PatternCode(u16);
 
 impl PatternCode {
-    /// What a cell with this code is worth to its colour.
+    /// What a cell with this code is worth to its color.
     #[must_use]
     #[inline]
     pub fn value(self) -> Score {

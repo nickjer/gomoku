@@ -3,13 +3,13 @@
 //!
 //! Both are indexed by [`super::patterns::PatternCode`], the unordered
 //! combination of a cell's four line patterns: `VALUE` is what the cell is
-//! worth to its colour in the evaluation, `SCORE` how promising it is as a
+//! worth to its color in the evaluation, `SCORE` how promising it is as a
 //! move.
 
 /// Number of unordered combinations of four line patterns out of sixteen.
 pub const PATTERN_CODES: usize = 3876;
 
-/// Evaluation value of a cell for its colour, by pattern code.
+/// Evaluation value of a cell for its color, by pattern code.
 #[rustfmt::skip]
 pub static VALUE: [i16; PATTERN_CODES] = [
     0, 0, 0, 0, 0, 0, 0, 0, 3, 3, 3, 9, 9, 15, 72, 72,
@@ -257,7 +257,7 @@ pub static VALUE: [i16; PATTERN_CODES] = [
     372, 367, 363, 360,
 ];
 
-/// Move-ordering score of a cell for its colour, by pattern code.
+/// Move-ordering score of a cell for its color, by pattern code.
 #[rustfmt::skip]
 pub static SCORE: [i16; PATTERN_CODES] = [
     0, 1, 2, 3, 3, 5, 5, 5, 9, 9, 9, 18, 16, 25, 100, 500,

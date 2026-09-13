@@ -49,8 +49,8 @@ const SPLIT_THREE: &[Cell] = &[Empty, Opponent, Opponent, Answer, Opponent, Empt
 
 const PATTERNS: [&[Cell]; 4] = [WINNING_MOVE, FOUR_IN_A_ROW, OPEN_THREE, SPLIT_THREE];
 
-/// How many scenarios each pattern gets per colour.
-const SCENARIOS_PER_PATTERN_AND_COLOUR: usize = 10;
+/// How many scenarios each pattern gets per color.
+const SCENARIOS_PER_PATTERN_AND_COLOR: usize = 10;
 
 /// A board where the player to move has a small set of correct moves.
 #[derive(Debug, Clone)]
@@ -134,11 +134,11 @@ impl ThreatScenario {
     }
 }
 
-/// Generates scenarios for every pattern, for both colours to move.
+/// Generates scenarios for every pattern, for both colors to move.
 pub fn generate_threat_scenarios(rng: &mut fastrand::Rng) -> Vec<ThreatScenario> {
-    let mut scenarios = Vec::with_capacity(PATTERNS.len() * 2 * SCENARIOS_PER_PATTERN_AND_COLOUR);
+    let mut scenarios = Vec::with_capacity(PATTERNS.len() * 2 * SCENARIOS_PER_PATTERN_AND_COLOR);
     for pattern in PATTERNS {
-        for _ in 0..SCENARIOS_PER_PATTERN_AND_COLOUR {
+        for _ in 0..SCENARIOS_PER_PATTERN_AND_COLOR {
             for player_to_move in [Stone::Black, Stone::White] {
                 scenarios.push(ThreatScenario::from_pattern(pattern, player_to_move, rng));
             }
@@ -201,14 +201,14 @@ mod tests {
     }
 
     #[test]
-    fn generates_every_pattern_for_both_colours() {
+    fn generates_every_pattern_for_both_colors() {
         let mut rng = fastrand::Rng::with_seed(42);
 
         let scenarios = generate_threat_scenarios(&mut rng);
 
         assert_eq!(
             scenarios.len(),
-            PATTERNS.len() * 2 * SCENARIOS_PER_PATTERN_AND_COLOUR
+            PATTERNS.len() * 2 * SCENARIOS_PER_PATTERN_AND_COLOR
         );
         let black_to_move = scenarios
             .iter()
@@ -269,12 +269,12 @@ mod tests {
             let [gap] = scenario.answers[..] else {
                 panic!("split three has exactly one answer");
             };
-            let white_neighbours = Offset::CENTER_AND_NEIGHBORS[1..]
+            let white_neighbors = Offset::CENTER_AND_NEIGHBORS[1..]
                 .iter()
                 .filter_map(|&offset| gap.offset(offset))
-                .filter(|&neighbour| scenario.board.stone(neighbour) == Some(Stone::White))
+                .filter(|&neighbor| scenario.board.stone(neighbor) == Some(Stone::White))
                 .count();
-            assert!(white_neighbours >= 2, "seed {seed}");
+            assert!(white_neighbors >= 2, "seed {seed}");
         }
     }
 

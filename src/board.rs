@@ -53,7 +53,7 @@ impl Board {
         self.move_count
     }
 
-    /// Whose turn it is: Black opens and the colours alternate.
+    /// Whose turn it is: Black opens and the colors alternate.
     #[must_use]
     pub fn stone_to_move(&self) -> Stone {
         if self.move_count.is_multiple_of(2) {

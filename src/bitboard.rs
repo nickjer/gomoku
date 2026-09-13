@@ -136,8 +136,8 @@ impl BitBoard {
         }
     }
 
-    /// Expands every set position to its 8 Moore neighbours (radius-1 shell).
-    /// Used to build larger neighbourhoods by repeated application.
+    /// Expands every set position to its 8 Moore neighbors (radius-1 shell).
+    /// Used to build larger neighborhoods by repeated application.
     fn expand_r1(self) -> Self {
         let mut r = Self::EMPTY;
         r = r | ((self << 1) & NOT_FIRST_COL); // ( 0,+1)
@@ -268,9 +268,9 @@ pub fn winning_threats(board: BitBoard) -> BitBoard {
     )
 }
 
-// ── Proximity expansion (radius-2 neighbourhood) ─────────────────────
+// ── Proximity expansion (radius-2 neighborhood) ─────────────────────
 
-/// Radius of the proximity neighbourhood for candidate move generation.
+/// Radius of the proximity neighborhood for candidate move generation.
 pub const PROXIMITY_RADIUS: usize = 2;
 
 /// Finds gap positions that complete a five-in-a-row in one direction.
@@ -798,7 +798,7 @@ mod tests {
     }
 
     #[test]
-    fn expand_nearby_center_covers_5x5_neighbourhood() {
+    fn expand_nearby_center_covers_5x5_neighborhood() {
         let board = bitboard_from_positions(&[(7, 7)]);
         let nearby = board.expand_nearby() & !board;
 
@@ -809,7 +809,7 @@ mod tests {
                 } else {
                     assert!(
                         nearby.is_set(pos(row, col)),
-                        "({row}, {col}) should be in neighbourhood"
+                        "({row}, {col}) should be in neighborhood"
                     );
                 }
             }

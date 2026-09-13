@@ -4,7 +4,7 @@ use crate::position_id::PositionId;
 use crate::stone::Stone;
 use tracing::debug;
 
-use super::lines::NEIGHBOURHOODS;
+use super::lines::NEIGHBORHOODS;
 use super::patterns::Threat;
 use super::score::Score;
 use super::search_state::{SearchState, Situation};
@@ -21,7 +21,7 @@ type CandidateBuf = [PositionId; PositionId::COUNT];
 ///
 /// A move with few possible replies costs less depth than one with many, as
 /// in Rapfi, where a move costs the logarithm of its branching factor: the
-/// one block of a four costs nothing, the handful of defences against an
+/// one block of a four costs nothing, the handful of defenses against an
 /// unstoppable four in the making a third of a move, any other move a whole
 /// one. Thirds are the coarsest unit that keeps those three apart.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -277,7 +277,7 @@ impl<'a> Search<'a> {
     /// break the sequence by making a four of its own, so it is played out
     /// unless the opponent has no cell that makes a four at all. A stone
     /// making two free threes wins the same way as long as the opponent has
-    /// no cell that makes a four, since any of its defences could then be a
+    /// no cell that makes a four, since any of its defenses could then be a
     /// counter-four instead.
     fn win_by_threats(state: &mut SearchState, stone: Stone) -> Option<Score> {
         let opponent = stone.opponent();
@@ -344,7 +344,7 @@ impl<'a> Search<'a> {
         let mut fours = state.four_making_cells(attacker);
         if let Some(previous) = previous {
             let mut nearby = crate::bitboard::BitBoard::EMPTY;
-            for &(cell, _) in NEIGHBOURHOODS.get(previous).cells() {
+            for &(cell, _) in NEIGHBORHOODS.get(previous).cells() {
                 nearby.set(cell);
             }
             fours = fours & nearby;
@@ -828,7 +828,7 @@ mod tests {
         place_stones(&mut board, Stone::Black, &[(7, 7), (7, 8)]);
 
         // Place at (7,6) creates _XXX_. White's answer is forced and costs no
-        // depth: either neighbour leaves Black a half-open three.
+        // depth: either neighbor leaves Black a half-open three.
         let score = score_move_fresh(&board, Stone::Black, pos(7, 6), 1);
 
         assert!(score > Score::DRAW && !score.is_decided(), "{score:?}");
@@ -983,7 +983,7 @@ mod tests {
     #[test]
     fn two_free_threes_are_no_sure_win_against_a_side_that_can_make_a_four() {
         // As above, but White holds OOO hemmed at (3,4): (3,8) makes a four,
-        // so a defence of either three could be a counter-four instead.
+        // so a defense of either three could be a counter-four instead.
         let mut board = Board::new();
         place_stones(
             &mut board,

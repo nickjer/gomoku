@@ -77,7 +77,7 @@ pub fn load_strategy(specifier: &Path) -> Result<Box<dyn Strategy>> {
     Ok(Box::new(read_strategy_file(specifier)?))
 }
 
-/// Prints who played which colour, the final board, and how the game ended.
+/// Prints who played which color, the final board, and how the game ended.
 pub fn print_game_result(board: &Board, outcome: Outcome, black_label: &str, white_label: &str) {
     println!("{}: {black_label}", Stone::Black);
     println!("{}: {white_label}", Stone::White);

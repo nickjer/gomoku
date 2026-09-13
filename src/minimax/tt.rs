@@ -30,7 +30,7 @@ pub enum Bound {
 struct TtEntry {
     key: u32,             // top 32 bits of Zobrist hash (collision guard)
     depth: u8,            // remaining plies when this entry was stored
-    bound: Option<Bound>, // None = unoccupied; 1 byte via niche optimisation
+    bound: Option<Bound>, // None = unoccupied; 1 byte via niche optimization
     // The move that produced the score, as its index plus one so the entry
     // stays 12 bytes; `None` when every move failed low.
     best_move: Option<NonZeroU8>,

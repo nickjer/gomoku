@@ -30,22 +30,22 @@ pub const REACH: usize = 4;
 /// `REACH` cells each way along each of its four lines, with the direction
 /// index (0..4, in `POSITION_LINES` order) of the line they share.
 #[derive(Clone, Copy)]
-pub struct Neighbourhood {
+pub struct Neighborhood {
     cells: [(PositionId, u8); 8 * REACH],
     len: u8,
 }
 
-impl Neighbourhood {
-    /// The neighbouring cells and the direction of the line shared with the
-    /// centre.
+impl Neighborhood {
+    /// The neighboring cells and the direction of the line shared with the
+    /// center.
     #[must_use]
     pub fn cells(&self) -> &[(PositionId, u8)] {
         &self.cells[..usize::from(self.len)]
     }
 }
 
-/// The neighbourhood of every board position.
-pub static NEIGHBOURHOODS: PositionArray<Neighbourhood> = compute_neighbourhoods();
+/// The neighborhood of every board position.
+pub static NEIGHBORHOODS: PositionArray<Neighborhood> = compute_neighborhoods();
 
 // `TryFrom` and `Ord::min` are not stable as const traits on stable Rust, so
 // `as u8` is the only option in const fn context. All values are bounded by
@@ -128,8 +128,8 @@ const fn compute_line_cells() -> [[PositionId; W]; NUM_LINES] {
 
 // Same widening casts as above; the direction index is 0..4.
 #[allow(clippy::cast_possible_truncation, clippy::as_conversions)]
-const fn compute_neighbourhoods() -> PositionArray<Neighbourhood> {
-    let mut table = PositionArray::new(Neighbourhood {
+const fn compute_neighborhoods() -> PositionArray<Neighborhood> {
+    let mut table = PositionArray::new(Neighborhood {
         cells: [(PositionId::from_index(0), 0u8); 8 * REACH],
         len: 0,
     });
@@ -387,7 +387,7 @@ mod tests {
     }
 
     #[test]
-    fn neighbourhood_holds_the_cells_within_reach_on_each_line() {
+    fn neighborhood_holds_the_cells_within_reach_on_each_line() {
         for position in PositionId::iter() {
             let mut expected = Vec::new();
             for (direction, &(line_id, bit)) in POSITION_LINES.get(position).iter().enumerate() {
@@ -402,16 +402,16 @@ mod tests {
                     }
                 }
             }
-            let mut actual = NEIGHBOURHOODS.get(position).cells().to_vec();
+            let mut actual = NEIGHBORHOODS.get(position).cells().to_vec();
             actual.sort_by_key(|(cell, direction)| (cell.to_index(), *direction));
             expected.sort_by_key(|(cell, direction)| (cell.to_index(), *direction));
-            assert_eq!(actual, expected, "neighbourhood of {position:?}");
+            assert_eq!(actual, expected, "neighborhood of {position:?}");
         }
         assert_eq!(
-            NEIGHBOURHOODS.get(PositionId::center()).cells().len(),
+            NEIGHBORHOODS.get(PositionId::center()).cells().len(),
             8 * REACH
         );
-        assert_eq!(NEIGHBOURHOODS.get(pos(0, 0)).cells().len(), 3 * REACH);
+        assert_eq!(NEIGHBORHOODS.get(pos(0, 0)).cells().len(), 3 * REACH);
     }
 
     // ── Cell functions against a brute-force reading of the line ────────────
@@ -436,7 +436,7 @@ mod tests {
         (own, empty)
     }
 
-    /// Every colouring of a line of `length` cells.
+    /// Every coloring of a line of `length` cells.
     fn all_lines(length: usize) -> impl Iterator<Item = Vec<Cell>> {
         (0..3usize.pow(length as u32)).map(move |mut code| {
             (0..length)
