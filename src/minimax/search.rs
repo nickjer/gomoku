@@ -395,7 +395,10 @@ impl<'a> Search<'a> {
         // A leaf's value depends on its parent, so only nodes with depth to
         // search below them, whose value is the position's own, use the table.
         if depth > Depth::ZERO
-            && let Some((tt_score, bound)) = self.tt.probe(state.hash(), depth.thirds())
+            && let Some((tt_score, bound)) = self
+                .tt
+                .probe(state.hash(), depth.thirds())
+                .and_then(|probe| probe.value)
         {
             match bound {
                 Bound::Exact => return tt_score,
@@ -456,7 +459,7 @@ impl<'a> Search<'a> {
                 }
                 if depth > Depth::ZERO {
                     self.tt
-                        .store(state.hash(), depth.thirds(), beta, Bound::Lower);
+                        .store(state.hash(), depth.thirds(), beta, Bound::Lower, None);
                 }
                 return beta;
             }
@@ -471,7 +474,8 @@ impl<'a> Search<'a> {
             Bound::Upper
         };
         if depth > Depth::ZERO {
-            self.tt.store(state.hash(), depth.thirds(), alpha, bound);
+            self.tt
+                .store(state.hash(), depth.thirds(), alpha, bound, None);
         }
         alpha
     }
