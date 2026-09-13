@@ -17,25 +17,58 @@ pub const DEFAULT_DEPTH: u32 = 4;
 const VCF_PLIES: u32 = 36;
 type CandidateBuf = [PositionId; PositionId::COUNT];
 
+/// Search depth left, in thirds of a move.
+///
+/// A move with few possible replies costs less depth than one with many, as
+/// in Rapfi, where a move costs the logarithm of its branching factor: the
+/// one block of a four costs nothing, the handful of defences against an
+/// unstoppable four in the making a third of a move, any other move a whole
+/// one. Thirds are the coarsest unit that keeps those three apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct Depth(u32);
+
+impl Depth {
+    const ZERO: Self = Self(0);
+    const THIRD: Self = Self(1);
+    const MOVE: Self = Self(3);
+
+    #[must_use]
+    const fn moves(count: u32) -> Self {
+        Self(count * Self::MOVE.0)
+    }
+
+    /// What is left after spending `cost`, never below zero.
+    #[must_use]
+    const fn minus(self, cost: Self) -> Self {
+        Self(self.0.saturating_sub(cost.0))
+    }
+
+    /// The count of thirds, for tables indexed by depth.
+    #[must_use]
+    const fn thirds(self) -> u32 {
+        self.0
+    }
+}
+
 struct KillerTable {
     slots: Vec<[Option<PositionId>; 2]>,
 }
 
 impl KillerTable {
-    fn new(depth: u32) -> Self {
-        let len: usize = depth.try_into().expect("depth fits in usize");
+    fn new(depth: Depth) -> Self {
+        let len: usize = depth.thirds().try_into().expect("depth fits in usize");
         Self {
             slots: vec![[None; 2]; len],
         }
     }
 
-    fn get(&self, depth: u32) -> &[Option<PositionId>; 2] {
-        let idx: usize = depth.try_into().expect("depth fits in usize");
+    fn get(&self, depth: Depth) -> &[Option<PositionId>; 2] {
+        let idx: usize = depth.thirds().try_into().expect("depth fits in usize");
         &self.slots[idx]
     }
 
-    fn put(&mut self, depth: u32, position: PositionId) {
-        let idx: usize = depth.try_into().expect("depth fits in usize");
+    fn put(&mut self, depth: Depth, position: PositionId) {
+        let idx: usize = depth.thirds().try_into().expect("depth fits in usize");
         let entry = &mut self.slots[idx];
         if entry[0] == Some(position) {
             return;
@@ -47,12 +80,12 @@ impl KillerTable {
 
 /// Finds the best move for `stone` using negamax with alpha-beta pruning.
 ///
-/// `depth` counts the moves searched along each line of play; a forced
-/// reply to a four or to a threatened unstoppable four is searched even when
-/// the depth has run out. Candidates are shuffled before searching so that
-/// among equally-scored moves, whichever appears first after the shuffle is
-/// chosen — providing variety without the fail-soft false-tie bug that
-/// reservoir sampling would introduce.
+/// `depth` is the number of developing moves searched along each line of
+/// play; near-forced replies cost less (see [`Depth`]), and a forced reply is
+/// searched even when the depth has run out. Candidates are shuffled before
+/// searching so that among equally-scored moves, whichever appears first
+/// after the shuffle is chosen — providing variety without the fail-soft
+/// false-tie bug that reservoir sampling would introduce.
 pub fn find_best_move(
     board: &mut Board,
     stone: Stone,
@@ -60,8 +93,8 @@ pub fn find_best_move(
     rng: &mut fastrand::Rng,
 ) -> PositionId {
     let mut tt = TranspositionTable::new();
-    let mut search = Search::new(depth, &mut tt);
-    let best_move = search.best_move(board, stone, depth, rng);
+    let mut search = Search::new(Depth::moves(depth), &mut tt);
+    let best_move = search.best_move(board, stone, Depth::moves(depth), rng);
     debug!(
         move_count = board.move_count(),
         depth,
@@ -84,10 +117,10 @@ pub fn score_move(
     let mut state = SearchState::from_board(board);
     let raw = state.evaluate(stone);
     state.place(position, stone);
-    Search::new(depth, tt).score_after_place(
+    Search::new(Depth::moves(depth), tt).score_after_place(
         &mut state,
         stone,
-        depth - 1,
+        Depth::moves(depth - 1),
         raw,
         Score::MIN,
         Score::MAX,
@@ -103,7 +136,7 @@ struct Search<'a> {
 }
 
 impl<'a> Search<'a> {
-    fn new(depth: u32, tt: &'a mut TranspositionTable) -> Self {
+    fn new(depth: Depth, tt: &'a mut TranspositionTable) -> Self {
         Self {
             killers: KillerTable::new(depth),
             tt,
@@ -116,10 +149,10 @@ impl<'a> Search<'a> {
         &mut self,
         board: &Board,
         stone: Stone,
-        depth: u32,
+        depth: Depth,
         rng: &mut fastrand::Rng,
     ) -> PositionId {
-        assert!(depth > 0, "find_best_move called with depth 0");
+        assert!(depth > Depth::ZERO, "find_best_move called with depth 0");
 
         let mut state = SearchState::from_board(board);
 
@@ -141,8 +174,14 @@ impl<'a> Search<'a> {
 
         for &candidate in candidates.iter() {
             state.place(candidate, stone);
-            let score =
-                self.score_after_place(&mut state, stone, depth - 1, raw, best_score, Score::MAX);
+            let score = self.score_after_place(
+                &mut state,
+                stone,
+                depth.minus(Depth::MOVE),
+                raw,
+                best_score,
+                Score::MAX,
+            );
             state.undo(candidate, stone);
 
             if score > best_score {
@@ -163,7 +202,7 @@ impl<'a> Search<'a> {
         &mut self,
         state: &mut SearchState,
         stone: Stone,
-        child_depth: u32,
+        child_depth: Depth,
         raw: Score,
         alpha: Score,
         beta: Score,
@@ -182,6 +221,45 @@ impl<'a> Search<'a> {
     /// that swing out, as Rapfi does with `rawStaticEval[ply - 1]`.
     fn leaf_value(state: &SearchState, stone: Stone, parent_raw: Score) -> Score {
         (state.evaluate(stone) - parent_raw) / 2
+    }
+
+    /// A win in five stones for `stone`, about to move with no four on the
+    /// board on either side, that needs no search to see (Rapfi's
+    /// `quickWinCheck` beyond fives and unstoppable fours).
+    ///
+    /// A stone making a four and a free three at once wins: the four must be
+    /// blocked, then the free three becomes an open four. The block can only
+    /// break the sequence by making a four of its own, so it is played out
+    /// unless the opponent has no cell that makes a four at all. A stone
+    /// making two free threes wins the same way as long as the opponent has
+    /// no cell that makes a four, since any of its defences could then be a
+    /// counter-four instead.
+    fn win_by_threats(state: &mut SearchState, stone: Stone) -> Option<Score> {
+        let opponent = stone.opponent();
+        let opponent_can_make_a_four = (state.four_making_cells(opponent)
+            | state.cells_with(opponent, Threat::UnstoppableFour))
+        .any();
+        let win = Score::win_at_depth(state.move_count() + 5);
+
+        let four_threes = state.cells_with(stone, Threat::FourAndFreeThree);
+        if four_threes.any() && !opponent_can_make_a_four {
+            return Some(win);
+        }
+        for cell in four_threes.iter_set() {
+            state.place(cell, stone);
+            let block = state.cells_with(stone, Threat::Five).iter_set().next();
+            let block_makes_no_four =
+                block.is_some_and(|block| state.threat_at(block, opponent) < Threat::Four);
+            state.undo(cell, stone);
+            if block_makes_no_four {
+                return Some(win);
+            }
+        }
+
+        if !opponent_can_make_a_four && state.cells_with(stone, Threat::TwoFreeThrees).any() {
+            return Some(win);
+        }
+        None
     }
 
     /// Rapfi's `quickVCFSearch`: whether `attacker`, about to move, wins by
@@ -259,18 +337,18 @@ impl<'a> Search<'a> {
     }
 
     /// Scores the position for `stone`, who is about to move, with `depth`
-    /// moves left to search.
+    /// left to search.
     ///
     /// A four on the board, or a cell that makes an unstoppable four,
     /// decides what happens next, so such positions are never scored
     /// statically: a side that can complete five or make an unstoppable
     /// four has already won, and a side that must block or prevent one gets
-    /// its forced replies searched even at depth 0. Only a position with
-    /// nothing forced is a leaf at depth 0.
+    /// its forced replies searched even when the depth has run out. Only a
+    /// position with nothing forced is a leaf then.
     fn negamax(
         &mut self,
         state: &mut SearchState,
-        depth: u32,
+        depth: Depth,
         parent_raw: Score,
         mut alpha: Score,
         beta: Score,
@@ -285,7 +363,12 @@ impl<'a> Search<'a> {
             Situation::MakeUnstoppableFour => {
                 return Score::win_at_depth(state.move_count() + 3);
             }
-            Situation::Develop if depth == 0 => {
+            Situation::Develop | Situation::PreventUnstoppableFour
+                if let Some(win) = Self::win_by_threats(state, stone) =>
+            {
+                return win;
+            }
+            Situation::Develop if depth == Depth::ZERO => {
                 // Rapfi's leaf: below beta the side to move first gets to try
                 // a victory by continuous fours, which no static value sees.
                 let value = Self::leaf_value(state, stone, parent_raw);
@@ -298,7 +381,7 @@ impl<'a> Search<'a> {
             }
             // At the horizon a threatened side may still win by fours of its
             // own: each forces a block, so the threat never gets carried out.
-            Situation::PreventUnstoppableFour if depth == 0 => {
+            Situation::PreventUnstoppableFour if depth == Depth::ZERO => {
                 if let Some(win) = self.continuous_fours(state, stone, None, VCF_PLIES) {
                     return win;
                 }
@@ -311,8 +394,8 @@ impl<'a> Search<'a> {
 
         // A leaf's value depends on its parent, so only nodes with depth to
         // search below them, whose value is the position's own, use the table.
-        if depth > 0
-            && let Some((tt_score, bound)) = self.tt.probe(state.hash(), depth)
+        if depth > Depth::ZERO
+            && let Some((tt_score, bound)) = self.tt.probe(state.hash(), depth.thirds())
         {
             match bound {
                 Bound::Exact => return tt_score,
@@ -327,19 +410,14 @@ impl<'a> Search<'a> {
         let mut buf: CandidateBuf = [PositionId::default(); PositionId::COUNT];
         let candidates = state.candidates(stone, situation, &mut buf);
 
-        // Every move costs depth, but the horizon never cuts off a forced
-        // reply: at depth 0 the forced replies are still searched, so a
-        // position with a four or an unstoppable four in the making is never
-        // scored statically. Forced replies must not be free, or lines with
-        // a threat in them would end one stone later than the others and the
-        // evaluation, which credits whoever moved last, would favour making
-        // threats for their own sake.
-        let searched = if depth == 0 {
+        // The horizon never cuts off a forced reply, so a position with a
+        // four or an unstoppable four in the making is never scored
+        // statically.
+        let searched = if depth == Depth::ZERO {
             candidates.forced
         } else {
             candidates.count
         };
-        let child_depth = depth.saturating_sub(1);
         if searched == 0 {
             return Self::leaf_value(state, stone, parent_raw);
         }
@@ -359,17 +437,26 @@ impl<'a> Search<'a> {
 
         for (i, &candidate) in buf[..searched].iter().enumerate() {
             let is_forced = i < candidates.forced;
+            // A counter-four against an unstoppable four in the making is
+            // charged like any other move, or a side with many fours
+            // available could keep the tree growing without bound.
+            let cost = match situation {
+                Situation::BlockFour => Depth::ZERO,
+                Situation::PreventUnstoppableFour if is_forced => Depth::THIRD,
+                _ => Depth::MOVE,
+            };
 
             state.place(candidate, stone);
-            let score = self.score_after_place(state, stone, child_depth, raw, alpha, beta);
+            let score = self.score_after_place(state, stone, depth.minus(cost), raw, alpha, beta);
             state.undo(candidate, stone);
 
             if score >= beta {
                 if !is_forced {
                     self.killers.put(depth, candidate);
                 }
-                if depth > 0 {
-                    self.tt.store(state.hash(), depth, beta, Bound::Lower);
+                if depth > Depth::ZERO {
+                    self.tt
+                        .store(state.hash(), depth.thirds(), beta, Bound::Lower);
                 }
                 return beta;
             }
@@ -383,8 +470,8 @@ impl<'a> Search<'a> {
         } else {
             Bound::Upper
         };
-        if depth > 0 {
-            self.tt.store(state.hash(), depth, alpha, bound);
+        if depth > Depth::ZERO {
+            self.tt.store(state.hash(), depth.thirds(), alpha, bound);
         }
         alpha
     }
@@ -503,74 +590,74 @@ mod tests {
 
     #[test]
     fn killer_table_starts_empty() {
-        let table = KillerTable::new(4);
+        let table = KillerTable::new(Depth(4));
 
         for depth in 0..4 {
-            assert_eq!(*table.get(depth), [None, None]);
+            assert_eq!(*table.get(Depth(depth)), [None, None]);
         }
     }
 
     #[test]
     fn killer_table_stores_in_first_slot() {
-        let mut table = KillerTable::new(4);
+        let mut table = KillerTable::new(Depth(4));
         let position = pos(7, 7);
 
-        table.put(2, position);
+        table.put(Depth(2), position);
 
-        assert_eq!(table.get(2), &[Some(position), None]);
+        assert_eq!(table.get(Depth(2)), &[Some(position), None]);
     }
 
     #[test]
     fn killer_table_shifts_first_to_second_on_new_entry() {
-        let mut table = KillerTable::new(4);
+        let mut table = KillerTable::new(Depth(4));
         let first = pos(7, 7);
         let second = pos(3, 3);
 
-        table.put(1, first);
-        table.put(1, second);
+        table.put(Depth(1), first);
+        table.put(Depth(1), second);
 
-        assert_eq!(table.get(1), &[Some(second), Some(first)]);
+        assert_eq!(table.get(Depth(1)), &[Some(second), Some(first)]);
     }
 
     #[test]
     fn killer_table_skips_duplicate_in_first_slot() {
-        let mut table = KillerTable::new(4);
+        let mut table = KillerTable::new(Depth(4));
         let first = pos(7, 7);
         let second = pos(3, 3);
 
-        table.put(0, first);
-        table.put(0, second);
-        table.put(0, second);
+        table.put(Depth(0), first);
+        table.put(Depth(0), second);
+        table.put(Depth(0), second);
 
-        assert_eq!(table.get(0), &[Some(second), Some(first)]);
+        assert_eq!(table.get(Depth(0)), &[Some(second), Some(first)]);
     }
 
     #[test]
     fn killer_table_depths_are_independent() {
-        let mut table = KillerTable::new(4);
+        let mut table = KillerTable::new(Depth(4));
         let position_a = pos(7, 7);
         let position_b = pos(3, 3);
 
-        table.put(0, position_a);
-        table.put(3, position_b);
+        table.put(Depth(0), position_a);
+        table.put(Depth(3), position_b);
 
-        assert_eq!(table.get(0), &[Some(position_a), None]);
-        assert_eq!(table.get(1), &[None, None]);
-        assert_eq!(table.get(3), &[Some(position_b), None]);
+        assert_eq!(table.get(Depth(0)), &[Some(position_a), None]);
+        assert_eq!(table.get(Depth(1)), &[None, None]);
+        assert_eq!(table.get(Depth(3)), &[Some(position_b), None]);
     }
 
     #[test]
     fn killer_table_third_entry_evicts_oldest() {
-        let mut table = KillerTable::new(4);
+        let mut table = KillerTable::new(Depth(4));
         let first = pos(7, 7);
         let second = pos(3, 3);
         let third = pos(5, 5);
 
-        table.put(0, first);
-        table.put(0, second);
-        table.put(0, third);
+        table.put(Depth(0), first);
+        table.put(Depth(0), second);
+        table.put(Depth(0), third);
 
-        assert_eq!(table.get(0), &[Some(third), Some(second)]);
+        assert_eq!(table.get(Depth(0)), &[Some(third), Some(second)]);
     }
 
     #[test]
@@ -798,14 +885,76 @@ mod tests {
     fn dense_middle_game_search_stays_within_a_node_budget() {
         let board = dense_middle_game();
         let mut tt = TranspositionTable::new();
-        let mut search = Search::new(4, &mut tt);
+        let mut search = Search::new(Depth::moves(4), &mut tt);
 
-        search.best_move(&board, Stone::White, 4, &mut fastrand::Rng::with_seed(7));
+        search.best_move(
+            &board,
+            Stone::White,
+            Depth::moves(4),
+            &mut fastrand::Rng::with_seed(7),
+        );
 
         assert!(
             search.nodes < 300_000,
             "depth-4 search used {} nodes",
             search.nodes
         );
+    }
+
+    #[test]
+    fn two_free_threes_win_when_the_opponent_has_no_four_in_reach() {
+        // (7,8) joins _XX_ on row 7 and _XX_ on column 8 into two free
+        // threes. White's stones are far away and make no four.
+        let mut board = Board::new();
+        place_stones(&mut board, Stone::Black, &[(7, 6), (7, 7), (5, 8), (6, 8)]);
+        place_stones(&mut board, Stone::White, &[(0, 0), (0, 14), (14, 0)]);
+        let mut state = SearchState::from_board(&board);
+
+        assert_eq!(
+            Search::win_by_threats(&mut state, Stone::Black),
+            Some(Score::win_at_depth(7 + 5))
+        );
+        assert_eq!(Search::win_by_threats(&mut state, Stone::White), None);
+    }
+
+    #[test]
+    fn two_free_threes_are_no_sure_win_against_a_side_that_can_make_a_four() {
+        // As above, but White holds OOO hemmed at (3,4): (3,8) makes a four,
+        // so a defence of either three could be a counter-four instead.
+        let mut board = Board::new();
+        place_stones(
+            &mut board,
+            Stone::Black,
+            &[(7, 6), (7, 7), (5, 8), (6, 8), (3, 4)],
+        );
+        place_stones(&mut board, Stone::White, &[(3, 5), (3, 6), (3, 7)]);
+        let mut state = SearchState::from_board(&board);
+
+        assert_eq!(Search::win_by_threats(&mut state, Stone::Black), None);
+    }
+
+    #[test]
+    fn four_and_free_three_win_unless_the_block_makes_a_four() {
+        // (7,7) makes OXXXX_ on row 7 and _XXX_ on column 7 at once; White
+        // must block at (7,8). White's OOO on row 3 gives it a four to make,
+        // so the block is played out: at (7,8) it makes nothing.
+        let mut board = Board::new();
+        place_stones(
+            &mut board,
+            Stone::Black,
+            &[(7, 4), (7, 5), (7, 6), (5, 7), (6, 7), (3, 4)],
+        );
+        place_stones(&mut board, Stone::White, &[(7, 3), (3, 5), (3, 6), (3, 7)]);
+        let mut state = SearchState::from_board(&board);
+        assert_eq!(
+            Search::win_by_threats(&mut state, Stone::Black),
+            Some(Score::win_at_depth(10 + 5))
+        );
+
+        // With OO_O on column 8 the block at (7,8) makes a White four.
+        place_stones(&mut board, Stone::White, &[(4, 8), (5, 8), (6, 8)]);
+        place_stones(&mut board, Stone::Black, &[(8, 8)]);
+        let mut state = SearchState::from_board(&board);
+        assert_eq!(Search::win_by_threats(&mut state, Stone::Black), None);
     }
 }

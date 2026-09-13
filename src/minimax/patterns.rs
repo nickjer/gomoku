@@ -459,7 +459,14 @@ impl PatternCode {
     #[must_use]
     #[inline]
     pub fn threat(self) -> Threat {
-        THREATS[usize::from(self.0)]
+        self.threat_from(threat_table())
+    }
+
+    /// The same, from a table reference held across many lookups.
+    #[must_use]
+    #[inline]
+    pub fn threat_from(self, table: &ThreatTable) -> Threat {
+        table[usize::from(self.0)]
     }
 }
 
@@ -591,7 +598,9 @@ impl Threat {
 }
 
 /// Threat of every pattern code.
-static THREATS: LazyLock<Box<[Threat; PATTERN_CODES]>> = LazyLock::new(|| {
+pub type ThreatTable = [Threat; PATTERN_CODES];
+
+static THREATS: LazyLock<Box<ThreatTable>> = LazyLock::new(|| {
     let codes = pattern_code_table();
     let mut table = vec![Threat::Nothing; PATTERN_CODES];
     for key in 0..1u32 << 16 {
@@ -609,6 +618,12 @@ static THREATS: LazyLock<Box<[Threat; PATTERN_CODES]>> = LazyLock::new(|| {
         .try_into()
         .expect("table has 3876 entries")
 });
+
+/// The threat table, built on first use.
+#[must_use]
+pub fn threat_table() -> &'static ThreatTable {
+    &THREATS
+}
 
 #[cfg(test)]
 mod tests {

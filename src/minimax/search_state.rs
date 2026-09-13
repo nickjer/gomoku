@@ -10,7 +10,7 @@ use crate::stone::Stone;
 use super::lines::{LINE_CELLS, LINE_LENGTHS, NEIGHBOURHOODS, NUM_LINES, POSITION_LINES, REACH};
 use super::patterns::{
     CellPatterns, LinePattern, LinePatternTable, PatternCode, PatternCodeTable, Threat,
-    line_pattern_from, line_pattern_table, pattern_code_table,
+    ThreatTable, line_pattern_from, line_pattern_table, pattern_code_table, threat_table,
 };
 use super::score::Score;
 use super::tt::ZOBRIST;
@@ -122,7 +122,7 @@ impl SearchState {
             }
         }
 
-        let (table, lines) = (pattern_code_table(), line_pattern_table());
+        let (table, lines, threats) = (pattern_code_table(), line_pattern_table(), threat_table());
         for position in PositionId::iter() {
             if board.is_empty(position) {
                 for colour in [Stone::Black, Stone::White] {
@@ -131,7 +131,7 @@ impl SearchState {
                         let pattern = state.line_pattern_at(lines, position, direction, colour);
                         patterns = patterns.with(direction, pattern);
                     }
-                    state.set_patterns(position, colour, patterns, table);
+                    state.set_patterns(position, colour, patterns, table, threats);
                 }
             }
         }
@@ -160,11 +160,11 @@ impl SearchState {
         let mut frame = UndoFrame {
             patterns: [[CellPatterns::NONE; 2]; CHANGED_CELLS],
         };
-        let (table, lines) = (pattern_code_table(), line_pattern_table());
+        let (table, lines, threats) = (pattern_code_table(), line_pattern_table(), threat_table());
         // The cell itself is taken: it no longer offers anything to anyone.
         frame.patterns[0] = *self.patterns.get(position);
         for colour in [Stone::Black, Stone::White] {
-            self.set_patterns(position, colour, CellPatterns::NONE, table);
+            self.set_patterns(position, colour, CellPatterns::NONE, table, threats);
         }
         // Each neighbour shares exactly one line with the stone, so only
         // that line's pattern can have changed.
@@ -178,7 +178,7 @@ impl SearchState {
                 let pattern = self.line_pattern_at(lines, cell, direction, colour);
                 let patterns =
                     self.patterns.get(cell)[usize::from(colour)].with(direction, pattern);
-                self.set_patterns(cell, colour, patterns, table);
+                self.set_patterns(cell, colour, patterns, table, threats);
             }
         }
 
@@ -202,23 +202,18 @@ impl SearchState {
         }
 
         let frame = self.undo_stack.pop().expect("undo without matching place");
-        let table = pattern_code_table();
-        for colour in [Stone::Black, Stone::White] {
-            self.set_patterns(
-                position,
-                colour,
-                frame.patterns[0][usize::from(colour)],
-                table,
-            );
-        }
-        for (i, &(cell, _)) in NEIGHBOURHOODS.get(position).cells().iter().enumerate() {
+        let (table, threats) = (pattern_code_table(), threat_table());
+        let changed = std::iter::once(position).chain(
+            NEIGHBOURHOODS
+                .get(position)
+                .cells()
+                .iter()
+                .map(|&(cell, _)| cell),
+        );
+        for (i, cell) in changed.enumerate() {
             for colour in [Stone::Black, Stone::White] {
-                self.set_patterns(
-                    cell,
-                    colour,
-                    frame.patterns[i + 1][usize::from(colour)],
-                    table,
-                );
+                let patterns = frame.patterns[i][usize::from(colour)];
+                self.set_patterns(cell, colour, patterns, table, threats);
             }
         }
         self.outcome = None;
@@ -423,6 +418,7 @@ impl SearchState {
         colour: Stone,
         patterns: CellPatterns,
         table: &PatternCodeTable,
+        threats: &ThreatTable,
     ) {
         let side = usize::from(colour);
         let old = std::mem::replace(&mut self.patterns.get_mut(cell)[side], patterns);
@@ -432,7 +428,8 @@ impl SearchState {
         let new_code = patterns.code_from(table);
         let old_code = std::mem::replace(&mut self.codes.get_mut(cell)[side], new_code);
         self.total[side] += new_code.value() - old_code.value();
-        let (old_threat, new_threat) = (old_code.threat(), new_code.threat());
+        let (old_threat, new_threat) =
+            (old_code.threat_from(threats), new_code.threat_from(threats));
         if old_threat != new_threat {
             if old_threat != Threat::Nothing {
                 self.threat_cells[side][old_threat.index()].clear(cell);
