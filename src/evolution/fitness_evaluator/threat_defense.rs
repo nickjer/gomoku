@@ -2,7 +2,7 @@ use tracing::instrument;
 
 use crate::evolution::fitness_score::FitnessScore;
 use crate::strategy::Strategy;
-use crate::threat::{generate_threat_scenarios, test_defense};
+use crate::threat::{count_correct_moves, generate_threat_scenarios};
 
 use super::EvaluateFitness;
 
@@ -19,7 +19,7 @@ impl EvaluateFitness for ThreatDefenseFitness {
         let scenarios = generate_threat_scenarios(rng);
         strategies
             .iter()
-            .map(|strategy| FitnessScore::new(test_defense(strategy, &scenarios, rng)))
+            .map(|strategy| FitnessScore::new(count_correct_moves(strategy, &scenarios, rng)))
             .collect()
     }
 }

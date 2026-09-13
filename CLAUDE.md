@@ -87,6 +87,7 @@ The `Tournament` enum manages competition formats using `enum_dispatch`:
 The `Evolver` orchestrates the genetic algorithm. Call `evolve(strategies, rng, on_generation)` with initial strategies and a per-generation callback.
 
 - **Fitness**: Weighted combination of tournament ranking, threat defense evaluation, and minimax challenge
+- **Threat scenarios** (`threat.rs`): each scenario is stamped from a `const` pattern of cells (`Mover`, `Opponent`, `Empty`, `Answer`) laid along a random direction from a start chosen so every cell fits on the board. Filler stones go to the side with fewer pattern stones. A new shape is one data line.
 - **Selection** enum: `Tournament` (configured via `TournamentMode::WithReplacement` or `WithoutReplacement`)
 - **Crossover** enum: `Uniform`; `apply(parent1, parent2, rng)` builds the child
 - **Mutation** enum: `Gaussian { sigma }`; `apply(&mut genes, rng)` changes them in place
