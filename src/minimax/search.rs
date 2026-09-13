@@ -183,6 +183,7 @@ impl<'a> Search<'a> {
 
         for pass in 1..=moves {
             let depth = Depth::moves(pass);
+            let child_depth = depth.minus(Depth::MOVE);
             let previous_rank = candidates
                 .iter()
                 .position(|&candidate| candidate == best_move)
@@ -196,24 +197,44 @@ impl<'a> Search<'a> {
             // paired games against the plain search, so the window is
             // opened one point below the best and a move that only equals
             // it comes back exact instead of failing low.
+            //
+            // After the first move the window is closed one point above
+            // the best as well: a move that beats the best fails high and
+            // is searched again for its exact score, which is what a
+            // single search above the best would have found, while the
+            // others are settled by the narrow search alone.
             let mut best_rank = previous_rank;
             let mut best_score = Score::MIN;
             for rank in order {
                 let candidate = candidates[rank];
-                let alpha = if best_score == Score::MIN {
-                    Score::MIN
-                } else {
-                    best_score - Score::new(1)
-                };
                 state.place(candidate, stone);
-                let score = self.score_after_place(
-                    &mut state,
-                    stone,
-                    depth.minus(Depth::MOVE),
-                    raw,
-                    alpha,
-                    Score::MAX,
-                );
+                let score = if best_score == Score::MIN {
+                    self.score_after_place(
+                        &mut state,
+                        stone,
+                        child_depth,
+                        raw,
+                        Score::MIN,
+                        Score::MAX,
+                    )
+                } else {
+                    let alpha = best_score - Score::new(1);
+                    let beta = best_score + Score::new(1);
+                    let narrow =
+                        self.score_after_place(&mut state, stone, child_depth, raw, alpha, beta);
+                    if narrow >= beta {
+                        self.score_after_place(
+                            &mut state,
+                            stone,
+                            child_depth,
+                            raw,
+                            best_score,
+                            Score::MAX,
+                        )
+                    } else {
+                        narrow
+                    }
+                };
                 state.undo(candidate, stone);
 
                 if score > best_score || (score == best_score && rank < best_rank) {
@@ -505,8 +526,24 @@ impl<'a> Search<'a> {
                 _ => Depth::MOVE,
             };
 
+            // After the first move, a window one point wide only asks
+            // whether the move beats alpha; one that does is searched again
+            // in the full window for its value. When the full window is
+            // itself one point wide, the first search already answers.
+            let child_depth = depth.minus(cost);
+            let narrow_beta = alpha + Score::new(1);
             state.place(candidate, stone);
-            let score = self.score_after_place(state, stone, depth.minus(cost), raw, alpha, beta);
+            let score = if i == 0 || narrow_beta >= beta {
+                self.score_after_place(state, stone, child_depth, raw, alpha, beta)
+            } else {
+                let narrow =
+                    self.score_after_place(state, stone, child_depth, raw, alpha, narrow_beta);
+                if narrow >= narrow_beta {
+                    self.score_after_place(state, stone, child_depth, raw, alpha, beta)
+                } else {
+                    narrow
+                }
+            };
             state.undo(candidate, stone);
 
             if score >= beta {
