@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::board::Board;
 use crate::nn::{ClusterSmall, ClusterTiny, ConvSmall, ConvTiny};
 use crate::position_id::PositionId;
+use crate::position_map::PositionMap;
 use crate::stone::Stone;
 use crate::strategy::Strategy;
 
@@ -42,6 +43,18 @@ impl SavedStrategy {
             Self::ConvSmall(strategy) => strategy,
             Self::ClusterTiny(strategy) => strategy,
             Self::ClusterSmall(strategy) => strategy,
+        }
+    }
+
+    /// The network's score for every position, reading the board as it lies
+    /// from the current player's side.
+    #[must_use]
+    pub fn score_positions(&self, current_stone: Stone, board: &Board) -> PositionMap<f32, 1> {
+        match self {
+            Self::ConvTiny(strategy) => strategy.score_positions(current_stone, board),
+            Self::ConvSmall(strategy) => strategy.score_positions(current_stone, board),
+            Self::ClusterTiny(strategy) => strategy.score_positions(current_stone, board),
+            Self::ClusterSmall(strategy) => strategy.score_positions(current_stone, board),
         }
     }
 }

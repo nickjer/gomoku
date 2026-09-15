@@ -5,6 +5,7 @@ use tracing::instrument;
 
 use crate::board::Board;
 use crate::position_id::PositionId;
+use crate::position_map::PositionMap;
 use crate::stone::Stone;
 use crate::strategy::{EvolvableStrategy, Strategy};
 
@@ -32,6 +33,18 @@ pub type ClusterTiny = NeuralNetworkStrategy<ClusterExpansion<CLUSTER_COUNT>, 32
 
 /// Full cluster expansion, 64 channels, 4 layers. ~112K parameters.
 pub type ClusterSmall = NeuralNetworkStrategy<ClusterExpansion<CLUSTER_COUNT>, 64, 4>;
+
+impl<Encoder: NeighborhoodEncoder, const CHANNELS: usize, const LAYERS: usize>
+    NeuralNetworkStrategy<Encoder, CHANNELS, LAYERS>
+{
+    /// The network's score for every position, reading the board as it lies
+    /// from the current player's side.
+    #[must_use]
+    pub fn score_positions(&self, current_stone: Stone, board: &Board) -> PositionMap<f32, 1> {
+        self.network
+            .score_positions(board_to_stone_channels(board, current_stone))
+    }
+}
 
 impl<Encoder: NeighborhoodEncoder, const CHANNELS: usize, const LAYERS: usize> fmt::Display
     for NeuralNetworkStrategy<Encoder, CHANNELS, LAYERS>
@@ -101,9 +114,7 @@ impl<Encoder: NeighborhoodEncoder, const CHANNELS: usize, const LAYERS: usize> E
         board: &Board,
         rng: &mut fastrand::Rng,
     ) -> Vec<PositionId> {
-        let scores = self
-            .network
-            .score_positions(board_to_stone_channels(board, current_stone));
+        let scores = self.score_positions(current_stone, board);
         // Shuffling first puts tied positions in random order, since the sort is stable.
         let mut ranked_positions = board.empty_position_ids();
         rng.shuffle(&mut ranked_positions);
