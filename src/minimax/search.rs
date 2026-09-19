@@ -477,7 +477,7 @@ impl<'a> Search<'a> {
                     Bound::Upper => beta = beta.min(tt_score),
                 }
                 if alpha >= beta {
-                    return beta;
+                    return tt_score;
                 }
             }
         }
@@ -514,7 +514,12 @@ impl<'a> Search<'a> {
             }
         }
 
+        // The value returned and stored is always one a searched line
+        // produced, never the window's edge: a win or loss counts the stones
+        // on the board at the five, and a point above or below such a
+        // score is a five one stone away from where it can fall.
         let mut best_move = None;
+        let mut best_value = Score::MIN;
         for (i, &candidate) in buf[..searched].iter().enumerate() {
             let is_forced = i < candidates.forced;
             // A counter-four against an unstoppable four in the making is
@@ -546,6 +551,7 @@ impl<'a> Search<'a> {
             };
             state.undo(candidate, stone);
 
+            best_value = best_value.max(score);
             if score >= beta {
                 if !is_forced {
                     self.killers.put(depth, candidate);
@@ -554,12 +560,12 @@ impl<'a> Search<'a> {
                     self.tt.store(
                         state.hash(),
                         depth.thirds(),
-                        beta,
+                        score,
                         Bound::Lower,
                         Some(candidate),
                     );
                 }
-                return beta;
+                return score;
             }
             if score > alpha {
                 alpha = score;
@@ -568,16 +574,16 @@ impl<'a> Search<'a> {
         }
 
         // Every move failing low leaves no move worth trying first.
-        let bound = if alpha > alpha_orig {
+        let bound = if best_value > alpha_orig {
             Bound::Exact
         } else {
             Bound::Upper
         };
         if depth > Depth::ZERO {
             self.tt
-                .store(state.hash(), depth.thirds(), alpha, bound, best_move);
+                .store(state.hash(), depth.thirds(), best_value, bound, best_move);
         }
-        alpha
+        best_value
     }
 }
 
@@ -957,6 +963,36 @@ mod tests {
 
         assert!(score < Score::DRAW, "{score:?}");
     }
+
+    #[test]
+    fn a_loss_found_through_the_table_is_an_even_number_of_stones_away() {
+        // A Gomocup position with nine stones, White to move. Scoring the
+        // cell to the left first leaves table entries that the second
+        // search picks up.
+        let mut board = Board::new();
+        place_stones(
+            &mut board,
+            Stone::Black,
+            &[(2, 3), (2, 4), (4, 2), (5, 4), (5, 5)],
+        );
+        place_stones(&mut board, Stone::White, &[(4, 4), (4, 5), (5, 2), (6, 4)]);
+        let mut tt = TranspositionTable::new();
+        score_move(&board, Stone::White, pos(4, 7), 4, &mut tt);
+
+        let score = score_move(&board, Stone::White, pos(4, 8), 4, &mut tt);
+
+        // White's stone is the tenth on the board, so Black's five, if it
+        // comes, is stone 11, 13, 15, ...: an even number of stones away.
+        let losses_an_even_number_of_stones_away: Vec<Score> = (2..PositionId::COUNT - 9)
+            .step_by(2)
+            .map(|stones| -Score::win_at_depth(9 + stones))
+            .collect();
+        assert!(
+            losses_an_even_number_of_stones_away.contains(&score),
+            "{score:?} is not a loss an even number of stones away"
+        );
+    }
+
     /// A middle-game position where White, to move, faces threats on several
     /// lines and has many cells that would make a four. Counter-fours must
     /// cost depth: the depth-4 search below takes about 330 thousand nodes
