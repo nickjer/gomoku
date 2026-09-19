@@ -112,11 +112,7 @@ pub struct EvolveArgs {
     #[arg(long, default_value = "100", value_name = "N")]
     pub boards_per_generation: usize,
 
-    /// Largest magnitude a minimax score keeps before shortfalls are taken
-    #[arg(long, default_value = "1000")]
-    pub score_cap: f32,
-
-    /// Extra caps a win or loss two stones away is worth, halving with distance (0 = every win or loss is worth one cap)
+    /// Extra multiples of the file's largest estimate a win or loss two stones away is worth, halving with distance (0 = every win or loss is worth the largest estimate)
     #[arg(long, default_value = "2")]
     pub nearness_weight: f32,
 
@@ -274,7 +270,6 @@ fn create_evolver(args: &EvolveArgs) -> Result<Evolver> {
         evaluators.push((
             ScoredBoardFitness::read(
                 BufReader::new(file),
-                args.score_cap,
                 args.nearness_weight,
                 args.boards_per_generation,
                 args.rank_decay,
@@ -335,7 +330,6 @@ mod tests {
             PathBuf::from("data/scored_boards.jsonl")
         );
         assert_eq!(cli.args.boards_per_generation, 100);
-        assert!((cli.args.score_cap - 1000.0).abs() < f32::EPSILON);
         assert!((cli.args.nearness_weight - 2.0).abs() < f32::EPSILON);
         assert!((cli.args.rank_decay - 0.1).abs() < f32::EPSILON);
     }

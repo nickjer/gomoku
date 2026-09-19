@@ -24,11 +24,11 @@ pub struct ScoredBoardFitness {
     boards: Vec<ScoredBoard>,
     boards_per_generation: usize,
     rank_decay: f32,
-    cap: f32,
+    largest_estimate: f32,
 }
 
 /// A board with, for every empty position, how far its value falls behind
-/// the board's best position, as a share of the cap.
+/// the board's best position, as a share of the file's largest estimate.
 struct ScoredBoard {
     board: Board,
     shortfall: PositionArray<Option<f32>>,
@@ -50,46 +50,52 @@ struct ScoredBoardRecord {
 #[derive(Deserialize, Clone, Copy)]
 #[serde(untagged)]
 enum CellScore {
-    Points(i32),
+    Points(f32),
     Win { win: u16 },
     Loss { loss: u16 },
 }
 
 /// An estimate this large can only be a raw win or loss score from an old file.
-const LARGEST_ESTIMATE: i32 = 10_000_000;
+const LARGEST_ESTIMATE: f32 = 10_000_000.0;
 
 /// A pick at least this far behind the best is counted as a blunder: a
-/// losing move on a quiet board costs about the whole cap.
+/// losing move on a quiet board costs about the largest estimate.
 const BLUNDER_SHORTFALL: f32 = 0.9;
 
 impl ScoredBoardFitness {
     /// Reads scored boards from JSON Lines and gives every position a value:
-    /// an estimate is clamped to `[-cap, cap]`, and a win or loss after `n`
-    /// more stones is worth the cap times `1 + nearness_weight * 2 / n`.
-    /// Shortfalls are taken from the values, and boards where every move
-    /// ties are dropped.
+    /// an estimate is its points, and a win or loss after `n` more stones is
+    /// worth the largest estimate in the file times
+    /// `1 + nearness_weight * 2 / n`, so every win ranks above every
+    /// estimate and every loss below. Shortfalls are taken from the values,
+    /// and boards where every move ties are dropped.
     ///
     /// # Errors
     ///
-    /// Returns an error if the cap is not positive, the nearness weight is
-    /// negative, a line does not parse or does not describe a whole board, a
-    /// score is a raw win or loss instead of a spelled-out game end, or no
+    /// Returns an error if the nearness weight is negative, a line does not
+    /// parse or does not describe a whole board, a score is a raw win or
+    /// loss instead of a spelled-out game end, no estimate is nonzero, or no
     /// board is left.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "parsing the lines and then valuing them reads better than helpers with one caller"
+    )]
     pub fn read(
         reader: impl BufRead,
-        cap: f32,
         nearness_weight: f32,
         boards_per_generation: usize,
         rank_decay: f32,
     ) -> Result<Self> {
-        ensure!(cap > 0.0, "the score cap must be positive");
         ensure!(
             nearness_weight >= 0.0,
             "the nearness weight must not be negative"
         );
-        let mut boards = Vec::new();
-        let mut tied_boards = 0;
+
+        // Every board is parsed before any is valued, since a win or loss is
+        // worth the largest estimate in the whole file.
+        let mut records = Vec::new();
         let mut depths = Vec::new();
+        let mut largest_estimate = 0.0_f32;
         for (line_index, line) in reader.lines().enumerate() {
             let line_number = line_index + 1;
             let record: ScoredBoardRecord = serde_json::from_str(&line?)
@@ -117,7 +123,25 @@ impl ScoredBoardFitness {
                 }
             }
 
-            // A five after `stones` more stones weighs `1 + nearness_weight * 2 / stones` caps.
+            for cell in record.scores.iter().flatten() {
+                if let CellScore::Points(points) = *cell {
+                    largest_estimate = largest_estimate.max(points.abs());
+                }
+            }
+            records.push((board, record.scores));
+        }
+        ensure!(
+            largest_estimate > 0.0,
+            "no estimate in the scored boards to scale wins and losses by"
+        );
+
+        let mut boards = Vec::new();
+        let mut tied_boards = 0;
+        for (line_index, (board, scores)) in records.into_iter().enumerate() {
+            let line_number = line_index + 1;
+
+            // A five after `stones` more stones weighs
+            // `1 + nearness_weight * 2 / stones` largest estimates.
             let nearness = |stones: u16| -> Result<f32> {
                 ensure!(
                     stones > 0,
@@ -126,7 +150,7 @@ impl ScoredBoardFitness {
                 Ok(1.0 + nearness_weight * 2.0 / f32::from(stones))
             };
             let mut values = Vec::with_capacity(PositionId::COUNT);
-            for cell in &record.scores {
+            for cell in &scores {
                 let value = match *cell {
                     None => None,
                     Some(CellScore::Points(points)) => {
@@ -135,12 +159,14 @@ impl ScoredBoardFitness {
                             "line {line_number}: {points} is a raw win or loss score, \
                              not an estimate; regenerate the file with game ends spelled out"
                         );
-                        #[allow(clippy::as_conversions, clippy::cast_precision_loss)]
-                        let estimate = points as f32;
-                        Some(estimate.clamp(-cap, cap))
+                        Some(points)
                     }
-                    Some(CellScore::Win { win: stones }) => Some(cap * nearness(stones)?),
-                    Some(CellScore::Loss { loss: stones }) => Some(-cap * nearness(stones)?),
+                    Some(CellScore::Win { win: stones }) => {
+                        Some(largest_estimate * nearness(stones)?)
+                    }
+                    Some(CellScore::Loss { loss: stones }) => {
+                        Some(-largest_estimate * nearness(stones)?)
+                    }
                 };
                 values.push(value);
             }
@@ -160,7 +186,8 @@ impl ScoredBoardFitness {
             }
             let mut shortfall = PositionArray::new(None);
             for (position, value) in PositionId::iter().zip(&values) {
-                *shortfall.get_mut(position) = value.map(|value| (best_value - value) / cap);
+                *shortfall.get_mut(position) =
+                    value.map(|value| (best_value - value) / largest_estimate);
             }
             boards.push(ScoredBoard { board, shortfall });
         }
@@ -169,6 +196,7 @@ impl ScoredBoardFitness {
             boards = boards.len(),
             tied_boards,
             depths = ?depths,
+            largest_estimate,
             "Read scored boards"
         );
 
@@ -176,7 +204,7 @@ impl ScoredBoardFitness {
             boards,
             boards_per_generation,
             rank_decay,
-            cap,
+            largest_estimate,
         })
     }
 }
@@ -245,7 +273,7 @@ impl EvaluateFitness for ScoredBoardFitness {
             .collect();
 
         info!(
-            mean_pick_shortfall_points = pick_shortfall_sum / picks * self.cap,
+            mean_pick_shortfall_points = pick_shortfall_sum / picks * self.largest_estimate,
             blunder_rate = blunders / picks,
             best_pick_rate = best_picks / picks,
             "Scored boards"
@@ -329,18 +357,20 @@ mod tests {
         )
     }
 
-    /// Black at 0, White at 1, Black to move. Position 2 is best, 3 is 200
-    /// points behind, 4 is a loss, and everything else is 500 behind.
+    /// Black at 0, White at 1, Black to move. Position 2 is best with the
+    /// largest estimate, 1000; 3 is 200 points behind; 4 is a loss after
+    /// eight stones, worth -1500; and everything else is 500 behind.
     fn one_board() -> String {
         line(
             &[(0, 'X'), (1, 'O')],
-            "0",
-            &[(2, "500"), (3, "300"), (4, "-2000000")],
+            "500",
+            &[(2, "1000"), (3, "800"), (4, "{\"loss\":8}")],
         )
     }
 
     /// Black at 0, Black to move. Wins after 1 and 3 stones at 2 and 3, an
-    /// even estimate at 4, losses after 4 and 2 stones at 5 and 6, and 0 elsewhere.
+    /// even estimate at 4, losses after 4 and 2 stones at 5 and 6, the
+    /// largest estimate, 1000, at 7, and 0 elsewhere.
     fn game_end_board() -> String {
         line(
             &[(0, 'X')],
@@ -351,12 +381,13 @@ mod tests {
                 (4, "0"),
                 (5, "{\"loss\":4}"),
                 (6, "{\"loss\":2}"),
+                (7, "1000"),
             ],
         )
     }
 
     fn evaluator(text: &str, rank_decay: f32) -> ScoredBoardFitness {
-        ScoredBoardFitness::read(text.as_bytes(), 1000.0, 2.0, 100, rank_decay).unwrap()
+        ScoredBoardFitness::read(text.as_bytes(), 2.0, 100, rank_decay).unwrap()
     }
 
     fn shortfall_at(evaluator: &ScoredBoardFitness, index: usize) -> f32 {
@@ -396,7 +427,7 @@ mod tests {
         );
         assert_eq!(
             *scored_board.shortfall.get(PositionId::from_index(4)),
-            Some(1.5)
+            Some(2.5)
         );
         assert_eq!(
             *scored_board.shortfall.get(PositionId::from_index(5)),
@@ -408,10 +439,17 @@ mod tests {
     fn a_game_end_is_worth_more_the_sooner_it_comes() {
         let evaluator = evaluator(&game_end_board(), 0.1);
 
-        // Values with a cap of 1000 and a nearness weight of 2: a win after
-        // one stone 5000, after three 2333.3, the estimate 0, a loss after
-        // four stones -2000, after two -3000.
-        for (index, expected) in [(2, 0.0), (3, 8.0 / 3.0), (4, 5.0), (5, 7.0), (6, 8.0)] {
+        // Values with a largest estimate of 1000 and a nearness weight of 2:
+        // a win after one stone 5000, after three 2333.3, the estimates 0
+        // and 1000, a loss after four stones -2000, after two -3000.
+        for (index, expected) in [
+            (2, 0.0),
+            (3, 8.0 / 3.0),
+            (4, 5.0),
+            (5, 7.0),
+            (6, 8.0),
+            (7, 4.0),
+        ] {
             let shortfall = shortfall_at(&evaluator, index);
             assert!(
                 (shortfall - expected).abs() < 1e-4,
@@ -421,11 +459,11 @@ mod tests {
     }
 
     #[test]
-    fn nearness_weight_zero_weighs_every_game_end_one_cap() {
+    fn nearness_weight_zero_weighs_every_game_end_like_the_largest_estimate() {
         let evaluator =
-            ScoredBoardFitness::read(game_end_board().as_bytes(), 1000.0, 0.0, 100, 0.1).unwrap();
+            ScoredBoardFitness::read(game_end_board().as_bytes(), 0.0, 100, 0.1).unwrap();
 
-        for (index, expected) in [(2, 0.0), (3, 0.0), (4, 1.0), (5, 2.0), (6, 2.0)] {
+        for (index, expected) in [(2, 0.0), (3, 0.0), (4, 1.0), (5, 2.0), (6, 2.0), (7, 0.0)] {
             let shortfall = shortfall_at(&evaluator, index);
             assert!(
                 (shortfall - expected).abs() < 1e-6,
@@ -448,7 +486,7 @@ mod tests {
     fn rejects_a_file_with_no_board_to_learn_from() {
         let all_tied = line(&[(0, 'X')], "7", &[]);
 
-        let error = ScoredBoardFitness::read(all_tied.as_bytes(), 1000.0, 2.0, 100, 0.1)
+        let error = ScoredBoardFitness::read(all_tied.as_bytes(), 2.0, 100, 0.1)
             .err()
             .unwrap();
 
@@ -459,7 +497,7 @@ mod tests {
     fn rejects_a_raw_win_or_loss_score() {
         let raw_loss = line(&[(0, 'X')], "0", &[(5, "-99999990")]);
 
-        let error = ScoredBoardFitness::read(raw_loss.as_bytes(), 1000.0, 2.0, 100, 0.1)
+        let error = ScoredBoardFitness::read(raw_loss.as_bytes(), 2.0, 100, 0.1)
             .err()
             .unwrap();
 
@@ -468,9 +506,9 @@ mod tests {
 
     #[test]
     fn rejects_a_game_end_after_no_stones() {
-        let instant_win = line(&[(0, 'X')], "0", &[(5, "{\"win\":0}")]);
+        let instant_win = line(&[(0, 'X')], "0", &[(4, "100"), (5, "{\"win\":0}")]);
 
-        let error = ScoredBoardFitness::read(instant_win.as_bytes(), 1000.0, 2.0, 100, 0.1)
+        let error = ScoredBoardFitness::read(instant_win.as_bytes(), 2.0, 100, 0.1)
             .err()
             .unwrap();
 
@@ -484,7 +522,7 @@ mod tests {
     fn rejects_a_record_without_a_depth() {
         let no_depth = one_board().replace(",\"depth\":4", "");
 
-        let error = ScoredBoardFitness::read(no_depth.as_bytes(), 1000.0, 2.0, 100, 0.1)
+        let error = ScoredBoardFitness::read(no_depth.as_bytes(), 2.0, 100, 0.1)
             .err()
             .unwrap();
 
@@ -493,9 +531,9 @@ mod tests {
 
     #[test]
     fn rejects_a_record_with_the_wrong_number_of_scores() {
-        let one_score_short = one_board().replacen(",0]", "]", 1);
+        let one_score_short = one_board().replacen(",500]", "]", 1);
 
-        let error = ScoredBoardFitness::read(one_score_short.as_bytes(), 1000.0, 2.0, 100, 0.1)
+        let error = ScoredBoardFitness::read(one_score_short.as_bytes(), 2.0, 100, 0.1)
             .err()
             .unwrap();
 
@@ -506,7 +544,7 @@ mod tests {
     fn rejects_an_unknown_stone_symbol() {
         let odd_symbol = one_board().replacen('.', "?", 1);
 
-        let error = ScoredBoardFitness::read(odd_symbol.as_bytes(), 1000.0, 2.0, 100, 0.1)
+        let error = ScoredBoardFitness::read(odd_symbol.as_bytes(), 2.0, 100, 0.1)
             .err()
             .unwrap();
 
@@ -514,17 +552,19 @@ mod tests {
     }
 
     #[test]
-    fn rejects_a_cap_that_is_not_positive() {
-        let error = ScoredBoardFitness::read(one_board().as_bytes(), 0.0, 2.0, 100, 0.1)
+    fn rejects_a_file_without_an_estimate_to_scale_game_ends_by() {
+        let only_game_ends = line(&[(0, 'X')], "0", &[(5, "{\"win\":1}")]);
+
+        let error = ScoredBoardFitness::read(only_game_ends.as_bytes(), 2.0, 100, 0.1)
             .err()
             .unwrap();
 
-        assert!(error.to_string().contains("cap"), "{error}");
+        assert!(error.to_string().contains("no estimate"), "{error}");
     }
 
     #[test]
     fn rejects_a_negative_nearness_weight() {
-        let error = ScoredBoardFitness::read(one_board().as_bytes(), 1000.0, -1.0, 100, 0.1)
+        let error = ScoredBoardFitness::read(one_board().as_bytes(), -1.0, 100, 0.1)
             .err()
             .unwrap();
 
@@ -566,7 +606,7 @@ mod tests {
     fn decay_zero_counts_only_the_pick() {
         let evaluator = evaluator(&one_board(), 0.0);
 
-        for (first_ranked, expected_fitness) in [(2, 0.0), (3, -0.2), (4, -1.5)] {
+        for (first_ranked, expected_fitness) in [(2, 0.0), (3, -0.2), (4, -2.5)] {
             let fitness = fitness(&evaluator, FixedRanking(vec![first_ranked]));
 
             assert!(
@@ -580,24 +620,25 @@ mod tests {
     fn decay_weights_later_ranks_less() {
         let evaluator = evaluator(&one_board(), 0.1);
 
-        // Position 3 first (0.2), then 2 (0.0), then 4 (1.5), then 0.5 forever.
+        // Position 3 first (0.2), then 2 (0.0), then 4 (2.5), then 0.5 forever.
         let error = -fitness(&evaluator, FixedRanking(vec![3, 2, 4]));
 
         // Weights 1, 0.1, 0.01, 0.001, ... sum to 1 / 0.9.
-        let expected = (0.2 + 0.01 * 1.5 + 0.5 * 0.001 / 0.9) / (1.0 / 0.9);
+        let expected = (0.2 + 0.01 * 2.5 + 0.5 * 0.001 / 0.9) / (1.0 / 0.9);
         assert!((error - expected).abs() < 1e-5, "{error} != {expected}");
     }
 
     #[test]
     fn every_strategy_in_one_evaluation_sees_the_same_boards() {
-        // Three boards on which picking position 3 costs 0.0, 0.2 and 1.0.
+        // Three boards on which picking position 3 costs 0.0, 0.4 and 2.0
+        // of the largest estimate, 500.
         let text = [
             line(&[(0, 'X'), (1, 'O')], "0", &[(3, "500")]),
             line(&[(0, 'X'), (1, 'O')], "0", &[(2, "500"), (3, "300")]),
             line(&[(0, 'X'), (1, 'O')], "0", &[(2, "500"), (3, "-500")]),
         ]
         .join("\n");
-        let evaluator = ScoredBoardFitness::read(text.as_bytes(), 1000.0, 2.0, 1, 0.0).unwrap();
+        let evaluator = ScoredBoardFitness::read(text.as_bytes(), 2.0, 1, 0.0).unwrap();
         let mut rng = fastrand::Rng::with_seed(42);
 
         let scores = evaluator.evaluate(&[FixedRanking(vec![3]), FixedRanking(vec![3])], &mut rng);
